@@ -942,10 +942,18 @@ public class ApiGenerateAction extends AnAction {
         if (!config.getState().cnFileName) {
             return methodInfo.getMethodName();
         }
-        if (StringUtils.isEmpty(methodInfo.getDesc()) || !methodInfo.getDesc().contains(" ")) {
+        if (StringUtils.isEmpty(methodInfo.getDesc())) {
             return methodInfo.getMethodName();
         }
-        return methodInfo.getDesc().split(" ")[0];
+        String description = methodInfo.getDesc().trim();
+        if (StringUtils.isEmpty(description)) {
+            return methodInfo.getMethodName();
+        }
+        String fileName = description.replaceAll("[\\\\/:*?\"<>|]", "_");
+        if (StringUtils.isEmpty(fileName)) {
+            return methodInfo.getMethodName();
+        }
+        return fileName;
     }
 
     private void writeFieldInfo(Writer writer, FieldInfo info) throws IOException {
