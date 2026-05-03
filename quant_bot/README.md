@@ -24,25 +24,25 @@
 在專案根目錄執行：
 
 ```bash
-go run quant_bot/main.go backtest --config quant_bot/config.example.json --limit 500
+go run quant_bot/main.go backtest --config quant_bot/config.example.json --exchange bitget --limit 500
 ```
 
 若你的環境無法連到交易所 API，可改用離線樣本資料：
 
 ```bash
-go run quant_bot/main.go backtest --config quant_bot/config.example.json --limit 500 --offline-sample
+go run quant_bot/main.go backtest --config quant_bot/config.example.json --exchange bitget --limit 500 --offline-sample
 ```
 
 ## 模擬交易（Paper）
 
 ```bash
-go run quant_bot/main.go paper --config quant_bot/config.example.json --iterations 20 --sleep-seconds 10
+go run quant_bot/main.go paper --config quant_bot/config.example.json --exchange bitget --iterations 20 --sleep-seconds 10
 ```
 
 離線樣本模式（可在無網路或受限環境測試）：
 
 ```bash
-go run quant_bot/main.go paper --config quant_bot/config.example.json --iterations 20 --sleep-seconds 1 --offline-sample
+go run quant_bot/main.go paper --config quant_bot/config.example.json --exchange bitget --iterations 20 --sleep-seconds 1 --offline-sample
 ```
 
 ## 參數說明（config JSON）
@@ -56,6 +56,12 @@ go run quant_bot/main.go paper --config quant_bot/config.example.json --iteratio
 - `fee_rate`: 手續費比率（例如 0.001 = 0.1%）
 - `stop_loss_pct`: 停損百分比（例如 0.015 = 1.5%）
 - `take_profit_pct`: 停利百分比（例如 0.03 = 3%）
+
+## CLI 參數
+
+- `--exchange`: `binance` 或 `bitget`（預設 `binance`）
+  - 範例：`--exchange bitget`
+- `--offline-sample`: 使用內建樣本 K 線，不呼叫交易所 API
 
 ## 重要提醒
 

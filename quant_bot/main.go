@@ -9,10 +9,19 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
-const binanceKlinesURL = "https://api.binance.com/api/v3/klines"
+const (
+	binanceKlinesURL = "https://api.binance.com/api/v3/klines"
+	bitgetCandlesURL = "https://api.bitget.com/api/v2/spot/market/candles"
+
+	exchangeBinance = "binance"
+	exchangeBitget  = "bitget"
+)
 
 type Config struct {
 	Symbol        string  `json:"symbol"`
@@ -73,16 +82,28 @@ func utcTsToStr(tsMS int64) string {
 }
 
 func parseFloat(raw any) (float64, error) {
-	s, ok := raw.(string)
-	if !ok {
-		return 0, fmt.Errorf("expected string, got %T", raw)
+	switch v := raw.(type) {
+	case float64:
+		return v, nil
+	case string:
+		return strconv.ParseFloat(v, 64)
+	default:
+		return 0, fmt.Errorf("expected float/string, got %T", raw)
 	}
-	var v float64
-	_, err := fmt.Sscanf(s, "%f", &v)
-	return v, err
 }
 
-func fetchKlines(symbol, interval string, limit int) ([]Candle, error) {
+func parseInt64(raw any) (int64, error) {
+	switch v := raw.(type) {
+	case float64:
+		return int64(v), nil
+	case string:
+		return strconv.ParseInt(v, 10, 64)
+	default:
+		return 0, fmt.Errorf("expected int/string, got %T", raw)
+	}
+}
+
+func fetchBinanceKlines(symbol, interval string, limit int) ([]Candle, error) {
 	params := url.Values{}
 	params.Set("symbol", symbol)
 	params.Set("interval", interval)
@@ -120,9 +141,9 @@ func fetchKlines(symbol, interval string, limit int) ([]Candle, error) {
 		if len(row) < 6 {
 			return nil, fmt.Errorf("malformed kline row")
 		}
-		openTimeFloat, ok := row[0].(float64)
-		if !ok {
-			return nil, fmt.Errorf("invalid open time type %T", row[0])
+		openTime, err := parseInt64(row[0])
+		if err != nil {
+			return nil, err
 		}
 		open, err := parseFloat(row[1])
 		if err != nil {
@@ -146,7 +167,7 @@ func fetchKlines(symbol, interval string, limit int) ([]Candle, error) {
 		}
 
 		candles = append(candles, Candle{
-			OpenTime: int64(openTimeFloat),
+			OpenTime: openTime,
 			Open:     open,
 			High:     high,
 			Low:      low,
@@ -156,6 +177,121 @@ func fetchKlines(symbol, interval string, limit int) ([]Candle, error) {
 	}
 
 	return candles, nil
+}
+
+func bitgetGranularity(interval string) (string, error) {
+	switch strings.ToLower(interval) {
+	case "1m", "5m", "15m", "30m", "1h", "4h", "6h", "12h":
+		return strings.ToLower(interval), nil
+	case "1d", "1day":
+		return "1day", nil
+	default:
+		return "", fmt.Errorf("unsupported bitget interval: %s", interval)
+	}
+}
+
+func fetchBitgetKlines(symbol, interval string, limit int) ([]Candle, error) {
+	granularity, err := bitgetGranularity(interval)
+	if err != nil {
+		return nil, err
+	}
+
+	params := url.Values{}
+	params.Set("symbol", symbol)
+	params.Set("granularity", granularity)
+	params.Set("limit", fmt.Sprintf("%d", limit))
+
+	req, err := http.NewRequest(http.MethodGet, bitgetCandlesURL+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "quant-bot-go-demo/1.0")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("exchange API status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var payload struct {
+		Code string     `json:"code"`
+		Msg  string     `json:"msg"`
+		Data [][]string `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	if payload.Code != "00000" {
+		return nil, fmt.Errorf("bitget API error: code=%s msg=%s", payload.Code, payload.Msg)
+	}
+
+	candles := make([]Candle, 0, len(payload.Data))
+	for _, row := range payload.Data {
+		if len(row) < 6 {
+			return nil, fmt.Errorf("malformed bitget candle row")
+		}
+
+		openTime, err := parseInt64(row[0])
+		if err != nil {
+			return nil, err
+		}
+		open, err := parseFloat(row[1])
+		if err != nil {
+			return nil, err
+		}
+		high, err := parseFloat(row[2])
+		if err != nil {
+			return nil, err
+		}
+		low, err := parseFloat(row[3])
+		if err != nil {
+			return nil, err
+		}
+		closePrice, err := parseFloat(row[4])
+		if err != nil {
+			return nil, err
+		}
+		volume, err := parseFloat(row[5])
+		if err != nil {
+			return nil, err
+		}
+
+		candles = append(candles, Candle{
+			OpenTime: openTime,
+			Open:     open,
+			High:     high,
+			Low:      low,
+			Close:    closePrice,
+			Volume:   volume,
+		})
+	}
+
+	sort.Slice(candles, func(i, j int) bool {
+		return candles[i].OpenTime < candles[j].OpenTime
+	})
+
+	return candles, nil
+}
+
+func fetchCandles(exchange, symbol, interval string, limit int) ([]Candle, error) {
+	switch exchange {
+	case exchangeBinance:
+		return fetchBinanceKlines(symbol, interval, limit)
+	case exchangeBitget:
+		return fetchBitgetKlines(symbol, interval, limit)
+	default:
+		return nil, fmt.Errorf("unsupported exchange: %s", exchange)
+	}
 }
 
 func generateSampleCandles(limit int, startPrice float64) []Candle {
@@ -190,11 +326,11 @@ func generateSampleCandles(limit int, startPrice float64) []Candle {
 	return candles
 }
 
-func getCandles(symbol, interval string, limit int, offlineSample bool) ([]Candle, error) {
+func getCandles(exchange, symbol, interval string, limit int, offlineSample bool) ([]Candle, error) {
 	if offlineSample {
 		return generateSampleCandles(limit, 30000.0), nil
 	}
-	return fetchKlines(symbol, interval, limit)
+	return fetchCandles(exchange, symbol, interval, limit)
 }
 
 func sma(values []float64, window int) []*float64 {
@@ -273,8 +409,8 @@ func calcOrderSize(cash, price, riskPerTrade, stopLossPct, feeRate float64) floa
 	return math.Max(0, math.Min(qtyByRisk, qtyByCash))
 }
 
-func runBacktest(cfg Config, limit int, offlineSample bool) error {
-	candles, err := getCandles(cfg.Symbol, cfg.Interval, limit, offlineSample)
+func runBacktest(cfg Config, exchange string, limit int, offlineSample bool) error {
+	candles, err := getCandles(exchange, cfg.Symbol, cfg.Interval, limit, offlineSample)
 	if err != nil {
 		return err
 	}
@@ -383,6 +519,7 @@ func runBacktest(cfg Config, limit int, offlineSample bool) error {
 	}
 	drawdown := maxDrawdown(equityCurve)
 
+	fmt.Printf("Backtest exchange: %s\n", exchange)
 	fmt.Printf("Backtest symbol: %s (%s)\n", cfg.Symbol, cfg.Interval)
 	fmt.Printf("Candles: %d\n", len(candles))
 	fmt.Printf("Initial USDT: %.2f\n", cfg.InitialUSDT)
@@ -407,10 +544,11 @@ func runBacktest(cfg Config, limit int, offlineSample bool) error {
 	return nil
 }
 
-func runPaper(cfg Config, iterations, sleepSeconds int, offlineSample bool) error {
+func runPaper(cfg Config, exchange string, iterations, sleepSeconds int, offlineSample bool) error {
 	cash := cfg.InitialUSDT
 	var position *Position
 	fmt.Println("Paper trading started. This mode DOES NOT place real orders.")
+	fmt.Printf("Exchange: %s\n", exchange)
 	fmt.Printf(
 		"Controls: short_window=%d, long_window=%d, stop_loss=%.2f%%, take_profit=%.2f%%\n",
 		cfg.ShortWindow, cfg.LongWindow, cfg.StopLossPct*100, cfg.TakeProfitPct*100,
@@ -432,7 +570,7 @@ func runPaper(cfg Config, iterations, sleepSeconds int, offlineSample bool) erro
 		if offlineSample {
 			candles = allCandles[step : step+lookback]
 		} else {
-			candles, err = fetchKlines(cfg.Symbol, cfg.Interval, lookback)
+			candles, err = fetchCandles(exchange, cfg.Symbol, cfg.Interval, lookback)
 			if err != nil {
 				return err
 			}
@@ -546,12 +684,25 @@ func validateConfig(cfg Config) error {
 	}
 }
 
+func normalizeExchange(exchange string) string {
+	return strings.ToLower(strings.TrimSpace(exchange))
+}
+
+func validateExchange(exchange string) error {
+	switch exchange {
+	case exchangeBinance, exchangeBitget:
+		return nil
+	default:
+		return fmt.Errorf("exchange must be one of: %s, %s", exchangeBinance, exchangeBitget)
+	}
+}
+
 func usage() {
 	fmt.Println("Simple USDT quant bot (Go)")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  quant_bot backtest [--config path] [--limit N] [--offline-sample]")
-	fmt.Println("  quant_bot paper [--config path] [--iterations N] [--sleep-seconds N] [--offline-sample]")
+	fmt.Println("  quant_bot backtest [--config path] [--exchange binance|bitget] [--limit N] [--offline-sample]")
+	fmt.Println("  quant_bot paper [--config path] [--exchange binance|bitget] [--iterations N] [--sleep-seconds N] [--offline-sample]")
 }
 
 func main() {
@@ -565,6 +716,7 @@ func main() {
 	case "backtest":
 		fs := flag.NewFlagSet("backtest", flag.ExitOnError)
 		configPath := fs.String("config", "", "Path to JSON config file")
+		exchange := fs.String("exchange", exchangeBinance, "Exchange: binance or bitget")
 		limit := fs.Int("limit", 500, "Number of candles to fetch")
 		offlineSample := fs.Bool("offline-sample", false, "Use generated sample candles instead of API")
 		_ = fs.Parse(os.Args[2:])
@@ -574,13 +726,19 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Config or input error: %v\n", err)
 			os.Exit(2)
 		}
-		if err := runBacktest(cfg, *limit, *offlineSample); err != nil {
+		normalizedExchange := normalizeExchange(*exchange)
+		if err := validateExchange(normalizedExchange); err != nil {
+			fmt.Fprintf(os.Stderr, "Config or input error: %v\n", err)
+			os.Exit(2)
+		}
+		if err := runBacktest(cfg, normalizedExchange, *limit, *offlineSample); err != nil {
 			fmt.Fprintf(os.Stderr, "Market data/backtest error: %v\n", err)
 			os.Exit(1)
 		}
 	case "paper":
 		fs := flag.NewFlagSet("paper", flag.ExitOnError)
 		configPath := fs.String("config", "", "Path to JSON config file")
+		exchange := fs.String("exchange", exchangeBinance, "Exchange: binance or bitget")
 		iterations := fs.Int("iterations", 20, "Number of loops to run")
 		sleepSeconds := fs.Int("sleep-seconds", 10, "Sleep between loops")
 		offlineSample := fs.Bool("offline-sample", false, "Use generated sample candles instead of API")
@@ -591,7 +749,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Config or input error: %v\n", err)
 			os.Exit(2)
 		}
-		if err := runPaper(cfg, *iterations, *sleepSeconds, *offlineSample); err != nil {
+		normalizedExchange := normalizeExchange(*exchange)
+		if err := validateExchange(normalizedExchange); err != nil {
+			fmt.Fprintf(os.Stderr, "Config or input error: %v\n", err)
+			os.Exit(2)
+		}
+		if err := runPaper(cfg, normalizedExchange, *iterations, *sleepSeconds, *offlineSample); err != nil {
 			fmt.Fprintf(os.Stderr, "Market data/paper error: %v\n", err)
 			os.Exit(1)
 		}
