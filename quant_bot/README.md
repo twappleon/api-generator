@@ -1,4 +1,4 @@
-# 量化機器人（USDT）示範版
+# 量化機器人（USDT）Golang 示範版
 
 > 這是一個**教育用途**的簡易量化機器人，提供：
 > - 歷史回測（backtest）
@@ -12,42 +12,43 @@
 - 策略：短均線 / 長均線交叉
 - 風控：每筆固定風險比例 + 停損 + 停利
 - 成本：納入手續費（fee rate）
+- 支援離線樣本資料（受限網路環境可測）
 
 ## 環境需求
 
-- Python 3.9+
-- 不需要額外第三方套件（只用 Python 標準庫）
+- Go 1.20+
+- 不需要額外第三方套件（只用 Go 標準庫）
 
 ## 快速開始
 
 在專案根目錄執行：
 
 ```bash
-python3 quant_bot/bot.py backtest --config quant_bot/config.example.json --limit 500
+go run quant_bot/main.go backtest --config quant_bot/config.example.json --limit 500
 ```
 
 若你的環境無法連到交易所 API，可改用離線樣本資料：
 
 ```bash
-python3 quant_bot/bot.py backtest --config quant_bot/config.example.json --limit 500 --offline-sample
+go run quant_bot/main.go backtest --config quant_bot/config.example.json --limit 500 --offline-sample
 ```
 
 ## 模擬交易（Paper）
 
 ```bash
-python3 quant_bot/bot.py paper --config quant_bot/config.example.json --iterations 20 --sleep-seconds 10
+go run quant_bot/main.go paper --config quant_bot/config.example.json --iterations 20 --sleep-seconds 10
 ```
 
 離線樣本模式（可在無網路或受限環境測試）：
 
 ```bash
-python3 quant_bot/bot.py paper --config quant_bot/config.example.json --iterations 20 --sleep-seconds 1 --offline-sample
+go run quant_bot/main.go paper --config quant_bot/config.example.json --iterations 20 --sleep-seconds 1 --offline-sample
 ```
 
 ## 參數說明（config JSON）
 
 - `symbol`: 交易對，例如 `BTCUSDT`
-- `interval`: K線週期，例如 `1m`, `5m`, `1h`, `4h`
+- `interval`: K 線週期，例如 `1m`, `5m`, `1h`, `4h`
 - `short_window`: 短均線長度
 - `long_window`: 長均線長度（需大於 short）
 - `initial_usdt`: 初始資金
