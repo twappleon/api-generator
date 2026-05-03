@@ -40,6 +40,12 @@ go run quant_bot/main.go backtest --config quant_bot/config.example.json --excha
 go run quant_bot/main.go paper --config quant_bot/config.example.json --exchange bitget --iterations 20 --sleep-seconds 10
 ```
 
+若要長時間執行（常駐輪詢），可將 `--iterations` 設為 `0`：
+
+```bash
+go run quant_bot/main.go paper --config quant_bot/config.conservative.json --exchange bitget --iterations 0 --sleep-seconds 60
+```
+
 離線樣本模式（可在無網路或受限環境測試）：
 
 ```bash
@@ -112,6 +118,28 @@ go run quant_bot/main.go bitget-order --symbol BTCUSDT --side buy --order-type m
 ```
 
 若未加 `--confirm-live`，程式會拒絕送出真單。
+
+## 保守型部署（建議先跑紙上交易）
+
+已提供一鍵腳本：
+
+```bash
+./quant_bot/run_conservative_paper.sh
+```
+
+腳本行為：
+- 使用 `config.conservative.json`
+- 使用 `bitget` 行情
+- `iterations=0`（持續執行）
+- `sleep-seconds=60`（每 60 秒輪詢一次）
+- 將輸出同時寫入：`quant_bot/logs/conservative-paper.log`
+
+停止方式：
+- 前景執行：`Ctrl + C`
+- 背景執行可用：
+  ```bash
+  nohup ./quant_bot/run_conservative_paper.sh >/tmp/quant_bot_launcher.log 2>&1 &
+  ```
 
 ## 重要提醒
 

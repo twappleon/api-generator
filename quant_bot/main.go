@@ -577,8 +577,22 @@ func runBacktest(cfg Config, exchange string, limit int, offlineSample bool) err
 }
 
 func runPaper(cfg Config, exchange string, iterations, sleepSeconds int, offlineSample bool) error {
+	if iterations < 0 {
+		return fmt.Errorf("iterations must be >= 0")
+	}
+	if iterations == 0 && sleepSeconds <= 0 {
+		return fmt.Errorf("sleep-seconds must be > 0 when iterations=0")
+	}
+	if offlineSample && iterations == 0 {
+		return fmt.Errorf("offline-sample does not support infinite mode; set iterations > 0")
+	}
+
 	cash := cfg.InitialUSDT
 	var position *Position
+	totalText := "inf"
+	if iterations > 0 {
+		totalText = strconv.Itoa(iterations)
+	}
 	fmt.Println("Paper trading started. This mode DOES NOT place real orders.")
 	fmt.Printf("Exchange: %s\n", exchange)
 	fmt.Printf(
@@ -596,7 +610,10 @@ func runPaper(cfg Config, exchange string, iterations, sleepSeconds int, offline
 		allCandles = generateSampleCandles(lookback+iterations+2, 30000.0)
 	}
 
-	for step := 1; step <= iterations; step++ {
+	for step := 1; ; step++ {
+		if iterations > 0 && step > iterations {
+			break
+		}
 		var candles []Candle
 		var err error
 		if offlineSample {
@@ -604,6 +621,13 @@ func runPaper(cfg Config, exchange string, iterations, sleepSeconds int, offline
 		} else {
 			candles, err = fetchCandles(exchange, cfg.Symbol, cfg.Interval, lookback)
 			if err != nil {
+				if iterations == 0 {
+					fmt.Fprintf(os.Stderr, "Market data fetch failed: %v (retry in %ds)\n", err, sleepSeconds)
+					if sleepSeconds > 0 {
+						time.Sleep(time.Duration(sleepSeconds) * time.Second)
+					}
+					continue
+				}
 				return err
 			}
 		}
@@ -666,11 +690,14 @@ func runPaper(cfg Config, exchange string, iterations, sleepSeconds int, offline
 		}
 		equity := cash + positionValue
 		fmt.Printf(
-			"[%03d/%d] %s price=%.4f signal=%+d action=%s cash=%.4f equity=%.4f\n",
-			step, iterations, utcTsToStr(latest.OpenTime), latest.Close, signal, action, cash, equity,
+			"[%03d/%s] %s price=%.4f signal=%+d action=%s cash=%.4f equity=%.4f\n",
+			step, totalText, utcTsToStr(latest.OpenTime), latest.Close, signal, action, cash, equity,
 		)
 
-		if step < iterations && sleepSeconds > 0 {
+		if iterations > 0 && step >= iterations {
+			break
+		}
+		if sleepSeconds > 0 {
 			time.Sleep(time.Duration(sleepSeconds) * time.Second)
 		}
 	}
