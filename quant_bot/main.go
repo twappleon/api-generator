@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -16,8 +20,11 @@ import (
 )
 
 const (
+	bitgetBaseURL    = "https://api.bitget.com"
 	binanceKlinesURL = "https://api.binance.com/api/v3/klines"
 	bitgetCandlesURL = "https://api.bitget.com/api/v2/spot/market/candles"
+	bitgetAssetsPath = "/api/v2/spot/account/assets"
+	bitgetOrderPath  = "/api/v2/spot/trade/place-order"
 
 	exchangeBinance = "binance"
 	exchangeBitget  = "bitget"
@@ -61,6 +68,31 @@ type Trade struct {
 	Qty        float64
 	PnL        float64
 	Reason     string
+}
+
+type BitgetCredentials struct {
+	APIKey     string
+	APISecret  string
+	Passphrase string
+}
+
+type BitgetAPIEnvelope struct {
+	Code        string          `json:"code"`
+	Msg         string          `json:"msg"`
+	RequestTime int64           `json:"requestTime"`
+	Data        json.RawMessage `json:"data"`
+}
+
+type BitgetOrderOptions struct {
+	Symbol      string
+	Side        string
+	OrderType   string
+	Size        float64
+	Price       float64
+	Force       string
+	ClientOID   string
+	DryRun      bool
+	ConfirmLive bool
 }
 
 func defaultConfig() Config {
@@ -647,6 +679,232 @@ func runPaper(cfg Config, exchange string, iterations, sleepSeconds int, offline
 	return nil
 }
 
+func loadBitgetCredentialsFromEnv() (BitgetCredentials, error) {
+	creds := BitgetCredentials{
+		APIKey:     strings.TrimSpace(os.Getenv("BITGET_API_KEY")),
+		APISecret:  strings.TrimSpace(os.Getenv("BITGET_API_SECRET")),
+		Passphrase: strings.TrimSpace(os.Getenv("BITGET_PASSPHRASE")),
+	}
+	missing := make([]string, 0, 3)
+	if creds.APIKey == "" {
+		missing = append(missing, "BITGET_API_KEY")
+	}
+	if creds.APISecret == "" {
+		missing = append(missing, "BITGET_API_SECRET")
+	}
+	if creds.Passphrase == "" {
+		missing = append(missing, "BITGET_PASSPHRASE")
+	}
+	if len(missing) > 0 {
+		return BitgetCredentials{}, fmt.Errorf("missing environment variables: %s", strings.Join(missing, ", "))
+	}
+	return creds, nil
+}
+
+func bitgetSign(timestamp, method, requestPath, body string, secret string) string {
+	payload := timestamp + strings.ToUpper(method) + requestPath + body
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(payload))
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func bitgetPrivateRequest(method string, path string, query url.Values, bodyPayload any, creds BitgetCredentials) (BitgetAPIEnvelope, error) {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	queryString := ""
+	if query != nil && len(query) > 0 {
+		queryString = "?" + query.Encode()
+	}
+
+	bodyText := ""
+	if bodyPayload != nil {
+		raw, err := json.Marshal(bodyPayload)
+		if err != nil {
+			return BitgetAPIEnvelope{}, err
+		}
+		bodyText = string(raw)
+	}
+
+	requestPath := path + queryString
+	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	signature := bitgetSign(timestamp, method, requestPath, bodyText, creds.APISecret)
+
+	var bodyReader io.Reader
+	if bodyText != "" {
+		bodyReader = bytes.NewBufferString(bodyText)
+	}
+
+	req, err := http.NewRequest(method, bitgetBaseURL+requestPath, bodyReader)
+	if err != nil {
+		return BitgetAPIEnvelope{}, err
+	}
+	req.Header.Set("ACCESS-KEY", creds.APIKey)
+	req.Header.Set("ACCESS-SIGN", signature)
+	req.Header.Set("ACCESS-TIMESTAMP", timestamp)
+	req.Header.Set("ACCESS-PASSPHRASE", creds.Passphrase)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "quant-bot-go-demo/1.0")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return BitgetAPIEnvelope{}, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return BitgetAPIEnvelope{}, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return BitgetAPIEnvelope{}, fmt.Errorf("bitget private API status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var envelope BitgetAPIEnvelope
+	if err := json.Unmarshal(respBody, &envelope); err != nil {
+		return BitgetAPIEnvelope{}, err
+	}
+	if envelope.Code != "00000" {
+		return BitgetAPIEnvelope{}, fmt.Errorf("bitget private API error: code=%s msg=%s", envelope.Code, envelope.Msg)
+	}
+	return envelope, nil
+}
+
+func toFloatOrZero(s string) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+func runBitgetAccount(coin string, showAll bool) error {
+	creds, err := loadBitgetCredentialsFromEnv()
+	if err != nil {
+		return err
+	}
+
+	var query url.Values
+	if trimmed := strings.ToUpper(strings.TrimSpace(coin)); trimmed != "" {
+		query = url.Values{}
+		query.Set("coin", trimmed)
+	}
+
+	envelope, err := bitgetPrivateRequest(http.MethodGet, bitgetAssetsPath, query, nil, creds)
+	if err != nil {
+		return err
+	}
+
+	type asset struct {
+		Coin           string `json:"coin"`
+		Available      string `json:"available"`
+		Frozen         string `json:"frozen"`
+		Locked         string `json:"locked"`
+		LimitAvailable string `json:"limitAvailable"`
+	}
+	var assets []asset
+	if err := json.Unmarshal(envelope.Data, &assets); err != nil {
+		return err
+	}
+
+	fmt.Println("Bitget spot assets:")
+	fmt.Printf("%-10s %-16s %-16s %-16s %-16s\n", "coin", "available", "frozen", "locked", "limitAvailable")
+	count := 0
+	for _, a := range assets {
+		if !showAll {
+			total := toFloatOrZero(a.Available) + toFloatOrZero(a.Frozen) + toFloatOrZero(a.Locked)
+			if total == 0 {
+				continue
+			}
+		}
+		count++
+		fmt.Printf("%-10s %-16s %-16s %-16s %-16s\n", a.Coin, a.Available, a.Frozen, a.Locked, a.LimitAvailable)
+	}
+	if count == 0 {
+		fmt.Println("(no assets matched current filter)")
+	}
+	return nil
+}
+
+func validateBitgetOrderOptions(opts BitgetOrderOptions) error {
+	opts.Side = strings.ToLower(strings.TrimSpace(opts.Side))
+	opts.OrderType = strings.ToLower(strings.TrimSpace(opts.OrderType))
+	if opts.Symbol == "" {
+		return fmt.Errorf("symbol is required")
+	}
+	if opts.Side != "buy" && opts.Side != "sell" {
+		return fmt.Errorf("side must be buy or sell")
+	}
+	if opts.OrderType != "market" && opts.OrderType != "limit" {
+		return fmt.Errorf("type must be market or limit")
+	}
+	if opts.Size <= 0 {
+		return fmt.Errorf("size must be > 0")
+	}
+	if opts.OrderType == "limit" && opts.Price <= 0 {
+		return fmt.Errorf("price must be > 0 for limit orders")
+	}
+	if !opts.DryRun && !opts.ConfirmLive {
+		return fmt.Errorf("live order blocked: use --confirm-live with --dry-run=false")
+	}
+	return nil
+}
+
+func runBitgetOrder(opts BitgetOrderOptions) error {
+	opts.Symbol = strings.ToUpper(strings.TrimSpace(opts.Symbol))
+	opts.Side = strings.ToLower(strings.TrimSpace(opts.Side))
+	opts.OrderType = strings.ToLower(strings.TrimSpace(opts.OrderType))
+	opts.Force = strings.ToLower(strings.TrimSpace(opts.Force))
+	if opts.Force == "" {
+		opts.Force = "gtc"
+	}
+	if opts.ClientOID == "" {
+		opts.ClientOID = fmt.Sprintf("quantbot-%d", time.Now().UnixMilli())
+	}
+	if err := validateBitgetOrderOptions(opts); err != nil {
+		return err
+	}
+
+	payload := map[string]string{
+		"symbol":    opts.Symbol,
+		"side":      opts.Side,
+		"orderType": opts.OrderType,
+		"size":      strconv.FormatFloat(opts.Size, 'f', -1, 64),
+		"force":     opts.Force,
+		"clientOid": opts.ClientOID,
+	}
+	if opts.OrderType == "limit" {
+		payload["price"] = strconv.FormatFloat(opts.Price, 'f', -1, 64)
+	}
+
+	if opts.DryRun {
+		out, _ := json.MarshalIndent(payload, "", "  ")
+		fmt.Println("Dry-run enabled. No real order sent.")
+		fmt.Printf("Planned Bitget order payload:\n%s\n", string(out))
+		return nil
+	}
+
+	creds, err := loadBitgetCredentialsFromEnv()
+	if err != nil {
+		return err
+	}
+	envelope, err := bitgetPrivateRequest(http.MethodPost, bitgetOrderPath, nil, payload, creds)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Bitget order submitted.")
+	fmt.Printf("requestTime: %d\n", envelope.RequestTime)
+	if len(envelope.Data) > 0 {
+		var formatted bytes.Buffer
+		if err := json.Indent(&formatted, envelope.Data, "", "  "); err == nil {
+			fmt.Printf("response data:\n%s\n", formatted.String())
+		} else {
+			fmt.Printf("response data: %s\n", string(envelope.Data))
+		}
+	}
+	return nil
+}
+
 func loadConfig(path string) (Config, error) {
 	cfg := defaultConfig()
 	if path == "" {
@@ -703,6 +961,9 @@ func usage() {
 	fmt.Println("Usage:")
 	fmt.Println("  quant_bot backtest [--config path] [--exchange binance|bitget] [--limit N] [--offline-sample]")
 	fmt.Println("  quant_bot paper [--config path] [--exchange binance|bitget] [--iterations N] [--sleep-seconds N] [--offline-sample]")
+	fmt.Println("  quant_bot bitget-account [--coin USDT] [--show-all]")
+	fmt.Println("  quant_bot bitget-order --symbol BTCUSDT --side buy|sell --order-type market|limit --size N [--price N] [--force gtc|ioc|fok]")
+	fmt.Println("                         [--client-oid xxx] [--dry-run=true|false] [--confirm-live]")
 }
 
 func main() {
@@ -756,6 +1017,44 @@ func main() {
 		}
 		if err := runPaper(cfg, normalizedExchange, *iterations, *sleepSeconds, *offlineSample); err != nil {
 			fmt.Fprintf(os.Stderr, "Market data/paper error: %v\n", err)
+			os.Exit(1)
+		}
+	case "bitget-account":
+		fs := flag.NewFlagSet("bitget-account", flag.ExitOnError)
+		coin := fs.String("coin", "", "Filter coin (e.g. USDT)")
+		showAll := fs.Bool("show-all", false, "Show zero-balance assets too")
+		_ = fs.Parse(os.Args[2:])
+
+		if err := runBitgetAccount(*coin, *showAll); err != nil {
+			fmt.Fprintf(os.Stderr, "Bitget account error: %v\n", err)
+			os.Exit(1)
+		}
+	case "bitget-order":
+		fs := flag.NewFlagSet("bitget-order", flag.ExitOnError)
+		symbol := fs.String("symbol", "BTCUSDT", "Spot symbol, e.g. BTCUSDT")
+		side := fs.String("side", "buy", "Order side: buy or sell")
+		orderType := fs.String("order-type", "market", "Order type: market or limit")
+		size := fs.Float64("size", 0, "Order size (base coin amount)")
+		price := fs.Float64("price", 0, "Limit price (required when order-type=limit)")
+		force := fs.String("force", "gtc", "Time in force for limit: gtc|ioc|fok")
+		clientOID := fs.String("client-oid", "", "Custom client order id")
+		dryRun := fs.Bool("dry-run", true, "If true, print payload only and do not send")
+		confirmLive := fs.Bool("confirm-live", false, "Must be true to allow --dry-run=false")
+		_ = fs.Parse(os.Args[2:])
+
+		opts := BitgetOrderOptions{
+			Symbol:      *symbol,
+			Side:        *side,
+			OrderType:   *orderType,
+			Size:        *size,
+			Price:       *price,
+			Force:       *force,
+			ClientOID:   *clientOID,
+			DryRun:      *dryRun,
+			ConfirmLive: *confirmLive,
+		}
+		if err := runBitgetOrder(opts); err != nil {
+			fmt.Fprintf(os.Stderr, "Bitget order error: %v\n", err)
 			os.Exit(1)
 		}
 	default:

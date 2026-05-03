@@ -13,6 +13,7 @@
 - 風控：每筆固定風險比例 + 停損 + 停利
 - 成本：納入手續費（fee rate）
 - 支援離線樣本資料（受限網路環境可測）
+- 支援 Bitget 私有 API（查資產 / 下單，含安全開關）
 
 ## 環境需求
 
@@ -62,6 +63,55 @@ go run quant_bot/main.go paper --config quant_bot/config.example.json --exchange
 - `--exchange`: `binance` 或 `bitget`（預設 `binance`）
   - 範例：`--exchange bitget`
 - `--offline-sample`: 使用內建樣本 K 線，不呼叫交易所 API
+
+## Bitget 私有 API（查資產 / 下單）
+
+先設定環境變數：
+
+```bash
+export BITGET_API_KEY="your_api_key"
+export BITGET_API_SECRET="your_api_secret"
+export BITGET_PASSPHRASE="your_passphrase"
+```
+
+查詢現貨資產（預設只顯示非 0 資產）：
+
+```bash
+go run quant_bot/main.go bitget-account --coin USDT
+```
+
+顯示全部資產：
+
+```bash
+go run quant_bot/main.go bitget-account --show-all
+```
+
+下單（預設 `dry-run=true`，不會真的送單）：
+
+```bash
+go run quant_bot/main.go bitget-order --symbol BTCUSDT --side buy --order-type market --size 0.001
+```
+
+限價單 dry-run 範例：
+
+```bash
+go run quant_bot/main.go bitget-order --symbol BTCUSDT --side sell --order-type limit --price 90000 --size 0.001 --force gtc
+```
+
+### 真實送單安全機制
+
+要送出真單，必須同時給兩個旗標：
+
+- `--dry-run=false`
+- `--confirm-live`
+
+例如：
+
+```bash
+go run quant_bot/main.go bitget-order --symbol BTCUSDT --side buy --order-type market --size 0.001 --dry-run=false --confirm-live
+```
+
+若未加 `--confirm-live`，程式會拒絕送出真單。
 
 ## 重要提醒
 
