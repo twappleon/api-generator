@@ -1,0 +1,11 @@
+{
+  "symbol": "BTCUSDT",
+  "interval": "1h",
+  "short_window": 30,
+  "long_window": 90,
+  "initial_usdt": 1000.0,
+  "risk_per_trade": 0.01,
+  "fee_rate": 0.001,
+  "stop_loss_pct": 0.02,
+  "take_profit_pct": 0.04
+}
