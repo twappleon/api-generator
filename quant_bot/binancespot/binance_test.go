@@ -138,22 +138,22 @@ func TestSignParams(t *testing.T){
 }
 
 func TestPreflightFailurePersistsKill(t *testing.T){
- calls:=0
+ var calls int32
  srv:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
-  calls++
-  w.WriteHeader(http.StatusTooManyRequests)
+  atomic.AddInt32(&calls,1)
   w.Header().Set("Retry-After","5")
+  w.WriteHeader(http.StatusTooManyRequests)
   fmt.Fprint(w,`{"code":-1003,"msg":"Too many requests"}`)
  }))
  defer srv.Close()
  c:=NewClient("testkey","testsecret");c.BaseURL=srv.URL
  state:=filepath.Join(t.TempDir(),"testnet.json")
  _,err:=c.PlaceGuarded(state,request(),limits())
- if err==nil||calls!=1{t.Fatalf("expected blocked preflight: %v %d",err,calls)}
+ if err==nil||atomic.LoadInt32(&calls)!=1{t.Fatalf("expected blocked preflight: %v %d",err,atomic.LoadInt32(&calls))}
  saved,err:=LoadState(state)
  if err!=nil||!saved.Kill||saved.KillReason==""{t.Fatalf("persistent kill failed: %+v %v",saved,err)}
  _,err=c.PlaceGuarded(state,request(),limits())
- if err==nil||calls!=1{t.Fatal("kill switch allowed new API requests")}
+ if err==nil||atomic.LoadInt32(&calls)!=1{t.Fatal("kill switch allowed new API requests")}
 }
 func TestMainnetEndpointBlocked(t *testing.T){
  c:=NewClient("testkey","testsecret")
