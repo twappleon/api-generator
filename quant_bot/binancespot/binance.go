@@ -44,6 +44,8 @@ func Sign(payload,secret string) string {
 }
 func (c *Client) request(method,path string,p url.Values,signed bool) ([]byte,error) {
  if c.BaseURL=="" || c.HTTP==nil || c.Clock==nil {return nil,errors.New("client not initialized")}
+ // A public mutable URL is useful for httptest, but never allow production endpoints.
+ if c.BaseURL!=TestnetURL && !strings.HasPrefix(c.BaseURL,"http://127.0.0.1:") && !strings.HasPrefix(c.BaseURL,"http://[::1]:") && !strings.HasPrefix(c.BaseURL,"http://localhost:") {return nil,errors.New("non-testnet Binance endpoint blocked")}
  if p==nil {p=url.Values{}}
  if signed {
   if c.Key==""||c.Secret=="" {return nil,errors.New("missing BINANCE_TESTNET_API_KEY / BINANCE_TESTNET_API_SECRET")}
@@ -172,8 +174,7 @@ func (r OrderRequest) Validate(info SymbolInfo,mark float64) error {
   switch f.FilterType {
   case "LOT_SIZE","MARKET_LOT_SIZE":
    if f.FilterType=="MARKET_LOT_SIZE"&&r.Type!="MARKET" {continue}
-   if f.FilterType=="LOT_SIZE"&&r.Type=="MARKET" {continue}
-   min,_:=strconv.ParseFloat(f.MinQty,64); max,_:=strconv.ParseFloat(f.MaxQty,64); step,_:=strconv.ParseFloat(f.StepSize,64)
+      min,_:=strconv.ParseFloat(f.MinQty,64); max,_:=strconv.ParseFloat(f.MaxQty,64); step,_:=strconv.ParseFloat(f.StepSize,64)
    if qty<min-1e-10||(max>0&&qty>max+1e-10)||!withinStep(qty,step) {return fmt.Errorf("%s quantity filter failed",f.FilterType)}
   case "PRICE_FILTER":
    if r.Type=="LIMIT" {tick,_:=strconv.ParseFloat(f.TickSize,64);if !withinStep(price,tick){return errors.New("PRICE_FILTER tickSize failed")}}
@@ -302,7 +303,7 @@ func (c *Client) PlaceGuarded(statePath string,request OrderRequest,limits RiskL
   if err:=SaveState(statePath,s);err!=nil{return err}
   result,err=c.Submit(request)
   if err!=nil{return err}
-  if result.ClientOrderID!=request.ClientID{return fmt.Errorf("%w: client ID mismatch",ErrUnknownExecution)}
+  if result.ClientOrderID!=request.ClientID||result.Symbol!=request.Symbol{return fmt.Errorf("%w: order identity mismatch",ErrUnknownExecution)}
   s.Orders[request.ClientID]=result.Status
   return SaveState(statePath,s)
  })
@@ -315,7 +316,7 @@ func (c *Client) Reconcile(statePath,symbol,id string) (Order,error) {
   if _,ok:=s.Orders[id];!ok{return errors.New("unknown local client ID; manual reconciliation required")}
   result,err=c.OrderStatus(symbol,id)
   if err!=nil{return err} // even -2013 not found is NOT permission to resubmit
-  if result.ClientOrderID!=id{return errors.New("client ID mismatch")}
+  if result.ClientOrderID!=id||result.Symbol!=symbol{return errors.New("order identity mismatch")}
   s.Orders[id]=result.Status
   return SaveState(statePath,s)
  })
