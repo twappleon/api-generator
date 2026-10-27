@@ -9,15 +9,16 @@ import (
  "os"
  "path/filepath"
  "strings"
+ "sync/atomic"
  "testing"
  "time"
 )
 const infoJSON = `{"symbols":[{"symbol":"BTCUSDT","status":"TRADING","baseAsset":"BTC","quoteAsset":"USDT","filters":[{"filterType":"LOT_SIZE","minQty":"0.0001","maxQty":"1","stepSize":"0.0001"},{"filterType":"MARKET_LOT_SIZE","minQty":"0.0001","maxQty":"1","stepSize":"0.0001"},{"filterType":"PRICE_FILTER","tickSize":"0.01"},{"filterType":"MIN_NOTIONAL","minNotional":"5","applyToMarket":true}]}]}`
 const accountJSON = `{"balances":[{"asset":"USDT","free":"1000","locked":"0"},{"asset":"BTC","free":"0","locked":"0"}]}`
 const orderJSON = `{"symbol":"BTCUSDT","orderId":123,"clientOrderId":"bot-20261028-1","status":"NEW","executedQty":"0","cummulativeQuoteQty":"0"}`
-func setup(t *testing.T,orderStatus int) (*Client,*int,func()) {
+func setup(t *testing.T,orderStatus int) (*Client,*int32,func()) {
  t.Helper()
- posted:=new(int)
+ posted:=new(int32)
  handler:=http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   p:=r.URL.Query()
   if r.URL.Path=="/api/v3/account"||r.URL.Path=="/api/v3/openOrders"||r.URL.Path=="/api/v3/order" {
@@ -33,7 +34,7 @@ func setup(t *testing.T,orderStatus int) (*Client,*int,func()) {
   case "/api/v3/openOrders":fmt.Fprint(w,"[]")
   case "/api/v3/order":
    if r.Method=="POST" {
-    *posted++
+    atomic.AddInt32(posted,1)
     if orderStatus!=200 {
      w.WriteHeader(orderStatus);fmt.Fprint(w,`{"code":-1007,"msg":"Timeout waiting for response"}`)
      return
@@ -66,26 +67,26 @@ func TestGuardedOrderAndIdempotency(t *testing.T){
  c,post,close:=setup(t,200);defer close()
  state:=filepath.Join(t.TempDir(),"testnet.json")
  o,err:=c.PlaceGuarded(state,request(),limits())
- if err!=nil||o.Status!="NEW"||*post!=1{t.Fatalf("place: %+v %v count=%d",o,err,*post)}
+ if err!=nil||o.Status!="NEW"||atomic.LoadInt32(post)!=1{t.Fatalf("place: %+v %v count=%d",o,err,atomic.LoadInt32(post))}
  _,err=c.PlaceGuarded(state,request(),limits())
- if err==nil||*post!=1{t.Fatal("duplicate ID accepted")}
+ if err==nil||atomic.LoadInt32(post)!=1{t.Fatal("duplicate ID accepted")}
  done,err:=c.Reconcile(state,"BTCUSDT",request().ClientID)
  if err!=nil||done.Status!="FILLED"{t.Fatalf("reconcile: %+v %v",done,err)}
  s,err:=LoadState(state)
  if err!=nil||s.Orders[request().ClientID]!="FILLED"{t.Fatalf("state: %+v %v",s,err)}
  _,err=c.PlaceGuarded(state,request(),limits())
- if err==nil||*post!=1{t.Fatal("terminal ID reused")}
+ if err==nil||atomic.LoadInt32(post)!=1{t.Fatal("terminal ID reused")}
 }
 func TestUnknownExecutionDoesNotRetry(t *testing.T){
  c,post,close:=setup(t,504);defer close()
  state:=filepath.Join(t.TempDir(),"testnet.json")
  _,err:=c.PlaceGuarded(state,request(),limits())
- if !errors.Is(err,ErrUnknownExecution)||*post!=1{t.Fatalf("expected unknown: %v, POST=%d",err,*post)}
+ if !errors.Is(err,ErrUnknownExecution)||atomic.LoadInt32(post)!=1{t.Fatalf("expected unknown: %v, POST=%d",err,atomic.LoadInt32(post))}
  s,err:=LoadState(state)
  if err!=nil||s.Orders[request().ClientID]!="PENDING_UNKNOWN"{t.Fatalf("missing reserved ID: %+v %v",s,err)}
  r:=request();r.ClientID="bot-20261028-2"
  _,err=c.PlaceGuarded(state,r,limits())
- if err==nil||*post!=1{t.Fatalf("unexpected POST retry: %v",err)}
+ if err==nil||atomic.LoadInt32(post)!=1{t.Fatalf("unexpected POST retry: %v",err)}
 }
 func TestRiskLimits(t *testing.T){
  s:=State{}
