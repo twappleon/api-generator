@@ -154,3 +154,7 @@ go run quant_bot/main.go bitget-order --symbol BTCUSDT --side buy --order-type m
 ## 免責聲明
 
 本示範僅供技術研究與學習，不構成任何投資建議。加密市場高風險，盈虧自負。
+
+## Binance Spot Testnet (new)
+
+The Binance private API extension, guarded Testnet-only execution CLI, deterministic mock tests, risk controls, and verification matrix are documented in [BINANCE_TESTNET.md](BINANCE_TESTNET.md). The original `main.go` strategy modes remain unchanged. Default: dry-run only; real-money Binance trading is not implemented.
