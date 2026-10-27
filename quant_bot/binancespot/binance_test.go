@@ -136,3 +136,27 @@ func TestSignParams(t *testing.T){
  p:=url.Values{"symbol":{"BTCUSDT"},"side":{"BUY"}}
  if Sign(p.Encode(),"testsecret")==Sign(p.Encode(),"other"){t.Fatal("same digest with distinct keys")}
 }
+
+func TestPreflightFailurePersistsKill(t *testing.T){
+ calls:=0
+ srv:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+  calls++
+  w.WriteHeader(http.StatusTooManyRequests)
+  w.Header().Set("Retry-After","5")
+  fmt.Fprint(w,`{"code":-1003,"msg":"Too many requests"}`)
+ }))
+ defer srv.Close()
+ c:=NewClient("testkey","testsecret");c.BaseURL=srv.URL
+ state:=filepath.Join(t.TempDir(),"testnet.json")
+ _,err:=c.PlaceGuarded(state,request(),limits())
+ if err==nil||calls!=1{t.Fatalf("expected blocked preflight: %v %d",err,calls)}
+ saved,err:=LoadState(state)
+ if err!=nil||!saved.Kill||saved.KillReason==""{t.Fatalf("persistent kill failed: %+v %v",saved,err)}
+ _,err=c.PlaceGuarded(state,request(),limits())
+ if err==nil||calls!=1{t.Fatal("kill switch allowed new API requests")}
+}
+func TestMainnetEndpointBlocked(t *testing.T){
+ c:=NewClient("testkey","testsecret")
+ c.BaseURL="https://api.binance.com"
+ if _,err:=c.Account();err==nil||!strings.Contains(err.Error(),"non-testnet"){t.Fatalf("production URL accepted: %v",err)}
+}
