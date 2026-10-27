@@ -58,10 +58,18 @@ func (c *Client) request(method,path string,p url.Values,signed bool) ([]byte,er
  if err!=nil{return nil,err}
  if signed {req.Header.Set("X-MBX-APIKEY",c.Key)}
  resp,err:=c.HTTP.Do(req)
- if err!=nil {c.failed=true; return nil,fmt.Errorf("%w: transport failure: %v",ErrUnknownExecution,err)}
+ if err!=nil {
+  c.failed=true
+  if method==http.MethodPost {return nil,fmt.Errorf("%w: transport failure: %v",ErrUnknownExecution,err)}
+  return nil,fmt.Errorf("transport failure: %w",err)
+ }
  defer resp.Body.Close()
  data,err:=io.ReadAll(io.LimitReader(resp.Body,1<<20))
- if err!=nil {c.failed=true;return nil,err}
+ if err!=nil {
+  c.failed=true
+  if method==http.MethodPost {return nil,fmt.Errorf("%w: response read error: %v",ErrUnknownExecution,err)}
+  return nil,err
+ }
  if resp.StatusCode<200||resp.StatusCode>=300 {
   c.failed=true
   var payload struct{Code int `json:"code"`;Msg string `json:"msg"`}
@@ -197,8 +205,8 @@ func (c *Client) Submit(r OrderRequest) (Order,error) {
  if err!=nil{return Order{},err}
  var o Order
  err=json.Unmarshal(b,&o)
- if err!=nil{c.failed=true}
- return o,err
+ if err!=nil {c.failed=true;return Order{},fmt.Errorf("%w: invalid order response: %v",ErrUnknownExecution,err)}
+ return o,nil
 }
 
 type RiskLimits struct {MaxPositionUSDT,MaxDailyLossUSDT,MaxDrawdownPct,FeeReservePct float64}
@@ -288,10 +296,15 @@ func (c *Client) PlaceGuarded(statePath string,request OrderRequest,limits RiskL
   if status,ok:=s.Orders[request.ClientID];ok{return fmt.Errorf("client ID already reserved (%s); use status lookup, never resubmit",status)}
   // Fail closed until previous orders are reconciled, including unknown executions.
   for _,status:=range s.Orders{if !IsTerminal(status){return errors.New("unresolved prior order; query status first")}}
-  info,err:=c.ExchangeInfo(request.Symbol);if err!=nil{return err}
-  mark,err:=c.Price(request.Symbol);if err!=nil{return err}
-  a,err:=c.Account();if err!=nil{return err}
-  pending,err:=c.OpenOrders(request.Symbol);if err!=nil{return err}
+  trip:=func(cause error)error{
+   s.Kill=true;s.KillReason="API preflight failure: manual reconciliation required"
+   if saveErr:=SaveState(statePath,s);saveErr!=nil{return fmt.Errorf("%w; could not persist halt: %v",cause,saveErr)}
+   return cause
+  }
+  info,err:=c.ExchangeInfo(request.Symbol);if err!=nil{return trip(err)}
+  mark,err:=c.Price(request.Symbol);if err!=nil{return trip(err)}
+  a,err:=c.Account();if err!=nil{return trip(err)}
+  pending,err:=c.OpenOrders(request.Symbol);if err!=nil{return trip(err)}
   if len(pending)>0{return errors.New("exchange has open orders; reconcile manually before new order")}
   equity,err:=Assess(a,info,mark,request,limits)
   riskErr:=s.Observe(c.Clock().UTC().Format("2006-01-02"),equity,limits)
