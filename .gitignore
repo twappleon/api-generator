@@ -2,3 +2,8 @@
 out
 *.zip
 .gradle
+# Quant bot: never commit local Testnet state or credentials
+quant_bot/state-testnet*.json
+quant_bot/state-testnet*.json.lock
+quant_bot/.env
+quant_bot/.env.*
