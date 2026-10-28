@@ -141,8 +141,8 @@ func main(){
  token:=os.Getenv("TELEGRAM_BOT_TOKEN")
  owner,err:=strconv.ParseInt(os.Getenv("TELEGRAM_OWNER_ID"),10,64)
  if err!=nil||owner<=0||token==""{log.Fatal("set TELEGRAM_BOT_TOKEN and numeric TELEGRAM_OWNER_ID; no secrets in source code")}
- if strings.ContainsAny(token," /\
-"){log.Fatal("invalid token format")}
+ if strings.ContainsAny(token," /"){log.Fatal("invalid token format")}
+
  b:=&bot{token:token,owner:owner,client:&http.Client{Timeout:35*time.Second},base:telegramURL+token+"/",state:"state-testnet.json",
  spot:binancespot.NewClient(os.Getenv("BINANCE_TESTNET_API_KEY"),os.Getenv("BINANCE_TESTNET_API_SECRET"))}
  if state:=os.Getenv("BINANCE_TESTNET_STATE");state!=""{b.state=state}
