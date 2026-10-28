@@ -59,79 +59,42 @@ func (b *bot) send(text string) error {
 func (b *bot) view(action string)string{
  switch action {
  case "home","/start","/menu":
-  return "🤖 量化交易控制台
-
-🟢 操作模式：唯讀控制台
-🧪 Binance Spot Testnet
-🔒 真實資金交易：關閉
-
-請點下方按鈕查看資訊。
-此介面不能送出訂單或解除風控停機。"
+  return "🤖 量化交易控制台\n\n🟢 操作模式：唯讀控制台\n🧪 Binance Spot Testnet\n🔒 真實資金交易：關閉\n\n請點下方按鈕查看資訊。\n此介面不能送出訂單或解除風控停機。"
  case "help","/help":
-  return "📖 新手操作
-
-💰 測試資產：讀取 Binance Testnet 帳戶餘額
-📋 訂單紀錄：查看本機已追蹤委託
-🛡️ 風控狀態：查看停機及當日風險數據
-
-所有按鈕只做查詢，不會買入或賣出。
-查詢失敗時不會猜測餘額或交易狀態。"
+  return "📖 新手操作\n\n💰 測試資產：讀取 Binance Testnet 帳戶餘額\n📋 訂單紀錄：查看本機已追蹤委託\n🛡️ 風控狀態：查看停機及當日風險數據\n\n所有按鈕只做查詢，不會買入或賣出。\n查詢失敗時不會猜測餘額或交易狀態。"
  case "risk","/risk":
   s,err:=binancespot.LoadState(b.state)
-  if err!=nil{return "⚠️ 風控資料讀取失敗，請檢查主機狀態。
-"+err.Error()}
-  if s.Day=="" {return "⚪ 尚無可靠風控快照。
-尚未執行 Testnet 訂單前置檢查，不能代表交易安全。"}
+  if err!=nil{return "⚠️ 風控資料讀取失敗，請檢查主機狀態。\n"+err.Error()}
+  if s.Day=="" {return "⚪ 尚無可靠風控快照。\n尚未執行 Testnet 訂單前置檢查，不能代表交易安全。"}
   state:="✅ 未觸發本地停機"
   if s.Kill{state="🛑 已停機："+s.KillReason}
-  return fmt.Sprintf("🛡️ 風控狀態
-%s
-
-風控日期 UTC：%s
-當日基準：%.2f USDT
-記錄峰值：%.2f USDT
-
-注意：數據為最近一次記錄，非即時帳戶淨值。",state,s.Day,s.DayStart,s.Peak)
+  return fmt.Sprintf("🛡️ 風控狀態\n%s\n\n風控日期 UTC：%s\n當日基準：%.2f USDT\n記錄峰值：%.2f USDT\n\n注意：數據為最近一次記錄，非即時帳戶淨值。",state,s.Day,s.DayStart,s.Peak)
  case "orders","/orders":
   s,err:=binancespot.LoadState(b.state)
   if err!=nil{return "⚠️ 訂單資料讀取失敗："+err.Error()}
-  if len(s.Orders)==0 {return "📋 尚無本機委託紀錄。
-這不代表交易所上沒有其他委託。"}
-  out:="📋 本機 Testnet 訂單狀態（非即時）
-
-"
+  if len(s.Orders)==0 {return "📋 尚無本機委託紀錄。\n這不代表交易所上沒有其他委託。"}
+  out:="📋 本機 Testnet 訂單狀態（非即時）\n\n"
   count:=0
   for id,status:=range s.Orders {
-   if count==15 {out+="
-僅顯示前 15 筆。";break}
-   out+=id+"："+status+"
-";count++
+   if count==15 {out+="\n僅顯示前 15 筆。";break}
+   out+=id+"："+status+"\n";count++
   }
-  out+="
-⚠️ 如有 PENDING_UNKNOWN，請在命令列人工對帳，勿重送訂單。"
+  out+="\n⚠️ 如有 PENDING_UNKNOWN，請在命令列人工對帳，勿重送訂單。"
   return out
  case "balance","/balance":
-  if b.spot.Key==""||b.spot.Secret=="" {return "⚪ 尚未設定 Binance Spot Testnet 金鑰。
-請在主機環境設定測試網專用憑證。"}
+  if b.spot.Key==""||b.spot.Secret=="" {return "⚪ 尚未設定 Binance Spot Testnet 金鑰。\n請在主機環境設定測試網專用憑證。"}
   a,err:=b.spot.Account()
-  if err!=nil{return "⚠️ 測試網資產查詢失敗，停止顯示可能過期的數據。
-請在主機查閱錯誤紀錄。"}
-  out:="💰 Binance Spot Testnet 資產
-
-"
+  if err!=nil{return "⚠️ 測試網資產查詢失敗，停止顯示可能過期的數據。\n請在主機查閱錯誤紀錄。"}
+  out:="💰 Binance Spot Testnet 資產\n\n"
   n:=0
   for _,bal:=range a.Balances {
    if bal.Free=="0"&&bal.Locked=="0"{continue}
-   out+=fmt.Sprintf("%s：可用 %s / 凍結 %s
-",bal.Asset,bal.Free,bal.Locked)
+   out+=fmt.Sprintf("%s：可用 %s / 凍結 %s\n",bal.Asset,bal.Free,bal.Locked)
    n++
-   if n==20 {out+="（僅列出前20項）
-";break}
+   if n==20 {out+="（僅列出前20項）\n";break}
   }
-  if n==0{out+="未發現非零餘額，或餘額皆為零。
-"}
-  return out+"
-🧪 僅測試資金；不是實盤資產。"
+  if n==0{out+="未發現非零餘額，或餘額皆為零。\n"}
+  return out+"\n🧪 僅測試資金；不是實盤資產。"
  default:return "❓ 不認識這個操作。請使用下方按鈕。"
  }
 }
