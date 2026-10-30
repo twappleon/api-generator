@@ -56,12 +56,16 @@ func TestPaperResumeHelper(t *testing.T) {
 	if path == "" {
 		t.Skip("subprocess only")
 	}
-	steps := map[string]int{"103": 103, "12": 12, "115": 115}[os.Getenv("QUANT_PAPER_TEST_STEPS")]
+	steps := map[string]int{"103": 103, "12": 12, "115": 115, "11": 11, "crash": 12}[os.Getenv("QUANT_PAPER_TEST_STEPS")]
 	if steps == 0 {
 		t.Fatal("bad test steps")
 	}
 	http.DefaultTransport = forbiddenNetwork{t}
-	if err := runPaperSaved(defaultConfig(), "binance", steps, 0, true, path); err != nil {
+	sleep := 0
+	if os.Getenv("QUANT_PAPER_TEST_STEPS") == "crash" {
+		sleep = 30
+	}
+	if err := runPaperSaved(defaultConfig(), "binance", steps, sleep, true, path); err != nil {
 		t.Fatal(err)
 	}
 }

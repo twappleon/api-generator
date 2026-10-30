@@ -717,7 +717,7 @@ func runPaperLoop(cfg Config, exchange string, iterations, sleepSeconds int, off
 		}
 		snapshot.Cash = cash
 		snapshot.Position = position
-		snapshot.Step = startStep + step
+		snapshot.Step++ // Count committed candles, not polling attempts.
 		snapshot.LastCandle = latest.OpenTime
 		if statePath != "" {
 			if err := paperstate.Save(statePath, snapshot); err != nil {
