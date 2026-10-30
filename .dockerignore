@@ -1,0 +1,11 @@
+.git
+**/.env
+**/.env.*
+**/.local
+**/logs
+**/*.paper.json
+**/state-testnet.json
+**/*.pem
+**/*.key
+**/*.sqlite*
+**/.DS_Store
