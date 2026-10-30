@@ -300,3 +300,20 @@ PASS（10:59:19Z／35Z／44Z）。快照仍不存在，真實停機鎖／跨日�
   持倉／平倉（僅 mock 覆蓋）、24 小時運行、樣本外／多市場策略評估、
   真實撮合滑價／部分成交／容量驗證、斷電／硬體儲存故障。
   OHLC 模擬與停機補算不代表實時可成交。Render 保持取消。
+
+## 2026-10-30 — 即時 Paper 重試／恢復／健康狀態
+
+- F7–F9 mock PASS：網路／429／5xx 分類、Retry-After、退避上限、成功重設、
+  多次失敗後帳務等同連續處理、checkpoint 重啟去重、取消退出、長等待心跳、
+  壞快照保留、sidecar 保存失敗與殘留鎖 fail-closed；Telegram 中文健康狀態
+  與資料過期獨立判斷、缺檔／損壞未知及唯讀不改檔。
+- `bash scripts/verify-local.sh` PASS：85 個頂層測試（含 race）、vet、離線
+  backtest／paper、dry-run、建置 Telegram／research、缺憑證及送單保護。
+  原始紀錄：`paper-runtime-verification.txt`。`git diff --check` PASS。
+- F10 PASS：測試只用 TempDir；舊 session 快照與啟動前績效備份 SHA-256
+  仍分別為 `85a0a66d487492e5568a53fa4d1697790bf1ddef6d07ddca4a0699c2590bced3`
+  與 `233dc0a518c682487323c82ed2787b1d2ba654f347be1f676afbba995dec78da`。
+  現有即時 Paper 由原背景程序持續自然更新，未改寫或替換其 binary。
+- NOT RUN：真實斷網後恢復、新版 Telegram 健康頁平台驗證、新版 SIGKILL
+  程序復原、24 小時運行；mock 不代表上述實測。現有 Paper／Bot 尚未重啟
+  載入此次改動，使用原命令正常重啟後才生效。沒有發送交易所訂單。

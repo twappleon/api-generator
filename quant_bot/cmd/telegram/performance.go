@@ -45,5 +45,35 @@ func (b *bot) performanceView() string {
 	if s.Updated > 0 {
 		text += "快照更新 UTC：" + time.UnixMilli(s.Updated).UTC().Format(time.RFC3339) + "\n"
 	}
+	text += performanceHealth(path, s, time.Now())
 	return text + "資料為保存時估值，非即時報價；快照不是程序心跳。\n下一根開盤成交模型，非實際成交或獲利保證；此頁不啟動策略或送單。"
+}
+
+func performanceHealth(path string, s research.State, now time.Time) string {
+	text := ""
+	r, e := research.ReadRuntime(path)
+	if e != nil {
+		text = "運行狀態：未知（尚無有效心跳）\n"
+	} else if r.Heartbeat > now.Add(5*time.Second).UnixMilli() || now.UnixMilli()-r.Heartbeat > 45000 {
+		text = "運行狀態：心跳過期／時鐘異常，無法確認在線\n"
+	} else {
+		labels := map[string]string{"polling": "正在查詢／恢復補算", "running": "運行中（近期心跳）", "retrying": "網路重試中", "stopped": "已停止", "failed": "故障停止"}
+		text = fmt.Sprintf("運行狀態：%s；連續失敗 %d 次\n", labels[r.State], r.Failures)
+		if r.Restored {
+			text += "啟動來源：既有 checkpoint；逐根接續，不重複已保存行情\n"
+		}
+		if r.LastSuccess > 0 {
+			text += "最近成功查詢 UTC：" + time.UnixMilli(r.LastSuccess).UTC().Format(time.RFC3339) + "\n"
+		}
+		if r.NextRetry > 0 {
+			text += "下次重試 UTC：" + time.UnixMilli(r.NextRetry).UTC().Format(time.RFC3339) + "\n"
+		}
+	}
+	d := research.Duration(s.Config.Interval)
+	if s.Last == 0 || s.Last > now.UnixMilli() || now.UnixMilli()-(s.Last+d) > 2*d+30000 {
+		text += "資料狀態：過期／未知，僅供查看保存值\n"
+	} else {
+		text += "資料狀態：近期已收盤行情（非即時報價）\n"
+	}
+	return text
 }

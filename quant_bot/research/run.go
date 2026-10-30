@@ -97,24 +97,6 @@ func Run(ctx context.Context, m Market, c Config, path string, polls int, interv
 		return errors.New("polls must be >=0; interval >=1s")
 	}
 	return paperstate.WithLock(path, func() error {
-		for i := 0; polls == 0 || i < polls; i++ {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if err := Poll(ctx, m, c, path); err != nil {
-				return err
-			}
-			if polls > 0 && i+1 == polls {
-				break
-			}
-			timer := time.NewTimer(interval)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
-		}
-		return nil
+		return runLoop(ctx, c, path, polls, interval, func() error { return Poll(ctx, m, c, path) }, time.Now, waitContext)
 	})
 }

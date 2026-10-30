@@ -10,6 +10,7 @@ import (
 	"quant_bot/strategy"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPerformanceOwnerRefreshAndIsolation(t *testing.T) {
@@ -85,5 +86,42 @@ func TestPerformanceOwnerRefreshAndIsolation(t *testing.T) {
 	b.performanceState = b.state
 	if !strings.Contains(b.performanceView(), "路徑") {
 		t.Fatal("shared path accepted")
+	}
+}
+
+func TestPerformanceRuntimeAndStalenessReadOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "live.performance.paper.json")
+	now := time.Unix(1800000000, 0)
+	s, _ := research.New(research.Config{Config: strategy.Config{Symbol: "BTCUSDT", Interval: "1m", ShortWindow: 2, LongWindow: 3, InitialUSDT: 1000, RiskPerTrade: .02, FeeRate: .001, StopLossPct: .1, TakeProfitPct: .2}}, "live-paper")
+	s.Last = now.Add(-time.Minute).UnixMilli()
+	if got := performanceHealth(path, s, now); !strings.Contains(got, "未知") || !strings.Contains(got, "近期已收盤") {
+		t.Fatal(got)
+	}
+	for _, tc := range []struct {
+		state string
+		age   time.Duration
+		want  string
+	}{
+		{"running", 0, "運行中"}, {"retrying", 0, "網路重試中"}, {"polling", 0, "恢復補算"}, {"stopped", 0, "已停止"}, {"failed", 0, "故障停止"}, {"running", time.Minute, "心跳過期"}, {"running", -time.Minute, "時鐘異常"},
+	} {
+		r := research.Runtime{Version: 1, State: tc.state, Heartbeat: now.Add(-tc.age).UnixMilli(), LastSuccess: now.UnixMilli(), Failures: 2, NextRetry: now.Add(time.Minute).UnixMilli(), Restored: true}
+		raw, _ := json.Marshal(r)
+		os.WriteFile(path+".runtime.json", raw, 0600)
+		got := performanceHealth(path, s, now)
+		if !strings.Contains(got, tc.want) {
+			t.Fatal(got)
+		}
+		after, _ := os.ReadFile(path + ".runtime.json")
+		if string(after) != string(raw) {
+			t.Fatal("view wrote runtime")
+		}
+	}
+	s.Last = now.Add(-5 * time.Minute).UnixMilli()
+	if got := performanceHealth(path, s, now); !strings.Contains(got, "資料狀態：過期") {
+		t.Fatal(got)
+	}
+	os.WriteFile(path+".runtime.json", []byte(`{"State":"SECRET"}`), 0600)
+	if got := performanceHealth(path, s, now); !strings.Contains(got, "未知") || strings.Contains(got, "SECRET") {
+		t.Fatal(got)
 	}
 }

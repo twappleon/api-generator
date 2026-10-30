@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
 )
+
+var errMarketRedirect = errors.New("market redirect blocked")
 
 const marketHost = "https://data-api.binance.vision"
 
@@ -28,18 +31,43 @@ func (m Market) get(ctx context.Context, path string, q url.Values, out any) err
 	if m.Client != nil {
 		client = *m.Client
 	}
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("market redirect blocked") }
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return errMarketRedirect }
 	res, err := client.Do(req)
 	if err != nil {
-		return errors.New("public market transport failed")
+		if errors.Is(err, errMarketRedirect) {
+			return errMarketRedirect
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var n net.Error
+		if errors.As(err, &n) {
+			return &RetryError{Message: "public market transport failed"}
+		}
+		return errors.New("public market transport rejected")
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
+		if res.StatusCode == 429 || res.StatusCode >= 500 {
+			delay := time.Duration(0)
+			if seconds, e := strconv.Atoi(res.Header.Get("Retry-After")); e == nil && seconds > 0 {
+				if seconds > 86400 {
+					return errors.New("retry delay exceeds safety limit")
+				}
+				delay = time.Duration(seconds) * time.Second
+			} else if at, e := http.ParseTime(res.Header.Get("Retry-After")); e == nil {
+				delay = time.Until(at)
+			}
+			if delay > 24*time.Hour {
+				return errors.New("retry delay exceeds safety limit")
+			}
+			return &RetryError{Message: fmt.Sprintf("public market HTTP %d", res.StatusCode), After: delay}
+		}
 		return fmt.Errorf("public market HTTP %d; stopped", res.StatusCode)
 	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, 2*1024*1024+1))
 	if err != nil {
-		return err
+		return &RetryError{Message: "public market body interrupted"}
 	}
 	if len(raw) > 2*1024*1024 {
 		return errors.New("market response too large")
