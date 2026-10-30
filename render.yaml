@@ -1,0 +1,27 @@
+# Telegram read-only worker. Apply only after confirming paid compute and secrets.
+services:
+  - type: worker
+    name: quant-bot-telegram-readonly
+    runtime: go
+    repo: https://github.com/twappleon/api-generator
+    branch: cursor/quant-bot-usdt-c6b3
+    rootDir: quant_bot
+    region: singapore
+    plan: 0.5c-512mb
+    numInstances: 1
+    autoDeployTrigger: "off"
+    buildCommand: GOWORK=off go build -trimpath -o bin/telegram ./cmd/telegram
+    startCommand: ./bin/telegram
+    disk:
+      name: quant-bot-state
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_OWNER_ID
+        sync: false
+      - key: BINANCE_TESTNET_STATE
+        value: /var/data/state-testnet.json
+      - key: PAPER_STATE
+        value: /var/data/session.paper.json
