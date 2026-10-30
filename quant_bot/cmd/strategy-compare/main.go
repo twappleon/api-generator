@@ -203,7 +203,7 @@ func main(){
  output:=flag.String("output","strategy-comparison.json","result JSON path")
  flag.Parse()
  ctx,cancel:=context.WithTimeout(context.Background(),4*time.Minute);defer cancel()
- symbols:=[]string{"BTCUSDT","ETHUSDT"}
+ symbols:=[]string{"BTCUSDT","ETHUSDT","SOLUSDT"}
  periods:=[]struct{label,start,end string}{
   {"2021","2021-01-01","2022-01-01"},
   {"2022","2022-01-01","2023-01-01"},
@@ -247,7 +247,7 @@ func main(){
  }
  data,e:=json.MarshalIndent(all,"","  ");if e!=nil{panic(e)}
  if e=os.WriteFile(*output,data,0644);e!=nil{panic(e)}
- fmt.Println("\nRANKING based on 12 independent symbol-year regimes (BTC/ETH x 6); costs included.")
+ fmt.Println("\nRANKING based on 18 symbol-year segments (BTC/ETH/SOL x 6); costs included.")
  type summary struct{name string;positive,positive2,trades int;median,worst,maxdd float64}
  sums:=[]summary{}
  for _,name:=range names{
@@ -255,10 +255,10 @@ func main(){
   for _,r:=range all{if r.Strategy!=name{continue};if r.Cost=="normal"{v=append(v,r.ReturnPct);trades+=r.Trades;if r.ReturnPct<worst{worst=r.ReturnPct};if r.MaxDDPct>maxdd{maxdd=r.MaxDDPct}}else{v2=append(v2,r.ReturnPct)}}
   sort.Float64s(v);sort.Float64s(v2)
   pos,pos2:=0,0;for _,z:=range v{if z>0{pos++}};for _,z:=range v2{if z>0{pos2++}}
-  sums=append(sums,summary{name,pos,pos2,trades,(v[5]+v[6])/2,worst,maxdd})
+  sums=append(sums,summary{name,pos,pos2,trades,(v[len(v)/2-1]+v[len(v)/2])/2,worst,maxdd})
  }
  sort.Slice(sums,func(i,j int)bool{if sums[i].positive2!=sums[j].positive2{return sums[i].positive2>sums[j].positive2};return sums[i].median>sums[j].median})
- fmt.Println("name | profitable normal/12 | profitable double/12 | median return | worst return | worst drawdown | total trades")
- for _,s:=range sums{fmt.Printf("RANK %-16s %2d/12 %2d/12 %+8.3f%% %+8.3f%% %7.3f%% %4d\n",s.name,s.positive,s.positive2,s.median,s.worst,s.maxdd,s.trades)}
+ fmt.Println("name | profitable normal/18 | profitable double/18 | median return | worst return | worst drawdown | total trades")
+ for _,s:=range sums{fmt.Printf("RANK %-16s %2d/18 %2d/18 %+8.3f%% %+8.3f%% %7.3f%% %4d\n",s.name,s.positive,s.positive2,s.median,s.worst,s.maxdd,s.trades)}
  fmt.Printf("RESULT_FILE %s rows=%d\n",*output,len(all))
 }
