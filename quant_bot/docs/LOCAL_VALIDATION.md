@@ -135,4 +135,4 @@ C10 仍 NOT RUN，全程沒有送出訂單。此補充取代上文帳戶查詢�
   原始輸出：`docs/single-order-verification.txt`。
 - 外部非空／部分成交／單筆 GET order：NOT RUN。先前 BTCUSDT／ETHUSDT
   沒有返回既有訂單；本次未猜測訂單 ID，也未建立任何訂單來製造測試資料。
-- 目前運行中的 Bot 未重啟載入這次新增指令；不將 mock 通過宣稱為真實 UI 通過。
+- 17:34 新版重啟後，Telegram `/order` 缺參數引導 PASS；BTCUSDT／ETHUSDT 仍未返回既有訂單，單筆 GET order 外部測試仍 NOT RUN。詳見 `TELEGRAM_LOCAL_E2E.md`。

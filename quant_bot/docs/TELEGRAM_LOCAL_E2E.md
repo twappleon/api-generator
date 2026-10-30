@@ -80,3 +80,16 @@ C9：Account 與 OpenOrders 已有真實 Testnet 查詢證據；本次亦驗證 
 [push CI](https://github.com/twappleon/api-generator/actions/runs/41039667717)
 與 [PR CI](https://github.com/twappleon/api-generator/actions/runs/41039675733)
 均為 success。本次只補實測紀錄，未重跑 Go 測試。
+
+## 單筆查詢新版啟動確認 — 2026-10-30 17:34–17:35
+
+執行版本 `ad433e2`，使用者重新隱藏輸入憑證並完成配對後，直接操作 Telegram：
+
+- `/order`：10:34:37Z 正確提示 `/order BTCUSDT <原 Client ID>`，標示只查既有訂單；
+  指令路由／缺參數引導 PASS，這不是 GET order API 成功證據。
+- `/orders BTCUSDT`：10:34:56Z，openOrders 0 筆、allOrders 未返回紀錄。
+- `/orders ETHUSDT`：10:35:03Z，openOrders 0 筆、allOrders 未返回紀錄。
+
+已確認新版指令載入，但查詢範圍內沒有可用既有 Client ID；未猜測 ID、未送單、
+未撤單或修改訂單。單筆 GET order／非空／部分成交外部驗證仍 NOT RUN，
+不將這兩個交易對空結果推論為全帳戶／所有歷史沒有訂單。
