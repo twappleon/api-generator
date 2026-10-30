@@ -5,6 +5,9 @@ on:
       - cursor/quant-bot-usdt-c6b3
     paths:
       - ".github/workflows/quant-validation-20261030.yml"
+  pull_request:
+    paths:
+      - ".github/workflows/quant-validation-20261030.yml"
   workflow_dispatch:
 
 permissions:
