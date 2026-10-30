@@ -98,9 +98,9 @@ func run(symbol,period,name,cost string,b []research.Candle,x ind,start,end int,
  }
  for i:=start;i<end;i++ {
   c:=b[i]
-  if qty>0 && !isHold{
-   if c.Open<=stop {closePos(c.Open)}else if c.Low<=stop {closePos(stop)}
-  }
+  // Time ordering: gap stop at open, prior-close signal at open, then intrabar stop.
+  // Never re-enter at the open after observing the same bar's low.
+  if qty>0 && !isHold && c.Open<=stop {closePos(c.Open)}
   // signal evaluated at previous close, filled at current open
   if i>0 {
    buy,sell:=signal(name,b,x,i-1,qty>0,heldBars)
