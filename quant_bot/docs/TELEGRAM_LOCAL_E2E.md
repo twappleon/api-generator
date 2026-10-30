@@ -457,3 +457,44 @@ supervisor40999 子程序；Bot41637、防休眠45020、observer45021 身分皆�
 本輪嘗試直接操作 Telegram，電腦使用工具回報 Mac 已鎖定且無法自動解鎖；
 未繞過鎖屏，新增成交的 Telegram 顯示核對尚未實測，需要使用者解鎖後補驗。
 24h 觀察仍持續原期限，已知休眠缺口保留，沒有調參、修改原快照、重啟或送出訂單。
+
+
+## 2026-10-30 21:09 UTC: fifth Paper exit, incomplete per-fill evidence
+
+Cumulative closed trades 5, wins 2, realized PnL -9.949418073152135 USDT.
+Fifth trade realized increment +1.558086520404045 USDT. Snapshot changes:
+
+```json
+[
+  {
+    "before": "snapshot-1793391780000-b9ed89f75548.json",
+    "after": "snapshot-1793392680000-e3513a0be04d.json",
+    "observed": "2026-10-30T20:39:57.023517+00:00",
+    "trades": 5,
+    "realized_delta": 1.5580865204040446,
+    "aggregate_fee_delta": 0.991041623550398,
+    "aggregate_slippage_delta": 0.4957686961232062,
+    "position_after": null
+  },
+  {
+    "before": "snapshot-1793393760000-07c1790b00e6.json",
+    "after": "snapshot-1793394480000-a3e4c96b28a8.json",
+    "observed": "2026-10-30T21:09:39.484614+00:00",
+    "trades": 6,
+    "realized_delta": -3.301706119716153,
+    "aggregate_fee_delta": 0.9877366124195515,
+    "aggregate_slippage_delta": 0.49411536389166777,
+    "position_after": null
+  }
+]
+```
+
+Cost deltas include possible entry costs; they are NOT verified exit-only costs.
+Missing intermediate snapshots prevent complete per-fill verification. Telegram
+verification remains NOT TESTED due to the previously confirmed locked Mac; no
+unlock confirmation received and no lock bypass attempted.
+At actual check 21:09:32Z, runtime heartbeat was stale at 20:57:20Z; supervisor
+restart count remained 1. Latest observation gap 726.692540 seconds, 36 total
+gaps above 90 seconds. Original process identities confirmed. Original 24h
+deadline remains; continuous operation cannot pass. No state/config writes,
+forced fills, or exchange orders.
