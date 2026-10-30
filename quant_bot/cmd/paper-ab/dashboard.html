@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="color-scheme" content="dark"/>
+<title>Donchian A/B · Paper Trading 績效</title>
+<style>
+:root { color-scheme: dark; font-family: system-ui,-apple-system,"Noto Sans TC","Microsoft JhengHei",sans-serif; color:#f1f5fb; background:#0c111e; font-variant-numeric:tabular-nums }
+* { box-sizing:border-box } body { margin:0; } main { max-width:1120px; margin:auto; padding:28px 18px 64px }
+.top { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px }
+.eyebrow { color:#92b9ff; font-weight:750; font-size:12px; letter-spacing:.13em; text-transform:uppercase }
+h1 { font-size:clamp(24px,4vw,37px); margin:8px 0 5px; letter-spacing:-.045em }
+h2 { font-size:18px; letter-spacing:-.02em; margin:0 0 12px }
+.sub { color:#9aaac3; font-size:13px; line-height:1.65; margin:0 }
+.chip { border:1px solid #285b56; background:#123830; border-radius:99px; font-size:12px; padding:9px 12px; color:#91f4cb; white-space:nowrap; font-weight:650 }
+.chip.warn { color:#ffd49b; border-color:#755338; background:#3a281d }
+.box { border:1px solid #29354b; background:#141c2d; border-radius:17px; padding:20px }
+.summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin:22px 0 14px }
+.kpi-title { display:flex;align-items:center;gap:8px;color:#b1c0d6;font-size:14px;font-weight:650 }
+.dot { width:10px;height:10px;border-radius:50%;background:#6da5ff }
+.dot.b { background:#b9a4fb }
+.money { font-size:clamp(33px,5vw,46px);font-weight:750;letter-spacing:-.065em;margin:8px 0 2px }
+.positive { color:#62e3b2 } .negative { color:#fca0a7 }
+.label { font-size:12px;color:#96a9c1 }
+.small-kpis { display:flex;justify-content:space-between; gap:8px;flex-wrap:wrap;border-top:1px solid #2c3850;margin-top:16px;padding-top:12px;font-size:13px;color:#c6d1e1 }
+.number { color:#e8eefb;font-weight:700 }
+.strip { padding:15px 18px;border-radius:13px;border:1px solid #31415a;background:#101c2e;margin-bottom:20px;line-height:1.6 }
+.strip strong { font-size:15px } .strip .sub { margin-top:4px }
+.status-head { display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:27px 0 12px }
+.entries { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px }
+.sym { display:flex;justify-content:space-between;align-items:center;font-size:17px;font-weight:750;gap:10px }
+.price { font-size:24px;font-weight:750;letter-spacing:-.045em;margin:10px 0 2px }
+.meta { font-size:11px;color:#9dafc8;line-height:1.7 }
+.mini-grid { display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px }
+.mini { border:1px solid #33425a;border-radius:12px;padding:13px;background:#0d1829 }
+.mini .a,.mini .b { font-size:12px;font-weight:750;color:#8fbaff }
+.mini .b { color:#c3aeff }
+.mini .money2 { font-size:24px;font-weight:760;margin:7px 0 3px;letter-spacing:-.035em }
+.statrow { display:flex;justify-content:space-between;border-top:1px solid #27374f;padding-top:6px;margin-top:6px;font-size:11px;gap:5px;color:#a2b3ca }
+.statrow strong { color:#e3ecfa;font-weight:650;text-align:right }
+.tip { background:#252d3a;padding:13px 17px;border-radius:12px;color:#d6e1f2;font-size:13px;margin-top:18px;line-height:1.6 }
+.details { color:#92a4ba;font-size:12px;line-height:1.85;margin-top:23px }
+a { color:#9abfff }
+footer { padding-top:20px;border-top:1px solid #2b3950;margin-top:26px;color:#8d9fb6;font-size:12px;line-height:1.8 }
+@media (max-width:900px) { .entries {grid-template-columns:1fr 1fr} }
+@media (max-width:620px) { .summary,.entries {grid-template-columns:1fr} .box {padding:16px} }
+</style>
+</head>
+<body><main>
+<div class="top">
+ <div><div class="eyebrow">BINANCE · READ ONLY · SIMULATED</div><h1>A / B 目前績效</h1><p class="sub">同一份市場行情比較原版 Donchian 和 ATR 波動過濾；全部為模擬資金，沒有真實下單。</p></div>
+ <div class="chip warn" id="health">檢查資料中…</div>
+</div>
+<section class="summary">
+ <div class="box">
+  <div class="kpi-title"><span class="dot"></span>A · 原版 Donchian</div>
+  <div class="money" id="aPnl">—</div><div class="sub" id="aPct">啟動以來模擬淨損益</div>
+  <div class="small-kpis"><span>目前資產 <b class="number" id="aEquity">—</b></span><span>完成交易 <b class="number" id="aTrades">—</b></span><span>有持倉 <b class="number" id="aOpen">—</b></span></div>
+ </div>
+ <div class="box">
+  <div class="kpi-title"><span class="dot b"></span>B · Donchian + ATR 波動過濾</div>
+  <div class="money" id="bPnl">—</div><div class="sub" id="bPct">啟動以來模擬淨損益</div>
+  <div class="small-kpis"><span>目前資產 <b class="number" id="bEquity">—</b></span><span>完成交易 <b class="number" id="bTrades">—</b></span><span>有持倉 <b class="number" id="bOpen">—</b></span></div>
+ </div>
+</section>
+<div class="strip">
+ <strong id="winner">目前比較結果：—</strong>
+ <p class="sub" id="interpretation"></p>
+</div>
+<div class="status-head"><h2>各幣種績效明細</h2><div class="sub" id="updated">最後成功更新：—</div></div>
+<div class="entries" id="coins"><div class="box">正在讀取帳本…</div></div>
+<div class="tip" id="next">策略只根據新的 4 小時已收盤 K 線生成進場訊號，沒有訊號就不會交易。</div>
+<div class="details">
+* A 和 B 各有 BTC、ETH、SOL 三個獨立的 1,000 USDT 模擬帳戶。上方各組總計 $3,000 USDT 起始資金；它不是實際共享資金池。<br/>
+* 資產以最近輪詢得到的 Binance 市場參考價估值，含估計出場成本；模擬交易亦使用假設滑價與手續費。這不是實盤成交績效。<br/>
+* 當行情逾 3 分鐘未成功更新，顯示資料過期，而不是把舊數值當成即時獲利。<br/>
+* 交易樣本不足時，任何領先者都不是統計上確認的較佳策略。
+</div>
+<footer>策略固定：Donchian 20／10 + EMA200，ATR14 × 3 停損；單筆風險預算 0.5%，每次最多投入 $350。B 額外要求 ATR14／收盤價低於 3.5%。網站每 15 秒刷新最近保存的帳本，Go Worker 每約 60 秒輪詢公開報價。</footer>
+</main>
+<script>
+const el=id=>document.getElementById(id);
+const money=(n,sign=false)=>{const x=Number(n)||0;return (sign&&x>0?'+':'')+'$'+Math.abs(x).toFixed(2)*(x<0?-1:1)};
+const signed=(n,d=2)=>{const x=Number(n)||0;return (x>0?'+':'')+x.toFixed(d)};
+const pct=n=>signed(n,2)+'%';
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function metric(root,key,value){el(root+key).textContent=value}
+function setProfit(id,pnl){const target=el(id+'Pnl');target.textContent=signed(pnl,2)+' USDT';target.className='money '+(pnl>0?'positive':pnl<0?'negative':'')}
+function card(sym,p){
+ const mk=(label,x)=>{const gain=x.equity-1000;const win=x.trades?pct((x.wins/x.trades)*100):'—';const floating=x.qty>0?x.equity-(1000+x.realized):0;
+ return '<div class="mini"><div class="'+(label==='A'?'a':'b')+'">'+label+'</div><div class="money2 '+(gain>0?'positive':gain<0?'negative':'')+'">'+pct(gain/10)+'</div><div class="label">損益 '+esc(signed(gain,2))+' USDT</div><div class="statrow"><span>淨值</span><strong>$'+Number(x.equity).toFixed(2)+'</strong></div><div class="statrow"><span>已平倉</span><strong>'+x.trades+' 筆</strong></div><div class="statrow"><span>勝率</span><strong>'+win+'</strong></div><div class="statrow"><span>浮動損益</span><strong>'+signed(floating,2)+'</strong></div><div class="statrow"><span>最大回撤</span><strong>'+pct(x.max_dd*100)+'</strong></div><div class="statrow"><span>目前持倉</span><strong>'+(x.qty>0?'有':'無')+'</strong></div></div>'};
+ return '<section class="box"><div class="sym"><span>'+esc(sym)+'</span><span class="label">'+(p.signal_a?'A 突破訊號':'無新突破')+'</span></div><div class="price">$'+Number(p.quote||0).toLocaleString('en-US',{maximumFractionDigits:4})+'</div><div class="meta">公開報價 '+esc(p.quote_utc||'未知')+'<br>ATR14 波動 '+Number(p.atr_pct||0).toFixed(2)+'% · B '+(p.signal_b?'符合濾網':'尚無進場訊號')+'</div><div class="mini-grid">'+mk('A',p.a)+mk('B',p.b)+'</div></section>';
+}
+async function load(){
+ try{
+  const res=await fetch('/api/status',{cache:'no-store'});
+  if(!res.ok)throw Error('HTTP '+res.status);
+  const s=await res.json(),entries=Object.entries(s.pairs||{});
+  if(entries.length===0)throw Error('尚無模擬帳本');
+  let age=(Date.now()-Date.parse(s.updated_utc))/1000;
+  if(!Number.isFinite(age))age=Infinity;
+  const stale=age>180||age< -45;
+  el('health').className='chip'+(stale?' warn':'');
+  el('health').textContent=stale?'行情過期 · 非即時':'模擬資料更新正常';
+  el('updated').textContent='最後成功更新 '+s.updated_utc+'（UTC）'+(stale?' · 已過期':'');
+  let A={equity:0,trades:0,open:0},B={equity:0,trades:0,open:0};
+  for(const [,p] of entries){
+   for(const [v,sum] of [['a',A],['b',B]]){sum.equity+=p[v].equity;sum.trades+=p[v].trades;sum.open+=p[v].qty>0?1:0}
+  }
+  const initial=entries.length*1000,pnlA=A.equity-initial,pnlB=B.equity-initial;
+  setProfit('a',pnlA);setProfit('b',pnlB);
+  metric('a','Equity','$'+A.equity.toFixed(2));metric('a','Trades',A.trades+' 筆');metric('a','Open',A.open+' 幣');
+  metric('b','Equity','$'+B.equity.toFixed(2));metric('b','Trades',B.trades+' 筆');metric('b','Open',B.open+' 幣');
+  el('aPct').textContent='啟動以來報酬 '+pct(pnlA/initial*100);
+  el('bPct').textContent='啟動以來報酬 '+pct(pnlB/initial*100);
+  const count=A.trades+B.trades+A.open+B.open;
+  if(count===0){el('winner').textContent='尚無成交，暫時無法比較勝負';el('interpretation').textContent='A、B 目前都沒有交易訊號或持倉。損益為零代表尚未開始交易，不代表已證明獲利穩定。'}
+  else { const diff=pnlA-pnlB;el('winner').textContent= Math.abs(diff)<.005?'A、B 目前績效相同':(diff>0?'A 暫時領先 B':'B 暫時領先 A')+' '+Math.abs(diff).toFixed(2)+' USDT';
+   el('interpretation').textContent='只比較這次前向模擬的資產淨值差異；尚需累積足夠交易與市場環境，才能評估統計穩健性。'}
+  el('coins').innerHTML=entries.map(([sym,p])=>card(sym,p)).join('');
+  const last=Math.max(...entries.map(([,p])=>p.last_open||0)), next=last+8*3600000;
+  el('next').textContent='下一個預計的新 4h K 線收盤時間：'+new Date(next).toISOString().replace('T',' ').slice(0,16)+' UTC（柬埔寨 +7 小時）。'+(stale?' 行情連線更新異常，請先恢復資料新鮮度。':'若沒有突破訊號，策略會繼續保持現金。');
+ }catch(e){el('health').className='chip warn';el('health').textContent='無法讀取最新績效';el('updated').textContent=String(e)}
+}
+load();setInterval(load,15000);
+</script>
+</body></html>
