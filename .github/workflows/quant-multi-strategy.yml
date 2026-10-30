@@ -4,10 +4,12 @@ on:
     branches: [cursor/quant-bot-usdt-c6b3]
     paths:
       - "quant_bot/cmd/strategy-compare/**"
+      - "quant_bot/research/engine.go"
       - ".github/workflows/quant-multi-strategy.yml"
   pull_request:
     paths:
       - "quant_bot/cmd/strategy-compare/**"
+      - "quant_bot/research/engine.go"
       - ".github/workflows/quant-multi-strategy.yml"
   workflow_dispatch:
 
