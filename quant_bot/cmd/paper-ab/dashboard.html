@@ -39,7 +39,7 @@ h2 { font-size:18px; letter-spacing:-.02em; margin:0 0 12px }
 .mini .money2 { font-size:24px;font-weight:760;margin:7px 0 3px;letter-spacing:-.035em }
 .statrow { display:flex;justify-content:space-between;border-top:1px solid #27374f;padding-top:6px;margin-top:6px;font-size:11px;gap:5px;color:#a2b3ca }
 .statrow strong { color:#e3ecfa;font-weight:650;text-align:right }
-.tip { background:#252d3a;padding:13px 17px;border-radius:12px;color:#d6e1f2;font-size:13px;margin-top:18px;line-height:1.6 }
+#backtest table { width:100%;border-collapse:collapse;font-size:13px;margin-top:12px }\n#backtest th,#backtest td{padding:10px 6px;text-align:right;border-bottom:1px solid #29364a} #backtest th:first-child,#backtest td:first-child{text-align:left;color:#9daec5} #backtest th{color:#aebbd0;font-weight:600}\n.tip { background:#252d3a;padding:13px 17px;border-radius:12px;color:#d6e1f2;font-size:13px;margin-top:18px;line-height:1.6 }
 .details { color:#92a4ba;font-size:12px;line-height:1.85;margin-top:23px }
 a { color:#9abfff }
 footer { padding-top:20px;border-top:1px solid #2b3950;margin-top:26px;color:#8d9fb6;font-size:12px;line-height:1.8 }
@@ -71,6 +71,19 @@ footer { padding-top:20px;border-top:1px solid #2b3950;margin-top:26px;color:#8d
 <div class="status-head"><h2>各幣種績效明細</h2><div class="sub" id="updated">最後成功更新：—</div></div>
 <div class="entries" id="coins"><div class="box">正在讀取帳本…</div></div>
 <div class="tip" id="next">策略只根據新的 4 小時已收盤 K 線生成進場訊號，沒有訊號就不會交易。</div>
+<section class="box" id="backtest" style="margin-top:20px">
+ <h2>歷史回測參考（不是目前即時獲利）</h2>
+ <p class="sub">2021–2025 及 2026 年 1–9 月，24 幣種共 134 個有效期間。每幣每期間各自以 $1,000 起算，不能視為實際共享投資組合收益。</p>
+ <table><thead><tr><th>歷史指標</th><th>A 原版</th><th>B 波動過濾</th></tr></thead>
+ <tbody>
+ <tr><td>正常成本獲利期間</td><td>85 / 134</td><td>88 / 134</td></tr>
+ <tr><td>雙倍成本獲利期間</td><td>75 / 134</td><td>79 / 134</td></tr>
+ <tr><td>正常成本報酬中位數</td><td>+1.00%</td><td>+0.89%</td></tr>
+ <tr><td>最差單期間報酬</td><td>-5.83%</td><td>-5.58%</td></tr>
+ <tr><td>最大單期間收盤回撤</td><td>11.35%</td><td>10.62%</td></tr>
+ </tbody></table>
+ <p class="sub" style="margin-top:12px">B 的獲利期間稍多、回撤略低，但歷史中位報酬也較低；尚未證明全面優於 A。此表固定為先前的歷史研究，與上方最新 Paper 損益分開。</p>
+</section>
 <div class="details">
 * A 和 B 各有 BTC、ETH、SOL 三個獨立的 1,000 USDT 模擬帳戶。上方各組總計 $3,000 USDT 起始資金；它不是實際共享資金池。<br/>
 * 資產以最近輪詢得到的 Binance 市場參考價估值，含估計出場成本；模擬交易亦使用假設滑價與手續費。這不是實盤成交績效。<br/>
@@ -81,7 +94,6 @@ footer { padding-top:20px;border-top:1px solid #2b3950;margin-top:26px;color:#8d
 </main>
 <script>
 const el=id=>document.getElementById(id);
-const money=(n,sign=false)=>{const x=Number(n)||0;return (sign&&x>0?'+':'')+'$'+Math.abs(x).toFixed(2)*(x<0?-1:1)};
 const signed=(n,d=2)=>{const x=Number(n)||0;return (x>0?'+':'')+x.toFixed(d)};
 const pct=n=>signed(n,2)+'%';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
