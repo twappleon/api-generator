@@ -498,3 +498,27 @@ restart count remained 1. Latest observation gap 726.692540 seconds, 36 total
 gaps above 90 seconds. Original process identities confirmed. Original 24h
 deadline remains; continuous operation cannot pass. No state/config writes,
 forced fills, or exchange orders.
+
+Follow-up within this check: replay reached closed trade 6, cumulative realized
+PnL -13.251124192868288 USDT, cash 986.7488758071314 USDT, flat.
+For trades 5 and 6 specifically, saved before-state has a position and after-state
+is flat with exactly one additional close. Their exit cost deltas reconcile
+with the engine PnL formula within 1e-8 (results below). Thus snapshot-level
+exit accounting is verified; original OHLC/per-bar execution and Telegram
+remain unverified due to observation gaps and locked Mac.
+```json
+[
+  {
+    "trade": 5,
+    "exit_fee_delta": 0.991041623550398,
+    "exit_slippage_delta": 0.4957686961232062,
+    "realized_delta": 1.5580865204040446
+  },
+  {
+    "trade": 6,
+    "exit_fee_delta": 0.9877366124195515,
+    "exit_slippage_delta": 0.49411536389166777,
+    "realized_delta": -3.301706119716153
+  }
+]
+```
