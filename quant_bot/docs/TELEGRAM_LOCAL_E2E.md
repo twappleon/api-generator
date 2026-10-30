@@ -410,3 +410,50 @@ supervisor40999 子程序；Bot41637、防休眠45020、observer45021 身分皆�
 
 保留所有原快照及缺口證據，24h 觀察繼續原到期時間，不重置起點、不延長
 防休眠、不提前宣稱通過。此次已證實連續性中斷，到期報告必須揭露。
+
+
+## 2026-10-30T20:23:11.291177+00:00：休眠補算後新增平倉；Telegram 被鎖屏阻擋
+
+實際檢查晚於排程觸發時間。Paper 自然策略補算產生新增平倉，沒有人工強制成交。
+目前 Trades=4，累計已實現 -11.50750459355618 USDT。
+以下使用觀察器真實副本差額；同一間隔進出場皆發生時，不能將累計成本增量
+當成單筆出場費。缺失中間快照的逐筆成交及原始 OHLC 比對明確列未實測。
+
+```json
+[
+  {
+    "before": "snapshot-1793373420000-91961b1712d1.json",
+    "after": "snapshot-1793375460000-47c3fda3cd5f.json",
+    "observed_utc": "2026-10-30T15:52:22.443624+00:00",
+    "trades": 2,
+    "fee_delta": 0.9971760138859835,
+    "slippage_delta": 0.49883742565576483,
+    "realized_delta": 2.055115238885716,
+    "exit_cost_check": "single exit delta matches engine formula; reference price not independently verified"
+  },
+  {
+    "before": "snapshot-1793376420000-47b3d0eb8bed.json",
+    "after": "snapshot-1793377080000-8a90aebfb621.json",
+    "observed_utc": "2026-10-30T16:19:08.869812+00:00",
+    "trades": 3,
+    "fee_delta": 1.9888194408500959,
+    "slippage_delta": 0.9944095820604373,
+    "realized_delta": -3.536687026514301,
+    "exit_cost_check": "entry/exit not individually observed; deltas are aggregate costs, NOT exit-only"
+  },
+  {
+    "before": "snapshot-1793377080000-8a90aebfb621.json",
+    "after": "snapshot-1793380080000-ceeaca812a84.json",
+    "observed_utc": "2026-10-30T17:09:49.056751+00:00",
+    "trades": 4,
+    "fee_delta": 1.9811324777290658,
+    "slippage_delta": 0.9905659443751698,
+    "realized_delta": -4.149655439139273,
+    "exit_cost_check": "entry/exit not individually observed; deltas are aggregate costs, NOT exit-only"
+  }
+]
+```
+
+本輪嘗試直接操作 Telegram，電腦使用工具回報 Mac 已鎖定且無法自動解鎖；
+未繞過鎖屏，新增成交的 Telegram 顯示核對尚未實測，需要使用者解鎖後補驗。
+24h 觀察仍持續原期限，已知休眠缺口保留，沒有調參、修改原快照、重啟或送出訂單。
