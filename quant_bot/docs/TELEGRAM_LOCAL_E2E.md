@@ -522,3 +522,42 @@ remain unverified due to observation gaps and locked Mac.
   }
 ]
 ```
+
+
+## 2026-10-30 22:01 UTC: seventh Paper close
+
+Observed cumulative closed trades 7, wins 2, flat, cash/equity
+981.4246380107174 USDT, realized -18.575361989283394 USDT.
+Trade 7 realized change -5.324237796415106 USDT. Saved evidence:
+```json
+[
+  {
+    "before": "snapshot-1793397360000-f1516ccbf32f.json",
+    "after": "snapshot-1793397420000-9d9e2ce09994.json",
+    "observed": "2026-10-30T21:58:12.950458+00:00",
+    "trades": 7,
+    "realized_delta": -5.324237796415106,
+    "aggregate_fee_delta": 0.9824070450557727,
+    "aggregate_slippage_delta": 0.49144924715140803,
+    "position_before": {
+      "EntryPrice": 76941.601575,
+      "Qty": 0.012811835112810208,
+      "StopLoss": 75787.47755137499,
+      "TakeProfit": 79249.84962225,
+      "EntryTime": 1793396280000,
+      "EntryFee": 0.9857631126944381
+    },
+    "position_after": null
+  }
+]
+```
+Cost changes above are aggregate across observed checkpoints, not automatically
+exit-only costs. Gaps prevent full per-bar execution verification. Telegram
+remains NOT TESTED for this event: last direct attempt confirmed locked Mac,
+and no manual unlock confirmation has arrived. No bypass attempted.
+At 22:01:25Z runtime and supervisor heartbeats were recent; restart count still
+1. Original supervisor/child/Bot/caffeinate/observer process identities confirmed.
+138 observation records, 39 gaps above 90s, latest completed gap 933.572793s.
+Observer log empty; no completion marker. Original deadline retained, no
+continuous-24h pass claimed. No changes to snapshots, strategy, locks or processes;
+no exchange orders or forced trades.
