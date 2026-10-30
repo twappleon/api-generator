@@ -113,3 +113,7 @@ bash scripts/start-telegram-local.sh --testnet
 重新配對並啟動後，在 Bot 私聊點「測試資產」及「重新整理」，檢查來源為
 Testnet GET account、查詢時間與餘額。沒有真實回覆前不標示驗證通過。
 這個啟動流程不執行 Binance 下單 CLI，僅啟動唯讀 Telegram 程序。
+
+啟動腳本會在隱藏輸入憑證前檢查控制台鎖；若已存在則停止，不自動移除。
+2026-10-30 曾確認殘留鎖 PID 99151 已不存在，且無控制台程序，才將該鎖
+歸檔至本機 `.local/`；未動交易 state 或風控狀態。

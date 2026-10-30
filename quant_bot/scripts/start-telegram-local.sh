@@ -21,6 +21,10 @@ if [[ -z "$go_binary" && -x "$HOME/.local/bin/go" ]]; then go_binary="$HOME/.loc
 if [[ -z "$go_binary" ]]; then echo '找不到 Go，請先設定 PATH。' >&2; exit 1; fi
 "$go_binary" build -o .local/telegram ./cmd/telegram
 export BINANCE_TESTNET_STATE="${BINANCE_TESTNET_STATE:-$PWD/state-testnet.json}"
+if [[ -e "$BINANCE_TESTNET_STATE.telegram.lock" ]]; then
+  echo 'Telegram 執行鎖已存在，尚未讀取金鑰。請先確認舊程序是否仍在執行；不要直接刪鎖。' >&2
+  exit 1
+fi
 if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
   read -r -s -p '請輸入 BotFather Token（隱藏輸入，不會存檔）：' TELEGRAM_BOT_TOKEN
   printf '\n'
