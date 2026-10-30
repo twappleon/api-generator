@@ -130,7 +130,7 @@ func Save(path string, s State) error {
 	}
 	return os.Rename(name, path)
 }
-func WithLock(path string, fn func() error) error {
+func WithLock(path string, fn func() error) (result error) {
 	if !strings.HasSuffix(path, ".paper.json") {
 		return errors.New("Paper snapshot must end in .paper.json; Testnet state is forbidden")
 	}
@@ -154,8 +154,17 @@ func WithLock(path string, fn func() error) error {
 	if err != nil {
 		return errors.New("Paper instance lock unavailable; inspect existing process before recovery")
 	}
-	fmt.Fprintln(f, os.Getpid())
-	f.Close()
-	defer os.Remove(path + ".lock")
+	defer func() {
+		if err := os.Remove(path + ".lock"); err != nil {
+			result = errors.Join(result, fmt.Errorf("Paper lock cleanup failed; inspect before restart: %w", err))
+		}
+	}()
+	if _, err := fmt.Fprintln(f, os.Getpid()); err != nil {
+		f.Close()
+		return fmt.Errorf("Paper lock owner write failed: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("Paper lock close failed: %w", err)
+	}
 	return fn()
 }

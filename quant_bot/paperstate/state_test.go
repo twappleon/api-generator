@@ -1,8 +1,10 @@
 package paperstate
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +59,95 @@ func TestMalformedSnapshotsNeverReset(t *testing.T) {
 		after, _ := os.ReadFile(path)
 		if string(after) != body {
 			t.Fatal("invalid state reset")
+		}
+	}
+}
+
+func TestSaveFilesystemFailuresPreserveCommittedSnapshot(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission failure requires non-root user")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.paper.json")
+	state := State{Kind: "paper", Version: 1, Config: "config", Cash: 1000}
+	if err := Save(path, state); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0700)
+	state.Cash = 900
+	if err := Save(path, state); err == nil {
+		t.Fatal("read-only directory accepted checkpoint")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(before) != string(after) {
+		t.Fatal("failed checkpoint replaced committed data")
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	// A directory at the target makes rename fail after the temporary file is synced.
+	target := filepath.Join(dir, "blocked.paper.json")
+	if err := os.Mkdir(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(target, state); err == nil {
+		t.Fatal("rename over directory succeeded")
+	}
+	temps, err := filepath.Glob(filepath.Join(dir, ".paper-*"))
+	if err != nil || len(temps) != 0 {
+		t.Fatal("failed save leaked temporary file")
+	}
+	after, err = os.ReadFile(path)
+	if err != nil || string(before) != string(after) {
+		t.Fatal("rename failure damaged previous snapshot")
+	}
+	if err := Save(path, state); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := Load(path, "config", 1000)
+	if err != nil || restored.Cash != 900 {
+		t.Fatal("could not save after filesystem recovered")
+	}
+}
+
+func TestLockCleanupFailureIsReported(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission failure requires non-root user")
+	}
+	for _, failCallback := range []bool{false, true} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "session.paper.json")
+		original := errors.New("original checkpoint error")
+		err := WithLock(path, func() error {
+			if err := os.Chmod(dir, 0500); err != nil {
+				t.Fatal(err)
+			}
+			if failCallback {
+				return original
+			}
+			return nil
+		})
+		if restoreErr := os.Chmod(dir, 0700); restoreErr != nil {
+			t.Fatal(restoreErr)
+		}
+		if err == nil || !strings.Contains(err.Error(), "lock cleanup failed") {
+			t.Fatalf("cleanup failure hidden: %v", err)
+		}
+		if failCallback && !errors.Is(err, original) {
+			t.Fatal("original error lost")
+		}
+		if _, err := os.Stat(path + ".lock"); err != nil {
+			t.Fatal("missing residual lock")
+		}
+		if err := WithLock(path, func() error { t.Fatal("residual lock bypassed"); return nil }); err == nil {
+			t.Fatal("restart accepted")
 		}
 	}
 }

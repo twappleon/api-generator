@@ -219,3 +219,98 @@ func TestPaperUnfinishedTemporaryWriteIgnored(t *testing.T) {
 		t.Fatal("orphan evidence removed")
 	}
 }
+
+func TestPaperCheckpointFailureStopsBeforeNextMarketPoll(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission failure requires non-root user")
+	}
+	old := http.DefaultTransport
+	defer func() { http.DefaultTransport = old }()
+	dir := t.TempDir()
+	defer os.Chmod(dir, 0700)
+	path := filepath.Join(dir, "session.paper.json")
+	candles := generateSampleCandles(205, 30000)
+	frame := candles[103:203]
+	calls := 0
+	failWrite := false
+	http.DefaultTransport = paperMarketMock(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v3/klines" {
+			t.Fatal("unexpected request")
+		}
+		rows := make([][]any, len(frame))
+		for i, c := range frame {
+			rows[i] = []any{c.OpenTime, c.Open, c.High, c.Low, c.Close, c.Volume}
+		}
+		raw, _ := json.Marshal(rows)
+		if failWrite {
+			if err := os.Chmod(dir, 0500); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(raw)), Header: make(http.Header)}, nil
+	})
+	if err := runPaperSaved(defaultConfig(), "binance", 1, 0, false, path); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := readPaper(t, path)
+	if initial.Position == nil {
+		t.Fatal("fixture must hold a position")
+	}
+	frame = append([]Candle(nil), candles[104:204]...)
+	frame[len(frame)-1].Low = 0 // This new candle simulates a stop-loss before save fails.
+	failWrite = true
+	err = runPaperSaved(defaultConfig(), "binance", 3, 0, false, path)
+	if err == nil {
+		t.Fatal("checkpoint failure did not stop loop")
+	}
+	if calls != 2 {
+		t.Fatalf("continued polling after failed save: %d", calls)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("failed save changed persisted position/cash")
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	// Permission loss also prevented unlinking the lock. Preserve fail-closed semantics.
+	if _, err := os.Stat(path + ".lock"); err != nil {
+		t.Fatal("expected residual lock after directory permission loss")
+	}
+	if err := runPaperSaved(defaultConfig(), "binance", 1, 0, false, path); err == nil {
+		t.Fatal("residual lock ignored")
+	}
+	if calls != 2 {
+		t.Fatal("blocked restart polled market")
+	}
+	// The failed synchronous run above has returned; archive only this test-owned lock.
+	if err := os.Rename(path+".lock", path+".lock.stopped"); err != nil {
+		t.Fatal(err)
+	}
+	failWrite = false
+	if err := runPaperSaved(defaultConfig(), "binance", 1, 0, false, path); err != nil {
+		t.Fatal(err)
+	}
+	recovered := readPaper(t, path)
+	if recovered.Step != 2 || recovered.Position != nil || recovered.Cash <= 0 {
+		t.Fatalf("failed candle not safely replayed: %+v", recovered)
+	}
+	full := filepath.Join(t.TempDir(), "full.paper.json")
+	frame = candles[103:203]
+	if err := runPaperSaved(defaultConfig(), "binance", 1, 0, false, full); err != nil {
+		t.Fatal(err)
+	}
+	frame = append([]Candle(nil), candles[104:204]...)
+	frame[len(frame)-1].Low = 0
+	if err := runPaperSaved(defaultConfig(), "binance", 1, 0, false, full); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(recovered, readPaper(t, full)) {
+		t.Fatal("replayed checkpoint differs from uninterrupted run")
+	}
+}
