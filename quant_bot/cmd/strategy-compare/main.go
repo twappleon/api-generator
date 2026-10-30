@@ -191,7 +191,7 @@ func load(ctx context.Context,symbol string,start,end int64)([]research.Candle,i
    if b.High<math.Max(b.Open,b.Close)||b.Low>math.Min(b.Open,b.Close)||b.Low>b.High{return nil,shortened,fmt.Errorf("invalid OHLC at %d",b.Time)}
    if b.End!=b.Time+d-1{
     shortened++
-    if shortened<=20{fmt.Printf("ANOMALY %s UTC shortened candle open=%d end=%d length-min=%.2f\\n",symbol,b.Time,b.End,float64(b.End-b.Time+1)/60000)}
+    if shortened<=20{fmt.Printf("ANOMALY %s UTC shortened candle open=%d end=%d length-min=%.2f\n",symbol,b.Time,b.End,float64(b.End-b.Time+1)/60000)}
    }
    bars=append(bars,b);cursor+=d
   }
@@ -226,7 +226,7 @@ func main(){
   if end>now {panic("requested unclosed bars")}
   bars,shortened,e:=load(ctx,sym,start,end)
   if e!=nil {panic(fmt.Errorf("%s historical OHLC: %w",sym,e))}
-  fmt.Printf("DATA_QUALITY %s shortened_valid_close=%d missing_open=0\\n",sym,shortened)
+  fmt.Printf("DATA_QUALITY %s shortened_valid_close=%d missing_open=0\n",sym,shortened)
   fmt.Printf("SOURCE %s Binance data-api 4h count=%d first=%s last=%s\n",sym,len(bars),time.UnixMilli(bars[0].Time).UTC(),time.UnixMilli(bars[len(bars)-1].Time).UTC())
   x:=calc(bars)
   for _,p:=range periods{
