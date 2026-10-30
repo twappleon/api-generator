@@ -134,3 +134,18 @@ Testnet 資料可能重設；空陣列只表示本次未返回資料，不能證
 
 規格核對：[官方 Testnet REST API](https://developers.binance.com/en/docs/products/spot/testnet/rest-api)
 （2026-10-30）：openOrders 指定 symbol；allOrders 必須指定 symbol，使用 limit=5。
+
+### 單筆狀態與部分成交（唯讀）
+
+`/order BTCUSDT <原 Client ID>` 以原 Client ID 查詢 `GET /api/v3/order`；
+Client ID 大小寫保留，重新整理保留交易對與 ID。只有 owner 私聊可查詢。
+不使用 `Reconcile`，不改寫本機訂單、風控鎖或快照。
+
+訂單列表與單筆回覆同時保留英文狀態及中文說明（含部分成交、全部成交、
+取消待確認、已取消、已拒絕、已過期）。顯示已成交數量、回應有提供時的
+原始數量及交易所 updateTime；查詢完成時間與交易所更新時間分開顯示。
+未知狀態不推斷為成交／終結；交易對或 Client ID 不符、無效回應均拒絕顯示。
+`-2013` 查無訂單仍為未知，不是重新送單的許可。此功能沒有自動重送或撤單。
+
+目前非空、部分成交及單筆訂單只有 mock 驗證；既有 Testnet BTCUSDT／ETHUSDT
+查詢為空，沒有為驗證送單，因此這三項外部 E2E 仍為 NOT RUN。

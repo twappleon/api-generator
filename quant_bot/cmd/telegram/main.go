@@ -182,6 +182,9 @@ func (b *bot) view(action string) string {
 	return b.viewContent(action) + "\n\n畫面產生時間 UTC：" + time.Now().UTC().Format(time.RFC3339)
 }
 func (b *bot) viewContent(action string) string {
+	if action == "order" || strings.HasPrefix(action, "order ") {
+		return b.singleOrder(action)
+	}
 	if action == "orders" || action == "/orders" || strings.HasPrefix(action, "orders ") || action == "openorders" || strings.HasPrefix(action, "openorders ") {
 		if (action == "orders" || action == "/orders") && !b.hasTestnetKeys() {
 			return b.viewContent("localorders") + "\n\n⚪ 尚未設定 Testnet 金鑰，無法查詢交易所訂單。"
@@ -192,7 +195,7 @@ func (b *bot) viewContent(action string) string {
 	case "home", "/start", "/menu":
 		return "🤖 量化交易控制台\n\n🟢 操作模式：唯讀控制台\n🧪 Binance Spot Testnet\n🔒 真實資金交易：關閉\n\n請點下方按鈕查看資訊。\n此介面不能送出訂單或解除風控停機。\n策略執行狀態：尚未驗證（控制台不啟動策略）\n" + b.snapshotTime()
 	case "help", "/help":
-		return "📖 新手操作\n\n💰 測試資產：讀取 Binance Testnet 帳戶餘額\n📋 訂單紀錄：查詢 BTCUSDT 未成交與最近 5 筆測試網訂單\n/orders ETHUSDT：指定交易對\n/openorders BTCUSDT：只查未成交\n/localorders：本機快照（非即時）\n🛡️ 風控狀態：查看停機及當日風險數據\n\n所有按鈕只做查詢，不會買入或賣出。\n查詢失敗時不會猜測餘額或交易狀態。"
+		return "📖 新手操作\n\n💰 測試資產：讀取 Binance Testnet 帳戶餘額\n📋 訂單紀錄：查詢 BTCUSDT 未成交與最近 5 筆測試網訂單\n/orders ETHUSDT：指定交易對\n/openorders BTCUSDT：只查未成交\n/order BTCUSDT <Client ID>：單筆狀態\n/localorders：本機快照（非即時）\n🛡️ 風控狀態：查看停機及當日風險數據\n\n所有按鈕只做查詢，不會買入或賣出。\n查詢失敗時不會猜測餘額或交易狀態。"
 	case "risk", "/risk":
 		s, err := binancespot.LoadState(b.state)
 		if err != nil {
@@ -284,6 +287,11 @@ func normalize(text string) string {
 		return "home"
 	case "/balance":
 		return "balance"
+	case "/order":
+		if len(cmd) != 3 {
+			return "order"
+		}
+		return "order " + strings.ToUpper(cmd[1]) + " " + cmd[2]
 	case "/orders", "/openorders":
 		action := strings.TrimPrefix(first, "/")
 		if len(cmd) > 2 {

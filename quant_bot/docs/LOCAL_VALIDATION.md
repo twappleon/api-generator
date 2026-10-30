@@ -118,3 +118,21 @@ C10 仍 NOT RUN，全程沒有送出訂單。此補充取代上文帳戶查詢�
 - 真實非空歷史／單筆 GET order／下單成交仍 NOT RUN。
 
 本次離線輸出：`docs/order-query-verification.txt`。
+
+## 非空／部分成交／單筆訂單 mock 驗證 — 2026-10-30
+
+- 新增 `/order SYMBOL <原 Client ID>`，使用可取消的 Testnet GET order；
+  既有 CLI OrderStatus 沿用同一查詢與身分驗證，保留 API 失敗停送保護。
+- 非空列表／部分成交：PASS（mock）。數量保留原始字串，原始數量與已成交
+  數量分別顯示；中文狀態含 NEW／PARTIALLY_FILLED／FILLED／CANCELED／
+  PENDING_CANCEL／REJECTED／EXPIRED／EXPIRED_IN_MATCH／PENDING_NEW。
+- 單筆查詢與重新整理：PASS（mock）。驗證 GET-only、HMAC、原 ID 大小寫、
+  owner／私聊權限、參數拒絕、取消、交易對及 ID 錯配、損毀回應／負數拒絕、
+  未知狀態、-2013 不推論可重送、錯誤脫敏及舊結果不回用。
+- 本機 `kill=true`、`PENDING_UNKNOWN` 原檔位元組不變：PASS（mock）。
+- `bash scripts/verify-local.sh`：49 個頂層 Go 測試、race、vet、offline backtest／
+  paper、CLI dry-run、build 與啟動／送單旗標保護全 PASS。
+  原始輸出：`docs/single-order-verification.txt`。
+- 外部非空／部分成交／單筆 GET order：NOT RUN。先前 BTCUSDT／ETHUSDT
+  沒有返回既有訂單；本次未猜測訂單 ID，也未建立任何訂單來製造測試資料。
+- 目前運行中的 Bot 未重啟載入這次新增指令；不將 mock 通過宣稱為真實 UI 通過。

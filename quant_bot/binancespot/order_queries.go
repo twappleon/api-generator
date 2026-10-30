@@ -40,12 +40,59 @@ func (c *Client) queryOrders(ctx context.Context, path, symbol string, limit int
 		return nil, errors.New("invalid order list response")
 	}
 	for _, o := range orders {
-		if o.Symbol != symbol || o.OrderID <= 0 || o.ClientOrderID == "" || len(o.ClientOrderID) > 128 || o.Status == "" || len(o.Status) > 40 {
-			return nil, errors.New("invalid order identity or status")
-		}
-		if _, err := nonnegative(o.ExecutedQty); err != nil {
-			return nil, errors.New("invalid executed quantity")
+		if err := validateQueriedOrder(o, symbol); err != nil {
+			return nil, err
 		}
 	}
 	return orders, nil
+}
+
+// Read-only lookup: does not reconcile or write the local risk ledger.
+func (c *Client) OrderStatusContext(ctx context.Context, symbol, id string) (result Order, queryErr error) {
+	defer func() {
+		if queryErr != nil {
+			c.failed = true
+		}
+	}()
+	if !ValidQuerySymbol(symbol) || !clientIDPattern.MatchString(id) {
+		return Order{}, errors.New("invalid order query identity")
+	}
+	raw, err := c.requestContext(ctx, "GET", "/api/v3/order", url.Values{"symbol": {symbol}, "origClientOrderId": {id}}, true)
+	if err != nil {
+		return Order{}, err
+	}
+	var o Order
+	if json.Unmarshal(raw, &o) != nil {
+		return Order{}, errors.New("invalid order response")
+	}
+	if err := validateQueriedOrder(o, symbol); err != nil {
+		return Order{}, err
+	}
+	if o.ClientOrderID != id {
+		return Order{}, errors.New("order identity mismatch")
+	}
+	return o, nil
+}
+func validateQueriedOrder(o Order, symbol string) error {
+	if o.Symbol != symbol || o.OrderID <= 0 || !clientIDPattern.MatchString(o.ClientOrderID) || o.Status == "" || len(o.Status) > 40 {
+		return errors.New("invalid order identity or status")
+	}
+	if len(o.ExecutedQty) > 40 {
+		return errors.New("invalid executed quantity")
+	}
+	if _, err := nonnegative(o.ExecutedQty); err != nil {
+		return errors.New("invalid executed quantity")
+	}
+	if o.OriginalQty != "" {
+		if len(o.OriginalQty) > 40 {
+			return errors.New("invalid original quantity")
+		}
+		if _, err := nonnegative(o.OriginalQty); err != nil {
+			return errors.New("invalid original quantity")
+		}
+	}
+	if o.UpdateTime < 0 {
+		return errors.New("invalid order update time")
+	}
+	return nil
 }

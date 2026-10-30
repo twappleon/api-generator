@@ -72,3 +72,46 @@ func TestOrderQueryRejectsMalformedResponses(t *testing.T) {
 		})
 	}
 }
+
+func TestSingleOrderReadOnlyIdentityAndCancellation(t *testing.T) {
+	calls := 0
+	body := `{"symbol":"BTCUSDT","orderId":123,"clientOrderId":"Original-ID","status":"PARTIALLY_FILLED","origQty":"1.00","executedQty":"0.25","updateTime":1793354400000}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		q := r.URL.Query()
+		sig := q.Get("signature")
+		q.Del("signature")
+		if r.Method != "GET" || r.URL.Path != "/api/v3/order" || q.Get("origClientOrderId") != "Original-ID" || q.Get("symbol") != "BTCUSDT" || sig != Sign(q.Encode(), "secret") || r.Header.Get("X-MBX-APIKEY") != "key" {
+			t.Error("wrong signed read-only request")
+		}
+		fmt.Fprint(w, body)
+	}))
+	defer srv.Close()
+	c := NewClient("key", "secret")
+	c.BaseURL = srv.URL
+	o, err := c.OrderStatusContext(context.Background(), "BTCUSDT", "Original-ID")
+	if err != nil || o.ExecutedQty != "0.25" || o.OriginalQty != "1.00" || o.Status != "PARTIALLY_FILLED" {
+		t.Fatalf("%+v %v", o, err)
+	}
+	for _, bad := range []string{`null`, `{}`, `{"symbol":"ETHUSDT","orderId":123,"clientOrderId":"Original-ID","status":"NEW","executedQty":"0"}`, `{"symbol":"BTCUSDT","orderId":123,"clientOrderId":"wrong","status":"NEW","executedQty":"0"}`, `{"symbol":"BTCUSDT","orderId":123,"clientOrderId":"Original-ID","status":"NEW","executedQty":"-1"}`} {
+		body = bad
+		if _, err = c.OrderStatus("BTCUSDT", "Original-ID"); err == nil {
+			t.Errorf("accepted %s", bad)
+		}
+	}
+	if !c.failed {
+		t.Fatal("invalid status response did not latch API failure circuit")
+	}
+	before := calls
+	if _, err = c.OrderStatusContext(context.Background(), "BTCUSDT", "bad&id"); err == nil {
+		t.Error("invalid ID accepted")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err = c.OrderStatusContext(ctx, "BTCUSDT", "Original-ID"); err == nil {
+		t.Error("cancellation ignored")
+	}
+	if calls != before {
+		t.Fatal("invalid/canceled request reached server")
+	}
+}

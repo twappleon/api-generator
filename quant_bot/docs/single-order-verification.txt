@@ -1,0 +1,192 @@
++ go test ./... -race -count=1 -v -timeout=60s
+=== RUN   TestOfflineModesNeverUseNetwork
+Backtest exchange: binance
+Backtest symbol: BTCUSDT (1h)
+Candles: 300
+Initial USDT: 1000.00
+Final USDT: 1027.94
+Total return: 2.79%
+Max drawdown: 0.10%
+Trades: 1, Win rate: 100.00%
+
+[1] 2024-01-09 10:00:00 UTC -> 2024-01-09 22:00:00 UTC, entry=33705.3485, exit=34716.5090, qty=0.029639, pnl=27.9421 USDT, reason=take_profit
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/5] 2024-01-05 04:00:00 UTC price=49068.8091 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[002/5] 2024-01-05 05:00:00 UTC price=49120.5608 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[003/5] 2024-01-05 06:00:00 UTC price=49149.7244 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[004/5] 2024-01-05 07:00:00 UTC price=49152.7871 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[005/5] 2024-01-05 08:00:00 UTC price=49126.5597 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+Paper trading finished.
+--- PASS: TestOfflineModesNeverUseNetwork (0.00s)
+PASS
+ok  	quant_bot	1.235s
+=== RUN   TestSignatureKnownVector
+--- PASS: TestSignatureKnownVector (0.00s)
+=== RUN   TestAccountSignedAndOrderStatus
+--- PASS: TestAccountSignedAndOrderStatus (0.00s)
+=== RUN   TestGuardedOrderAndIdempotency
+--- PASS: TestGuardedOrderAndIdempotency (0.03s)
+=== RUN   TestUnknownExecutionDoesNotRetry
+--- PASS: TestUnknownExecutionDoesNotRetry (0.01s)
+=== RUN   TestRiskLimits
+--- PASS: TestRiskLimits (0.00s)
+=== RUN   TestMaxPositionAndRules
+--- PASS: TestMaxPositionAndRules (0.00s)
+=== RUN   TestCorruptStateFailClosed
+--- PASS: TestCorruptStateFailClosed (0.00s)
+=== RUN   TestValidationRejectsMarketBelowNotional
+--- PASS: TestValidationRejectsMarketBelowNotional (0.00s)
+=== RUN   TestBadHTTPStatusCircuitAndNoRetry
+--- PASS: TestBadHTTPStatusCircuitAndNoRetry (0.00s)
+=== RUN   TestSignParams
+--- PASS: TestSignParams (0.00s)
+=== RUN   TestPreflightFailurePersistsKill
+--- PASS: TestPreflightFailurePersistsKill (0.01s)
+=== RUN   TestMainnetEndpointBlocked
+--- PASS: TestMainnetEndpointBlocked (0.00s)
+=== RUN   TestReadOnlyOrderQueries
+--- PASS: TestReadOnlyOrderQueries (0.00s)
+=== RUN   TestOrderQueryRejectsMalformedResponses
+=== RUN   TestOrderQueryRejectsMalformedResponses/null
+=== RUN   TestOrderQueryRejectsMalformedResponses/{}
+=== RUN   TestOrderQueryRejectsMalformedResponses/[{"symbol":"ETHUSDT","orderId":1,"clientOrderId":"a","status":"NEW","executedQty":"0"}]
+=== RUN   TestOrderQueryRejectsMalformedResponses/[{"symbol":"BTCUSDT","orderId":1,"clientOrderId":"a","status":"NEW","executedQty":"NaN"}]
+--- PASS: TestOrderQueryRejectsMalformedResponses (0.00s)
+    --- PASS: TestOrderQueryRejectsMalformedResponses/null (0.00s)
+    --- PASS: TestOrderQueryRejectsMalformedResponses/{} (0.00s)
+    --- PASS: TestOrderQueryRejectsMalformedResponses/[{"symbol":"ETHUSDT","orderId":1,"clientOrderId":"a","status":"NEW","executedQty":"0"}] (0.00s)
+    --- PASS: TestOrderQueryRejectsMalformedResponses/[{"symbol":"BTCUSDT","orderId":1,"clientOrderId":"a","status":"NEW","executedQty":"NaN"}] (0.00s)
+=== RUN   TestSingleOrderReadOnlyIdentityAndCancellation
+--- PASS: TestSingleOrderReadOnlyIdentityAndCancellation (0.00s)
+=== RUN   TestInsufficientAvailableAssets
+--- PASS: TestInsufficientAvailableAssets (0.00s)
+=== RUN   TestRestartPreservesKill
+--- PASS: TestRestartPreservesKill (0.00s)
+=== RUN   TestBinanceRedirectCannotEscapeTestnet
+--- PASS: TestBinanceRedirectCannotEscapeTestnet (0.00s)
+=== RUN   TestMalformedAccountFailsClosed
+--- PASS: TestMalformedAccountFailsClosed (0.00s)
+=== RUN   TestAccountCancellation
+--- PASS: TestAccountCancellation (0.00s)
+=== RUN   TestPreflightFailureCodes
+=== RUN   TestPreflightFailureCodes/418
+=== RUN   TestPreflightFailureCodes/500
+=== RUN   TestPreflightFailureCodes/401
+=== RUN   TestPreflightFailureCodes/400
+--- PASS: TestPreflightFailureCodes (0.02s)
+    --- PASS: TestPreflightFailureCodes/418 (0.01s)
+    --- PASS: TestPreflightFailureCodes/500 (0.00s)
+    --- PASS: TestPreflightFailureCodes/401 (0.00s)
+    --- PASS: TestPreflightFailureCodes/400 (0.01s)
+=== RUN   TestEndpointValidation
+--- PASS: TestEndpointValidation (0.00s)
+=== RUN   TestPostTimeoutReservesIDWithoutRetry
+--- PASS: TestPostTimeoutReservesIDWithoutRetry (0.01s)
+=== RUN   TestPositionCapBlocksPost
+--- PASS: TestPositionCapBlocksPost (0.01s)
+=== RUN   TestExchangeQuantityAndNotionalBoundaries
+--- PASS: TestExchangeQuantityAndNotionalBoundaries (0.00s)
+PASS
+ok  	quant_bot/binancespot	1.790s
+?   	quant_bot/cmd/binance-spot	[no test files]
+=== RUN   TestAuthorizedPrivateOwnerOnly
+--- PASS: TestAuthorizedPrivateOwnerOnly (0.00s)
+=== RUN   TestNormalizeAndMenu
+--- PASS: TestNormalizeAndMenu (0.00s)
+=== RUN   TestRiskMessagesAndReadOnly
+--- PASS: TestRiskMessagesAndReadOnly (0.01s)
+=== RUN   TestInvalidStateFailClosed
+--- PASS: TestInvalidStateFailClosed (0.00s)
+=== RUN   TestLiveOrderViewsReadOnlyAndRefresh
+--- PASS: TestLiveOrderViewsReadOnlyAndRefresh (0.01s)
+=== RUN   TestOrderRowsAndErrorClassification
+--- PASS: TestOrderRowsAndErrorClassification (0.00s)
+=== RUN   TestNonemptyPartialAndSingleOrderViews
+--- PASS: TestNonemptyPartialAndSingleOrderViews (0.00s)
+=== RUN   TestOrderDisplayBoundAndUnknownStatus
+--- PASS: TestOrderDisplayBoundAndUnknownStatus (0.00s)
+=== RUN   TestPairingCandidate
+--- PASS: TestPairingCandidate (0.00s)
+=== RUN   TestPairingRequiresLocalConfirmation
+=== RUN   TestPairingRequiresLocalConfirmation/yes
+=== RUN   TestPairingRequiresLocalConfirmation/no
+--- PASS: TestPairingRequiresLocalConfirmation (0.00s)
+    --- PASS: TestPairingRequiresLocalConfirmation/yes (0.00s)
+    --- PASS: TestPairingRequiresLocalConfirmation/no (0.00s)
+=== RUN   TestPairingPreservesExistingWebhook
+--- PASS: TestPairingPreservesExistingWebhook (0.00s)
+=== RUN   TestPairingConfirmationCancellation
+--- PASS: TestPairingConfirmationCancellation (0.00s)
+=== RUN   TestPairingConfirmationEOF
+--- PASS: TestPairingConfirmationEOF (0.00s)
+=== RUN   TestHTTPHomeCallbackAndAuthorization
+--- PASS: TestHTTPHomeCallbackAndAuthorization (0.00s)
+=== RUN   TestTransportErrorsAreRedactedAndBackoff
+=== RUN   TestTransportErrorsAreRedactedAndBackoff/429
+=== RUN   TestTransportErrorsAreRedactedAndBackoff/500
+=== RUN   TestTransportErrorsAreRedactedAndBackoff/503
+--- PASS: TestTransportErrorsAreRedactedAndBackoff (0.00s)
+    --- PASS: TestTransportErrorsAreRedactedAndBackoff/429 (0.00s)
+    --- PASS: TestTransportErrorsAreRedactedAndBackoff/500 (0.00s)
+    --- PASS: TestTransportErrorsAreRedactedAndBackoff/503 (0.00s)
+=== RUN   TestTimeoutAndGracefulShutdown
+--- PASS: TestTimeoutAndGracefulShutdown (0.03s)
+=== RUN   TestPollDuplicateUpdatesAndOffsets
+2026/10/30 17:26:10 Telegram request failed: Telegram network failure or timeout; consecutive=1; backoff=1s
+--- PASS: TestPollDuplicateUpdatesAndOffsets (0.00s)
+=== RUN   TestPolling429Recovery
+2026/10/30 17:26:10 Telegram request failed: Telegram API failure (HTTP 429); consecutive=1; backoff=1s
+2026/10/30 17:26:11 Telegram request failed: Telegram network failure or timeout; consecutive=2; backoff=2s
+--- PASS: TestPolling429Recovery (1.00s)
+=== RUN   TestSnapshotErrorsPreserveFileAndDoNotLeak
+--- PASS: TestSnapshotErrorsPreserveFileAndDoNotLeak (0.00s)
+=== RUN   TestTelegramRedirectBlocked
+--- PASS: TestTelegramRedirectBlocked (0.00s)
+=== RUN   TestSingleInstanceLock
+--- PASS: TestSingleInstanceLock (0.00s)
+=== RUN   TestPreflightHaltWithoutDayIsVisible
+--- PASS: TestPreflightHaltWithoutDayIsVisible (0.01s)
+=== RUN   TestShutdownCancelsInflightPolling
+2026/10/30 17:26:11 Telegram request failed: Telegram network failure or timeout; consecutive=1; backoff=1s
+--- PASS: TestShutdownCancelsInflightPolling (0.00s)
+PASS
+ok  	quant_bot/cmd/telegram	3.209s
++ go vet ./...
++ go run main.go backtest --config config.example.json --limit 300 --offline-sample
+Backtest exchange: binance
+Backtest symbol: BTCUSDT (1h)
+Candles: 300
+Initial USDT: 1000.00
+Final USDT: 1027.94
+Total return: 2.79%
+Max drawdown: 0.10%
+Trades: 1, Win rate: 100.00%
+
+[1] 2024-01-09 10:00:00 UTC -> 2024-01-09 22:00:00 UTC, entry=33705.3485, exit=34716.5090, qty=0.029639, pnl=27.9421 USDT, reason=take_profit
++ go run main.go paper --config config.example.json --iterations 5 --sleep-seconds 0 --offline-sample
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/5] 2024-01-05 04:00:00 UTC price=49068.8091 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[002/5] 2024-01-05 05:00:00 UTC price=49120.5608 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[003/5] 2024-01-05 06:00:00 UTC price=49149.7244 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[004/5] 2024-01-05 07:00:00 UTC price=49152.7871 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[005/5] 2024-01-05 08:00:00 UTC price=49126.5597 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+Paper trading finished.
++ go run ./cmd/binance-spot order --symbol BTCUSDT --side BUY --type LIMIT --quantity 0.001 --price 50000 --client-order-id codex-smoke-001
+DRY RUN: no API request made, no exchange filters or balances verified.
+{
+  "Symbol": "BTCUSDT",
+  "Side": "BUY",
+  "Type": "LIMIT",
+  "Quantity": "0.001",
+  "Price": "50000",
+  "ClientID": "codex-smoke-001"
+}
++ go build -o /var/folders/sq/0y_nn54157d24plhgytntcz80000gn/T/tmp.tTYQ3gMPpb/telegram ./cmd/telegram
+PASS: missing token refused without secret disclosure
+PASS: missing owner refused without secret disclosure
+PASS: explicit Testnet send guard; no order sent
+PASS: local verification complete (external Telegram/Testnet NOT RUN)

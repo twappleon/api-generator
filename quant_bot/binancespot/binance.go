@@ -119,18 +119,13 @@ type Order struct {
  ClientOrderID string `json:"clientOrderId"`
  OrderID int64 `json:"orderId"`
  Status string `json:"status"`
+ OriginalQty string `json:"origQty"`
+ UpdateTime int64 `json:"updateTime"`
  ExecutedQty string `json:"executedQty"`
  CumulativeQuoteQty string `json:"cummulativeQuoteQty"`
 }
 func (c *Client) OrderStatus(symbol,id string) (Order,error) {
- if !clientIDPattern.MatchString(id) {return Order{},errors.New("invalid client ID")}
- p:=url.Values{"symbol":{symbol},"origClientOrderId":{id}}
- b,err:=c.request("GET","/api/v3/order",p,true)
- if err!=nil{return Order{},err}
- var o Order
- err=json.Unmarshal(b,&o)
- if err!=nil{c.failed=true}
- return o,err
+ return c.OrderStatusContext(context.Background(),symbol,id)
 }
 func (c *Client) OpenOrders(symbol string) ([]Order,error) {
  b,err:=c.request("GET","/api/v3/openOrders",url.Values{"symbol":{symbol}},true)
