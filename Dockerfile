@@ -1,4 +1,4 @@
-# Go-only market-data Paper Worker. It has no real-money Binance order path.
+# Binance public market data -> deterministic Go Paper, never live Binance trades
 FROM golang:1.23-alpine AS build
 WORKDIR /src
 COPY quant_bot/go.mod ./
@@ -9,8 +9,8 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=build /out/research /usr/local/bin/research
-COPY quant_bot/config.paper-auto-exit.json /app/config.paper-auto-exit.json
-# Mount a Railway persistent volume at /data before starting this container.
+COPY quant_bot/config.paper-budget50.json /app/config.paper-budget50.json
 ENV TZ=UTC
+# Attach a Railway persistent volume at /data before deploying. Single instance only.
 ENTRYPOINT ["/usr/local/bin/research"]
-CMD ["--mode","supervisor","--config","/app/config.paper-auto-exit.json","--state","/data/btc.paper.json","--poll-every","15s","--slippage-bps","5"]
+CMD ["--mode","supervisor","--config","/app/config.paper-budget50.json","--state","/data/btc-budget50.paper.json","--poll-every","120s","--slippage-bps","5"]
