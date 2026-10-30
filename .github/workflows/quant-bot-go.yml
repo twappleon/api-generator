@@ -24,18 +24,5 @@ jobs:
         with:
           go-version: "1.23"
           cache: false
-      - name: Offline Go unit and race tests
-        run: go test ./... -count=1 -race -v
-      - name: Go static analysis
-        run: go vet ./...
-      - name: Legacy SMA backtest smoke test
-        run: go run main.go backtest --config config.example.json --limit 300 --offline-sample
-      - name: Legacy paper simulation smoke test
-        run: go run main.go paper --config config.example.json --iterations 5 --sleep-seconds 0 --offline-sample
-      - name: New Binance CLI dry run smoke test
-        run: go run ./cmd/binance-spot order --symbol BTCUSDT --side BUY --type LIMIT --price 50000 --quantity 0.001 --client-order-id smoke-1
-      - name: Explicit order-send guard (no credentials)
-        run: |
-          if go run ./cmd/binance-spot order --symbol BTCUSDT --side BUY --type LIMIT --price 50000 --quantity 0.001 --client-order-id smoke-2 --dry-run=false; then
-            echo "SAFETY FAILURE: order guard bypassed"; exit 1
-          fi
+      - name: Offline mocks, race, vet, simulations and CLI safety gates
+        run: bash scripts/verify-local.sh

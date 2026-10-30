@@ -3,6 +3,7 @@
 package binancespot
 
 import (
+ "context"
  "crypto/hmac"
  "crypto/sha256"
  "encoding/hex"
@@ -17,7 +18,6 @@ import (
  "path/filepath"
  "regexp"
  "strconv"
- "strings"
  "time"
 )
 
@@ -42,10 +42,19 @@ func Sign(payload,secret string) string {
  mac:=hmac.New(sha256.New,[]byte(secret)); mac.Write([]byte(payload))
  return hex.EncodeToString(mac.Sum(nil))
 }
+func allowedEndpoint(raw string) bool {
+ if raw==TestnetURL{return true}
+ u,err:=url.Parse(raw)
+ if err!=nil||u.Scheme!="http"||u.User!=nil||u.Path!=""||u.RawQuery!=""||u.Fragment!=""||u.Port()==""{return false}
+ switch u.Hostname(){case "127.0.0.1","::1","localhost":return true};return false
+}
 func (c *Client) request(method,path string,p url.Values,signed bool) ([]byte,error) {
+ return c.requestContext(context.Background(),method,path,p,signed)
+}
+func (c *Client) requestContext(ctx context.Context,method,path string,p url.Values,signed bool) ([]byte,error) {
  if c.BaseURL=="" || c.HTTP==nil || c.Clock==nil {return nil,errors.New("client not initialized")}
  // A public mutable URL is useful for httptest, but never allow production endpoints.
- if c.BaseURL!=TestnetURL && !strings.HasPrefix(c.BaseURL,"http://127.0.0.1:") && !strings.HasPrefix(c.BaseURL,"http://[::1]:") && !strings.HasPrefix(c.BaseURL,"http://localhost:") {return nil,errors.New("non-testnet Binance endpoint blocked")}
+ if !allowedEndpoint(c.BaseURL) {return nil,errors.New("non-testnet Binance endpoint blocked")}
  if p==nil {p=url.Values{}}
  if signed {
   if c.Key==""||c.Secret=="" {return nil,errors.New("missing BINANCE_TESTNET_API_KEY / BINANCE_TESTNET_API_SECRET")}
@@ -54,14 +63,16 @@ func (c *Client) request(method,path string,p url.Values,signed bool) ([]byte,er
   p.Set("signature",Sign(p.Encode(),c.Secret))
  }
  // Never use HTTP POST retry: a timeout or 5xx may mean successful execution.
- req,err:=http.NewRequest(method,c.BaseURL+path+"?"+p.Encode(),nil)
+ req,err:=http.NewRequestWithContext(ctx,method,c.BaseURL+path+"?"+p.Encode(),nil)
  if err!=nil{return nil,err}
  if signed {req.Header.Set("X-MBX-APIKEY",c.Key)}
- resp,err:=c.HTTP.Do(req)
+ httpClient:=*c.HTTP
+ httpClient.CheckRedirect=func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}
+ resp,err:=httpClient.Do(req)
  if err!=nil {
   c.failed=true
-  if method==http.MethodPost {return nil,fmt.Errorf("%w: transport failure: %v",ErrUnknownExecution,err)}
-  return nil,fmt.Errorf("transport failure: %w",err)
+  if method==http.MethodPost {return nil,fmt.Errorf("%w: transport failure",ErrUnknownExecution)}
+  return nil,errors.New("Binance transport failure or timeout")
  }
  defer resp.Body.Close()
  data,err:=io.ReadAll(io.LimitReader(resp.Body,1<<20))
@@ -87,12 +98,21 @@ type Balance struct {
 }
 type Account struct{ Balances []Balance `json:"balances"` }
 func (c *Client) Account() (Account,error) {
- b,err:=c.request("GET","/api/v3/account",nil,true)
+ return c.AccountContext(context.Background())
+}
+func (c *Client) AccountContext(ctx context.Context) (Account,error) {
+ b,err:=c.requestContext(ctx,"GET","/api/v3/account",nil,true)
  if err!=nil{return Account{},err}
  var a Account
  err=json.Unmarshal(b,&a)
- if err!=nil {c.failed=true}
- return a,err
+ if err==nil && a.Balances==nil {err=errors.New("account balances missing") }
+ if err==nil {for _,v:=range a.Balances {
+  if v.Asset=="" {err=errors.New("account asset missing");break}
+  if _,err=nonnegative(v.Free);err!=nil{break}
+  if _,err=nonnegative(v.Locked);err!=nil{break}
+ }}
+ if err!=nil {c.failed=true;return Account{},errors.New("invalid account response")}
+ return a,nil
 }
 type Order struct {
  Symbol string `json:"symbol"`
