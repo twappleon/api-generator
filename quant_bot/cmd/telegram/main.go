@@ -57,6 +57,7 @@ type bot struct {
 	client     *http.Client
 	base       string
 	state      string
+	paperState string
 	spot       *binancespot.Client
 }
 
@@ -64,6 +65,7 @@ func menu() map[string]any {
 	return map[string]any{"inline_keyboard": [][]keyboardButton{
 		{{Text: "🏠 總覽", Data: "home"}, {Text: "💰 測試資產", Data: "balance"}},
 		{{Text: "📋 訂單紀錄", Data: "orders"}, {Text: "🛡️ 風控狀態", Data: "risk"}},
+		{{Text: "🧪 Paper 模擬", Data: "paper"}},
 		{{Text: "ℹ️ 使用說明", Data: "help"}, {Text: "🔄 重新整理", Data: "refresh"}},
 	}}
 }
@@ -192,10 +194,12 @@ func (b *bot) viewContent(action string) string {
 		return b.exchangeOrders(action)
 	}
 	switch action {
+	case "paper", "/paper":
+		return b.paperView()
 	case "home", "/start", "/menu":
 		return "🤖 量化交易控制台\n\n🟢 操作模式：唯讀控制台\n🧪 Binance Spot Testnet\n🔒 真實資金交易：關閉\n\n請點下方按鈕查看資訊。\n此介面不能送出訂單或解除風控停機。\n策略執行狀態：尚未驗證（控制台不啟動策略）\n" + b.snapshotTime()
 	case "help", "/help":
-		return "📖 新手操作\n\n💰 測試資產：讀取 Binance Testnet 帳戶餘額\n📋 訂單紀錄：查詢 BTCUSDT 未成交與最近 5 筆測試網訂單\n/orders ETHUSDT：指定交易對\n/openorders BTCUSDT：只查未成交\n/order BTCUSDT <Client ID>：單筆狀態\n/localorders：本機快照（非即時）\n🛡️ 風控狀態：查看停機及當日風險數據\n\n所有按鈕只做查詢，不會買入或賣出。\n查詢失敗時不會猜測餘額或交易狀態。"
+		return "📖 新手操作\n\n🧪 Paper 模擬：本機模擬持倉／資金／保存進度，與 Testnet 分開\n💰 測試資產：讀取 Binance Testnet 帳戶餘額\n📋 訂單紀錄：查詢 BTCUSDT 未成交與最近 5 筆測試網訂單\n/orders ETHUSDT：指定交易對\n/openorders BTCUSDT：只查未成交\n/order BTCUSDT <Client ID>：單筆狀態\n/localorders：本機快照（非即時）\n🛡️ 風控狀態：查看停機及當日風險數據\n\n所有按鈕只做查詢，不會買入或賣出。\n查詢失敗時不會猜測餘額或交易狀態。"
 	case "risk", "/risk":
 		return b.riskView()
 	case "localorders", "/localorders":
@@ -274,6 +278,8 @@ func normalize(text string) string {
 	switch first {
 	case "/start", "/menu":
 		return "home"
+	case "/paper":
+		return "paper"
 	case "/balance":
 		return "balance"
 	case "/order":
@@ -378,8 +384,11 @@ func main() {
 		log.Fatal("invalid token format")
 	}
 
-	b := &bot{token: token, owner: owner, client: &http.Client{Timeout: 35 * time.Second}, base: telegramURL + token + "/", state: "state-testnet.json",
+	b := &bot{token: token, owner: owner, client: &http.Client{Timeout: 35 * time.Second}, base: telegramURL + token + "/", state: "state-testnet.json", paperState: ".local/session.paper.json",
 		spot: binancespot.NewClient(os.Getenv("BINANCE_TESTNET_API_KEY"), os.Getenv("BINANCE_TESTNET_API_SECRET"))}
+	if paper := os.Getenv("PAPER_STATE"); paper != "" {
+		b.paperState = paper
+	}
 	if state := os.Getenv("BINANCE_TESTNET_STATE"); state != "" {
 		b.state = state
 	}

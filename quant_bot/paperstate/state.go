@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Position struct {
@@ -46,13 +48,42 @@ func validate(s State) error {
 }
 func Load(path, config string, initial float64) (State, error) {
 	s := State{Kind: "paper", Version: 1, Config: config, Cash: initial}
-	raw, err := os.ReadFile(path)
+	disk, _, err := ReadSnapshot(path)
 	if os.IsNotExist(err) {
 		return s, validate(s)
 	}
 	if err != nil {
 		return State{}, err
 	}
+	if disk.Config != config {
+		return State{}, errors.New("Paper configuration/source differs; use a separate snapshot")
+	}
+	return disk, nil
+}
+
+// ReadSnapshot never initializes a missing file or modifies the simulation.
+// Read and stat the same descriptor so an atomic writer cannot mix generations.
+func ReadSnapshot(path string) (State, time.Time, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return State{}, time.Time{}, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return State{}, time.Time{}, err
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, 65537))
+	if err != nil {
+		return State{}, time.Time{}, err
+	}
+	if len(raw) > 65536 {
+		return State{}, time.Time{}, errors.New("Paper snapshot too large")
+	}
+	disk, err := decode(raw)
+	return disk, info.ModTime(), err
+}
+func decode(raw []byte) (State, error) {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) != nil || fields == nil {
 		return State{}, errors.New("corrupt Paper snapshot; refusing reset")
@@ -65,9 +96,6 @@ func Load(path, config string, initial float64) (State, error) {
 	var disk State
 	if json.Unmarshal(raw, &disk) != nil || validate(disk) != nil {
 		return State{}, errors.New("invalid Paper snapshot; refusing reset")
-	}
-	if disk.Config != config {
-		return State{}, errors.New("Paper configuration/source differs; use a separate snapshot")
 	}
 	return disk, nil
 }

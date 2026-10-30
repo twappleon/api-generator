@@ -194,4 +194,5 @@ go run main.go paper --config config.example.json --iterations 12 --sleep-second
 離線恢復接續原樣本索引；即時公開行情模式會略過已處理時間，避免重啟重複
 套用同一根行情，但**不補算停機期間漏掉的行情**。未驗證真實行情重啟、
 斷電耐久性或跨主機一致性；此實作不適合無人值守交易。
-Paper 與 Testnet 風控快照完全分開，Telegram 風控頁仍不展示 Paper 績效。
+Paper 與 Testnet 風控快照完全分開，Telegram 風控頁仍只展示 Testnet；新增的 `/paper` 頁獨立展示 Paper 快照，
+可用 `PAPER_STATE` 指向相同 `.paper.json`（見 TELEGRAM.md）。

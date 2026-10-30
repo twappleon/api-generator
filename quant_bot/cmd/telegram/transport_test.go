@@ -49,8 +49,8 @@ func TestHTTPHomeCallbackAndAuthorization(t *testing.T) {
 				Rows [][]keyboardButton `json:"inline_keyboard"`
 			}
 			_ = json.Unmarshal(p["reply_markup"], &kb)
-			if len(kb.Rows) != 3 || len(kb.Rows[2]) != 2 {
-				t.Error("six buttons missing")
+			if len(kb.Rows) != 4 || len(kb.Rows[2]) != 1 || kb.Rows[2][0].Data != "paper" || len(kb.Rows[3]) != 2 {
+				t.Error("Paper or original buttons missing")
 			}
 		case strings.HasSuffix(r.URL.Path, "answerCallbackQuery"):
 			acked++

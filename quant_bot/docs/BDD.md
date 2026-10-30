@@ -196,3 +196,13 @@ And 不允許實盤訂單。
 - 提供變更檔案、測試命令、commit SHA、CI URL。
 - 高風險未完成事項不可略過：部分成交、端到端資產對帳、多進程鎖、精度、跨日基準、通知去重、監控。
 - P0 完成仍不能宣稱可無人值守自動交易，也不能宣稱 Railway 已啟用。
+
+## 補充 B9 @mock — Paper 唯讀快照頁
+
+Given owner 私聊、獨立 Paper 快照與 Testnet 風控檔
+When `/paper`、Paper callback 或頁內重新整理
+Then 顯示模擬來源、現金、持倉、保存進度及快照／行情時間
+And 不把快照存在當作程序在線或已恢復，不把現金當總淨值
+And 不讀取 Testnet API、不修改 Paper 或 Testnet 檔案、不啟動模擬或送單。
+Given 缺檔、損毀、錯誤 schema 或設定
+Then 明確未知，不初始化、不回用舊值；其他用戶／群組不得取得資料。

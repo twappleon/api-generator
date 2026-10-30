@@ -9,6 +9,7 @@
 - 💰 測試資產：Binance Spot Testnet 資產查詢
 - 📋 訂單紀錄：BTCUSDT 的 Testnet 未成交訂單與最近 5 筆訂單；缺金鑰時明示只能看本機快照
 - 🛡️ 風控狀態：顯示停機、每日基準、峰值（非即時）
+- 🧪 Paper 模擬：獨立本機模擬快照（資金、持倉、保存進度）
 - ℹ️ 使用說明
 
 ### 啟動
@@ -44,7 +45,7 @@ go run ./cmd/telegram
 
 Mac / Linux 在 `quant_bot/` 執行 `bash scripts/verify-local.sh`。腳本清除子程序的 Telegram / Testnet 憑證，只執行本地 HTTP mocks、race、vet、offline 回測／Paper、CLI dry-run、建置及缺設定拒絕測試。完整結果見 `docs/LOCAL_VALIDATION.md` 與 `docs/local-verification.txt`。
 
-- 六個按鈕均唯讀；「重新整理」查詢目前頁面，重啟後預設總覽。
+- 七個按鈕均唯讀；「重新整理」查詢目前頁面，重啟後預設總覽。
 - 資產是當次 Testnet GET account 查詢；失敗不使用舊餘額。檔案時間僅代表本地檔案修改時間，**不是交易所時間或逐筆對帳時間**。
 - `/localorders` 本機訂單按 Client Order ID 排序，最多顯示 15 筆，不宣稱是最新 15 筆。逐筆對帳時間尚未記錄；使用原 ID 透過 `binance-spot status` 核對。
 - polling 網路／5xx 失敗採 1、2、4、8、16、30 秒退避；429 優先等待 `retry_after`（上限一天）。等待可被 SIGINT／SIGTERM 中斷。
@@ -159,3 +160,22 @@ Client ID 大小寫保留，重新整理保留交易對與 ID。只有 owner 私
 
 Paper 是原有的獨立記憶體模擬模式，與這份 Testnet 風控快照不同；Paper CLI 現已使用獨立 `.paper.json` 支援離線持倉重啟恢復（見 README）；
 Telegram 風控頁不讀此檔。離線模擬的收益不能當作帳戶收益或真實風控 E2E 證據。
+
+## Telegram Paper 唯讀頁
+
+使用 `/paper` 或「🧪 Paper 模擬」。預設讀取相對於 Bot 工作目錄的
+`.local/session.paper.json`；自訂檔案請在啟動 Bot 前設定 `PAPER_STATE` 為
+Paper CLI `--state` 使用的同一個絕對路徑。此變數不是金鑰，不需要交易所權限。
+
+頁面顯示：離線樣本／公開行情模擬、交易所行情來源、交易對及週期、模擬
+可用現金、持倉數量／入場價／入場手續費／停損停利、已保存輪數、最後處理
+行情時間、快照檔案更新時間。現金不是總淨值；未查詢即時市值或模擬總盈虧。
+
+恢復狀態只陳述保存進度與「同路徑／同設定／同來源」的恢復條件；目前程序
+是否運行或實際恢復仍未知。快照不是心跳，檔案更新時間不是交易所報價時間。
+重新整理重新讀取同一 Paper 頁，不回到 Testnet，也不使用上次成功數值。
+
+缺檔不初始化；損毀、超過 64 KiB、非 Paper schema 或來源設定不合法時拒絕
+顯示。讀取不取 writer lock、不修改快照、不啟動 Paper、不解除 Testnet 停機。
+原本六個 Testnet／導覽按鈕保留；Paper 按鈕新增一列。外部 Telegram 新頁
+尚未實測，目前運行中的 Bot 需要重啟後才載入這次變更。

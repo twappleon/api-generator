@@ -193,3 +193,20 @@ PASS（10:59:19Z／35Z／44Z）。快照仍不存在，真實停機鎖／跨日�
   停機期間行情；不宣稱完整停機期間損益重建或 Testnet 實盤風控通過。
 
 輸出：`paper-resume-verification.txt`。未傳送交易訂單，未讀取或寫入憑證。
+
+## Telegram Paper 接入 — 2026-10-30
+
+- B9 PASS（mock）：`/paper`／獨立按鈕／refresh，模擬資金、非空及空持倉、
+  保存輪數、行情時間、來源與非即時標示；刷新讀取更新後的快照。
+- PASS：非 owner／群組拒絕；沒有 Binance API 呼叫；Paper／Testnet 檔案
+  位元組不變；讀者不建立 writer lock；缺檔不初始化。
+- PASS：損毀／超大檔案／Testnet schema／不合法來源拒絕；不回傳原始錯誤
+  或路徑、不回用舊資金、不把快照存在宣稱為已恢復或在線。
+- 共 61 個頂層測試 PASS；2 個 helper 由父測試以子程序執行。完整 race、vet、
+  離線回測／Paper、CLI dry-run、建置與保護檢查 PASS；先前 Paper 獨立程序
+  恢復測試也隨此次完整測試再次通過。
+- 真實 Telegram Paper 新頁／有持倉畫面／實際程序恢復顯示：NOT RUN；沒有
+  重啟使用者 Bot 或向其快照寫入測試資料。沒有傳送交易訂單。
+
+原始輸出：`paper-telegram-verification.txt`。恢復狀態僅為可恢復進度，
+目前沒有模擬程序心跳、恢復事件紀錄、即時總淨值或 PnL 面板。
