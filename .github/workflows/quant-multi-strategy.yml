@@ -5,6 +5,10 @@ on:
     paths:
       - "quant_bot/cmd/strategy-compare/**"
       - ".github/workflows/quant-multi-strategy.yml"
+  pull_request:
+    paths:
+      - "quant_bot/cmd/strategy-compare/**"
+      - ".github/workflows/quant-multi-strategy.yml"
   workflow_dispatch:
 
 permissions:
