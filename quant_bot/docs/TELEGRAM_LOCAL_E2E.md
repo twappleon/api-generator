@@ -19,7 +19,7 @@ Telegram 私聊與 inline keyboard，觀察 Bot 回覆。沒有讀取／提交 T
 | 總覽按鈕 | 09:49:57Z 正常返回中文首頁；策略狀態仍明示尚未驗證 | PASS |
 | 本機運行 | 私有 runtime log 有啟動紀錄、無 polling error、無停止紀錄；專用實例鎖存在 | PASS（本次觀察時） |
 
-## 邊界
+## 首輪測試邊界（後續更新見下方）
 
 - B1／B3 的實際 Telegram 私聊與 callback 回覆已驗證；資產只驗證缺 key 的提示。
 - B6 無本機快照的畫面已在 Telegram 實際驗證。
@@ -32,3 +32,26 @@ Telegram 私聊與 inline keyboard，觀察 Bot 回覆。沒有讀取／提交 T
   此報告不包含憑證、配對碼或私人聊天截圖。
 - 這是終端前景程序：保持原終端開啟；關閉終端或 Ctrl-C 會停止，並非背景
   常駐服務。此次驗證完成後未主動停止程序。
+
+## Testnet 金鑰接入實測 — 2026-10-30 17:09–17:12
+
+程式版本：`896115f`。使用者透過 `--testnet` 的本機隱藏提示輸入 Token、
+Testnet API Key 與 Secret，完成配對後啟動。憑證只傳入程序環境，未寫入此報告。
+直接操作同一個 macOS Telegram Bot 私聊，取得以下外部服務實際回覆：
+
+| 操作 | 查詢完成時間（UTC）及觀察 | 結果 |
+| --- | --- | --- |
+| `/balance` | 10:09:49Z，顯示 Binance Spot Testnet 資產與可用／凍結餘額 | PASS |
+| 資產頁「重新整理」 | 10:11:49Z，重新取得資產，保留資產頁並更新查詢時間 | PASS |
+| 「測試資產」按鈕 | 10:12:06Z，callback 正常回傳最新帳戶查詢結果 | PASS |
+| 中文來源標示 | 三次均顯示 Testnet GET account、UTC 查詢時間、僅測試資金及非實盤資產 | PASS |
+
+畫面列出前 20 項；其中 USDT 可用 10000、BTC／ETH／BNB 各可用 1，
+這四項凍結餘額皆為 0。這是 Testnet 回覆的虛擬資產，不是實盤資產或投資績效。
+本機日誌存在啟動紀錄、無 polling error／停止紀錄，專用控制台鎖存在；
+`state-testnet.json` 交易快照仍不存在。此次只執行帳戶唯讀查詢，未送出任何訂單。
+
+本節更新先前「資產只驗證缺 key」狀態：C9 的 GET account 子項已有外部
+Testnet 實測證據，但 openOrders／單筆訂單查詢仍 NOT RUN，不能將 C9 整項
+標為 PASS。C10 下單／成交仍 NOT RUN；Railway 仍 BLOCKED。本次無程式修改，
+未重跑 Go 單元測試；先前 42 個測試的結果與本次外部查詢證據分開記錄。

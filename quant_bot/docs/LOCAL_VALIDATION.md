@@ -95,3 +95,12 @@ getMe／webhook 唯讀檢查、一次性配對碼、private sender/chat ID 比�
 2026-10-30 本機 owner 配對後，`/start` 與六個 inline 按鈕已有真實 Telegram
 回覆證據；見 [TELEGRAM_LOCAL_E2E.md](TELEGRAM_LOCAL_E2E.md)。此項更新前述
 「等待配對」狀態，但不改變 Binance Testnet E2E 與 Railway 尚未通過的結論。
+
+## Testnet 帳戶唯讀查詢補充
+
+2026-10-30 17:09–17:12，本機配對與 Testnet 憑證接入成功。Telegram 的
+`/balance`、「測試資產」與資產頁「重新整理」均取得外部 Testnet GET account
+回覆及更新時間；詳細證據見 [TELEGRAM_LOCAL_E2E.md](TELEGRAM_LOCAL_E2E.md)。
+C9 現為部分驗證：帳戶查詢 PASS，openOrders／單筆訂單查詢 NOT RUN。
+C10 仍 NOT RUN，全程沒有送出訂單。此補充取代上文帳戶查詢尚未驗證的狀態，
+不代表完整 Testnet 交易 E2E 通過。

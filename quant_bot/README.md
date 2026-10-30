@@ -165,5 +165,5 @@ Run `bash scripts/verify-local.sh` from `quant_bot/` for offline simulations,
 Telegram/Binance HTTP mocks, Go race/vet, CLI guards and build checks. See
 [Telegram operations](TELEGRAM.md) and [actual validation matrix](docs/LOCAL_VALIDATION.md).
 Telegram local pairing and read-only private-chat buttons are verified (see
-[local E2E evidence](docs/TELEGRAM_LOCAL_E2E.md)). Binance Testnet E2E remains
-unverified; Railway is blocked by billing. Keep PR #6 draft and do not enable unattended trading.
+[local E2E evidence](docs/TELEGRAM_LOCAL_E2E.md)). Live Testnet account balance queries and refresh are verified; order queries and
+trading E2E remain unverified. Railway is blocked by billing. Keep PR #6 draft and do not enable unattended trading.
