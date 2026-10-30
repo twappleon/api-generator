@@ -3,6 +3,10 @@ package main
 import (
  "context"
  "encoding/json"
+ "io"
+ "net/http"
+ "net/url"
+ "strconv"
  "flag"
  "fmt"
  "math"
@@ -150,6 +154,51 @@ func run(symbol,period,name,cost string,b []research.Candle,x ind,start,end int,
  if sumLoss>0{pf=sumWin/sumLoss}else if sumWin>0{pf=999}
  return result{symbol,period,name,cost,(equity/1000-1)*100,maxdd*100,trades,wins,pf,equity}
 }
+
+func load(ctx context.Context,symbol string,start,end int64)([]research.Candle,int,error){
+ const d=int64(4*60*60*1000)
+ if start<=0 || end<=start || start%d!=0 || end%d!=0{return nil,0,fmt.Errorf("invalid 4h range")}
+ client:=&http.Client{Timeout:20*time.Second,CheckRedirect:func(_ *http.Request,_ []*http.Request)error{return fmt.Errorf("redirect rejected")}}
+ bars:=[]research.Candle{}; shortened:=0
+ for cursor:=start;cursor<end; {
+  q:=url.Values{"symbol":{symbol},"interval":{"4h"},"startTime":{strconv.FormatInt(cursor,10)},"endTime":{strconv.FormatInt(end-1,10)},"limit":{"1000"}}
+  req,err:=http.NewRequestWithContext(ctx,"GET","https://data-api.binance.vision/api/v3/klines?"+q.Encode(),nil)
+  if err!=nil{return nil,shortened,err}
+  resp,err:=client.Do(req)
+  if err!=nil{return nil,shortened,err}
+  raw,readErr:=io.ReadAll(io.LimitReader(resp.Body,2*1024*1024+1))
+  resp.Body.Close()
+  if resp.StatusCode!=200{return nil,shortened,fmt.Errorf("Binance HTTP %d",resp.StatusCode)}
+  if readErr!=nil{return nil,shortened,readErr}
+  if len(raw)>2*1024*1024{return nil,shortened,fmt.Errorf("market response too large")}
+  var rows [][]json.RawMessage
+  if err=json.Unmarshal(raw,&rows);err!=nil{return nil,shortened,err}
+  if len(rows)==0 || len(rows)>1000{return nil,shortened,fmt.Errorf("missing/oversized Binance page at %d",cursor)}
+  for _,r:=range rows{
+   if len(r)<7{return nil,shortened,fmt.Errorf("incomplete Kline")}
+   var b research.Candle
+   if json.Unmarshal(r[0],&b.Time)!=nil || json.Unmarshal(r[6],&b.End)!=nil{return nil,shortened,fmt.Errorf("invalid timestamps")}
+   if b.Time!=cursor{return nil,shortened,fmt.Errorf("gap/order at %d observed %d",cursor,b.Time)}
+   if b.End<b.Time || b.End>b.Time+d-1{return nil,shortened,fmt.Errorf("out-of-interval end %d at %d",b.End,b.Time)}
+   pp:=[]*float64{&b.Open,&b.High,&b.Low,&b.Close}
+   for j,ptr:=range pp{
+    var s string
+    if json.Unmarshal(r[j+1],&s)!=nil{return nil,shortened,fmt.Errorf("non-string Kline price")}
+    v,err:=strconv.ParseFloat(s,64)
+    if err!=nil || math.IsNaN(v)||math.IsInf(v,0)||v<=0{return nil,shortened,fmt.Errorf("invalid Kline price %q",s)}
+    *ptr=v
+   }
+   if b.High<math.Max(b.Open,b.Close)||b.Low>math.Min(b.Open,b.Close)||b.Low>b.High{return nil,shortened,fmt.Errorf("invalid OHLC at %d",b.Time)}
+   if b.End!=b.Time+d-1{
+    shortened++
+    if shortened<=20{fmt.Printf("ANOMALY %s UTC shortened candle open=%d end=%d length-min=%.2f\\n",symbol,b.Time,b.End,float64(b.End-b.Time+1)/60000)}
+   }
+   bars=append(bars,b);cursor+=d
+  }
+ }
+ return bars,shortened,nil
+}
+
 func main(){
  output:=flag.String("output","strategy-comparison.json","result JSON path")
  flag.Parse()
@@ -174,8 +223,10 @@ func main(){
   cfg.Symbol=sym
   start:=parse("2020-11-01");end:=parse("2026-10-01")
   now,e:=m.Now(ctx);if e!=nil {panic(fmt.Errorf("Binance time: %w",e))}
-  bars,e:=m.History(ctx,cfg,start,end,now)
+  if end>now {panic("requested unclosed bars")}
+  bars,shortened,e:=load(ctx,sym,start,end)
   if e!=nil {panic(fmt.Errorf("%s historical OHLC: %w",sym,e))}
+  fmt.Printf("DATA_QUALITY %s shortened_valid_close=%d missing_open=0\\n",sym,shortened)
   fmt.Printf("SOURCE %s Binance data-api 4h count=%d first=%s last=%s\n",sym,len(bars),time.UnixMilli(bars[0].Time).UTC(),time.UnixMilli(bars[len(bars)-1].Time).UTC())
   x:=calc(bars)
   for _,p:=range periods{
