@@ -63,9 +63,16 @@ async function paperStatus(){
  for(const symbol of ["BTCUSDT","ETHUSDT","SOLUSDT"]){
   const market=await window.getMarket(symbol,now);
   const bars=market.prices,ix=calcIndicators(bars),i=bars.length-1;
-  const atrPct=100*ix.atr[i]/bars[i].close;
-  const signalA=bars[i].close>maxHigh(bars,i,20)&&bars[i].close>ix.ema[i];
+  const lastClose=bars[i].close;
+  const breakoutPrice=maxHigh(bars,i,20);
+  const ema200=ix.ema[i];
+  const atrPct=100*ix.atr[i]/lastClose;
+  const signalA=lastClose>breakoutPrice&&lastClose>ema200;
+  const reason=lastClose<=ema200?"未站上 EMA200 趨勢線":lastClose<=breakoutPrice?"尚未突破 Donchian 20 根高點":atrPct>=3.5?"A 符合條件，但 B 被波動過濾":"符合進場條件（等待新收盤 K 線模擬）";
   pairs[symbol]={last_open:bars[i].time,quote:market.quote,quote_utc:new Date(now).toISOString(),atr_pct:atrPct,
+   last_close:lastClose,donchian_20_high:breakoutPrice,ema_200:ema200,
+   distance_to_breakout_pct:100*(breakoutPrice/lastClose-1),
+   next_close_utc:new Date(bars[i].time+2*TIMEFRAME).toISOString(),reason_no_trade:reason,
    signal_a:signalA,signal_b:signalA&&atrPct<3.5,
    a:simulateVariant(bars,ix,"A",market.quote),b:simulateVariant(bars,ix,"B",market.quote)};
  }
