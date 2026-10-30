@@ -182,3 +182,44 @@ BTCUSDT／1m，初始資金、現金與預估淨清算資產皆為 1000 USDT；
 未寫入或修改快照，未送出任何交易所訂單。非空持倉、非零成本／損益、
 行情持續推進時的動態刷新與長時間運行仍 NOT RUN；不建立假資料補足。
 本次只補實際 UI 驗證紀錄，沒有程式修改，未重跑單元測試。
+
+## 持續公開行情 Paper → Telegram 動態查詢 — 2026-10-30 19:05
+
+本次實際啟動 `cmd/research` 的無限輪詢模式（`--polls 0 --poll-every 15s`），
+BTCUSDT／1m，從現有績效 checkpoint 接續。先編譯至 `.local/research-live`，
+使用獨立背景程序（本次 PID 32328，PPID 1），不依賴開著的 Terminal。
+啟動參數為 `--mode paper --config config.paper-live.json --state
+.local/live.performance.paper.json --polls 0 --poll-every 15s`。
+只呼叫公開行情 GET，不載入交易金鑰或送出交易所訂單。
+
+啟動前逐位元備份績效快照至
+`.local/live-before-20261030T120444Z.performance.paper.json`；SHA-256
+`233dc0a518c682487323c82ed2787b1d2ba654f347be1f676afbba995dec78da`。
+舊離線 `.local/session.paper.json` 保留，驗證後 SHA-256 仍為
+`85a0a66d487492e5568a53fa4d1697790bf1ddef6d07ddca4a0699c2590bced3`。
+只有運行中的績效檔由真實 Paper 流程自然更新，沒有手動寫入模擬帳務。
+
+直接操作 Telegram 私聊兩次 `/performance`：
+
+| 階段 | 已處理 | 最後行情開盤 UTC | 快照更新 UTC | 結果 |
+| --- | --- | --- | --- | --- |
+| 補算停機行情後 | 15 | 12:03:00 | 12:04:46 | Telegram 實際顯示 PASS |
+| 下一根新收盤行情 | 16 | 12:04:00 | 12:05:01 | Telegram 與本機快照逐項一致 PASS |
+
+兩次資金都是初始／現金／淨清算資產 1000 USDT，空倉；已平倉／獲利筆數、
+淨損益、已實現／未實現、手續費與滑價累計及最大回撤全部為 0。
+每邊費率 0.1000%、滑價 5 bps 與快照設定一致。
+第二次原始快照 `Last=1793361840000`、`Updated=1793361901677`、
+`Mark=77478.01`、`Position=null`、`Pending=0`、`Steps=16`。
+這證明在持續運行時，重新查詢可取得新行情快照，不代表既有 Telegram
+訊息會自行推播更新。驗證時程序存活，日誌無錯誤。
+
+未自然產生交易，因此非空持倉、非零手續費／滑價、成交後資金與損益的
+Telegram 動態核對仍 NOT RUN；不調參、不插入假資料、不強制成交補案例。
+24 小時穩定性、睡眠／網路中斷恢復亦 NOT RUN。主機睡眠時不會執行，
+遇行情 API 錯誤會停止；沒有安裝開機常駐或自動重啟服務。
+
+程序依使用者要求保留運行；日誌 `.local/paper-live-20261030T120444Z.log`。
+停止時先核對目前 PID／程序路徑，再發送 SIGTERM（本次啟動 PID 32328），
+避免之後 PID 重用誤停其他程序。此次無程式修改；編譯通過、實際行情與
+Telegram 流程通過、`git diff --check` 通過，未重跑 mock／單元測試。
