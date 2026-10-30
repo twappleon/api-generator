@@ -95,3 +95,21 @@ sender/chat ID 和配對碼全部符合時，才將 owner ID 傳入子程序環�
 配對等待確認現在可被取消；SIGHUP（終端關閉）、SIGINT、SIGTERM 會走正常
 退出並釋放控制台鎖。強制 SIGKILL 仍可能留下鎖，必須診斷，不能自行刪鎖。
 啟動成功訊息在取得鎖之後才顯示，失敗不宣稱在線。
+
+### 加入只讀 Testnet 資產查詢
+
+在官方 `https://testnet.binance.vision/` 建立 HMAC-SHA-256 key，只勾選
+`USER_DATA`；取消 `TRADE` 與 `USER_STREAM`。切勿使用主網金鑰。
+
+在目前運行控制台的終端按 Ctrl-C，再執行：
+
+```sh
+bash scripts/start-telegram-local.sh --testnet
+```
+
+腳本隱藏讀取 Telegram Token、`BINANCE_TESTNET_API_KEY` 與
+`BINANCE_TESTNET_API_SECRET`，只 export 給本機子程序，不寫 `.env`、不將
+金鑰放進命令參數或 log。環境已設定的值會沿用。空金鑰拒絕啟動。
+重新配對並啟動後，在 Bot 私聊點「測試資產」及「重新整理」，檢查來源為
+Testnet GET account、查詢時間與餘額。沒有真實回覆前不標示驗證通過。
+這個啟動流程不執行 Binance 下單 CLI，僅啟動唯讀 Telegram 程序。

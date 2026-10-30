@@ -3,6 +3,11 @@
 set +x
 set -euo pipefail
 cd "$(dirname "$0")/.."
+case "${1:-}" in
+  ""|--testnet) ;;
+  *) echo '用法：bash scripts/start-telegram-local.sh [--testnet]' >&2; exit 2 ;;
+esac
+if [[ $# -gt 1 ]]; then echo '不接受額外參數；金鑰只能透過環境變數或隱藏提示輸入。' >&2; exit 2; fi
 if [[ ! -t 0 ]]; then
   echo '請在本機互動終端執行此腳本。' >&2
   exit 1
@@ -19,6 +24,21 @@ export BINANCE_TESTNET_STATE="${BINANCE_TESTNET_STATE:-$PWD/state-testnet.json}"
 if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
   read -r -s -p '請輸入 BotFather Token（隱藏輸入，不會存檔）：' TELEGRAM_BOT_TOKEN
   printf '\n'
+fi
+if [[ "${1:-}" = --testnet ]]; then
+  echo '只接受 Binance Spot Testnet HMAC 金鑰；此控制台只查帳戶，不送交易訂單。'
+  if [[ -z "${BINANCE_TESTNET_API_KEY:-}" ]]; then
+    read -r -s -p 'Testnet API Key（隱藏輸入）：' BINANCE_TESTNET_API_KEY
+    printf '\n'
+  fi
+  if [[ -z "${BINANCE_TESTNET_API_SECRET:-}" ]]; then
+    read -r -s -p 'Testnet Secret Key（隱藏輸入）：' BINANCE_TESTNET_API_SECRET
+    printf '\n'
+  fi
+  if [[ -z "$BINANCE_TESTNET_API_KEY" || -z "$BINANCE_TESTNET_API_SECRET" ]]; then
+    echo 'Testnet 金鑰不可空白；控制台尚未啟動。' >&2; exit 1
+  fi
+  export BINANCE_TESTNET_API_KEY BINANCE_TESTNET_API_SECRET
 fi
 export TELEGRAM_BOT_TOKEN
 if [[ -z "${TELEGRAM_OWNER_ID:-}" ]]; then
