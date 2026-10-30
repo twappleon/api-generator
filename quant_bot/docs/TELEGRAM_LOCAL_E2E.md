@@ -561,3 +561,9 @@ At 22:01:25Z runtime and supervisor heartbeats were recent; restart count still
 Observer log empty; no completion marker. Original deadline retained, no
 continuous-24h pass claimed. No changes to snapshots, strategy, locks or processes;
 no exchange orders or forced trades.
+
+Trade 7 accounting follow-up: these two snapshots are consecutive bars and
+exactly one close, with no position afterwards. Exit fee 0.9824070450557727
+and exit slippage 0.49144924715140803 USDT reconcile with the engine formula
+within 1e-8; net realized change -5.324237796415106 USDT verified.
+Independent original OHLC and Telegram display remain unverified.
