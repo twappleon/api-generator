@@ -164,5 +164,6 @@ The Binance private API extension, guarded Testnet-only execution CLI, determini
 Run `bash scripts/verify-local.sh` from `quant_bot/` for offline simulations,
 Telegram/Binance HTTP mocks, Go race/vet, CLI guards and build checks. See
 [Telegram operations](TELEGRAM.md) and [actual validation matrix](docs/LOCAL_VALIDATION.md).
-External Telegram pairing and Binance Testnet E2E are not verified; Railway is
-blocked by billing. Keep PR #6 draft and do not enable unattended trading.
+Telegram local pairing and read-only private-chat buttons are verified (see
+[local E2E evidence](docs/TELEGRAM_LOCAL_E2E.md)). Binance Testnet E2E remains
+unverified; Railway is blocked by billing. Keep PR #6 draft and do not enable unattended trading.

@@ -89,3 +89,9 @@ getMe／webhook 唯讀檢查、一次性配對碼、private sender/chat ID 比�
 或鎖。`bash -n` 與完整 `scripts/verify-local.sh` 通過，42 個頂層測試 PASS；
 新增確認等待取消、stdin EOF 拒絕測試。真實配對重新啟動仍需使用者在本機
 輸入 Token，不能由本機測試通過推論 Telegram 已上線。
+
+## 真實 Telegram 私聊驗證已完成
+
+2026-10-30 本機 owner 配對後，`/start` 與六個 inline 按鈕已有真實 Telegram
+回覆證據；見 [TELEGRAM_LOCAL_E2E.md](TELEGRAM_LOCAL_E2E.md)。此項更新前述
+「等待配對」狀態，但不改變 Binance Testnet E2E 與 Railway 尚未通過的結論。
