@@ -12,6 +12,7 @@ run go run main.go backtest --config config.example.json --limit 300 --offline-s
 run go run main.go paper --config config.example.json --iterations 5 --sleep-seconds 0 --offline-sample --state "$work/verify.paper.json"
 run go run ./cmd/binance-spot order --symbol BTCUSDT --side BUY --type LIMIT --quantity 0.001 --price 50000 --client-order-id codex-smoke-001
 run go build -o "$work/telegram" ./cmd/telegram
+run go build -o "$work/research" ./cmd/research
 for missing in token owner; do
   if [ "$missing" = token ]; then
     if TELEGRAM_OWNER_ID=1234 "$work/telegram" > "$work/startup" 2>&1; then echo 'FAIL: missing token accepted'; exit 1; fi

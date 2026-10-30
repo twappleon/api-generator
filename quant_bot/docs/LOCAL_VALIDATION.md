@@ -271,3 +271,32 @@ PASS（10:59:19Z／35Z／44Z）。快照仍不存在，真實停機鎖／跨日�
 - NOT RUN：實際磁碟滿／硬體 I/O 錯誤／fsync 失敗／斷電；本次是檔案系統
   權限與 rename 故障，不代表所有儲存故障已覆蓋。鎖 PID 寫入／close
   失敗分支未做系統呼叫注入；Telegram 實機畫面未重測。
+
+## 公開歷史回測／即時 Paper／Telegram 績效 — 2026-10-30
+
+- F1–F6 PASS（mock／本機）：共用原 SMA 計算、下一根開盤成交、雙邊成本、
+  跳空停損／同根雙觸及先停損、分頁、缺漏／亂序／未收盤拒絕、HTTP
+  429 與 redirect 阻擋、暖機、重啟去重／補算、設定與帳務損壞拒絕、
+  保存失敗停止、Telegram owner／群組限制及刷新／缺檔／損壞／帳本隔離。
+- 完整 `scripts/verify-local.sh`：79 個頂層測試 PASS，race／vet／舊離線
+  回測及 Paper／dry-run／Telegram 與研究 CLI 建置／送單防護 PASS。
+  原始輸出 `research-verification.txt`。既有 CLI／快照相容性測試也通過。
+- 真實公開 API PASS：只對 `data-api.binance.vision` 發出 GET time/klines。
+  BTCUSDT，2026-09-01 至 2026-10-01 UTC（右界不含），1h，720 根，
+  SMA20/50，每邊費率 0.1%、滑價 5 bps。最終 973.77813071 USDT，
+  報酬 -2.6222%，已實現 -26.22186929，費用 22.14574312，滑價成本
+  11.07287331（已反映在成交價），11 次平倉／3 次獲利，收盤回撤 6.0576%。
+  此次樣本虧損；不是獲利驗證或未來收益預測。
+- 真實即時 Paper PASS（有限觀察）：新增獨立
+  `.local/live.performance.paper.json`，1m 初次暖機 0 根；獨立程序 6 次
+  輪詢、間隔 15 秒後為 1 根；最終新版程序再啟動一次為 2 根。現金／
+  淨估值皆 1000、空倉，未出現交易訊號。沒有人工寫入快照。
+  測試結束後程序已退出，沒有留下無人值守 daemon。
+- 真實 API 與 CLI 摘要：`research-real-market.txt`。舊
+  `.local/session.paper.json` SHA-256 仍為
+  `85a0a66d487492e5568a53fa4d1697790bf1ddef6d07ddca4a0699c2590bced3`。
+  未修改舊快照／Testnet 資料、未讀取金鑰、未送出任何交易所訂單。
+- NOT RUN：新版 Telegram 實機頁（未重啟現有 Bot）、即時行情觸發非空
+  持倉／平倉（僅 mock 覆蓋）、24 小時運行、樣本外／多市場策略評估、
+  真實撮合滑價／部分成交／容量驗證、斷電／硬體儲存故障。
+  OHLC 模擬與停機補算不代表實時可成交。Render 保持取消。

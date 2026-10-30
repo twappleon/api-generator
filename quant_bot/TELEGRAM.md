@@ -179,3 +179,11 @@ Paper CLI `--state` 使用的同一個絕對路徑。此變數不是金鑰，不
 顯示。讀取不取 writer lock、不修改快照、不啟動 Paper、不解除 Testnet 停機。
 原本六個 Testnet／導覽按鈕保留；Paper 按鈕新增一列。外部 Telegram 新頁
 尚未實測，目前運行中的 Bot 需要重啟後才載入這次變更。
+
+### 公開行情 Paper 績效
+
+新版 `/performance` 或「📈 Paper 績效」按鈕，讀取 `PERFORMANCE_STATE`
+（預設 `.local/live.performance.paper.json`）。顯示淨清算估值、損益、
+費用、滑價、平倉／獲利數與收盤回撤；快照不是心跳或即時報價。
+原 `/paper` 舊帳本不變；沒有快照或損壞時明確未知。此頁不會啟動模擬或
+送單。使用方式與估值假設見 `docs/RESEARCH_PAPER.md`。

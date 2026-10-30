@@ -196,3 +196,18 @@ go run main.go paper --config config.example.json --iterations 12 --sleep-second
 斷電耐久性或跨主機一致性；此實作不適合無人值守交易。
 Paper 與 Testnet 風控快照完全分開，Telegram 風控頁仍只展示 Testnet；新增的 `/paper` 頁獨立展示 Paper 快照，
 可用 `PAPER_STATE` 指向相同 `.paper.json`（見 TELEGRAM.md）。
+
+## 公開行情研究擴充
+
+既有 SMA 共用於新 `cmd/research`，支援分頁歷史回測、已收盤行情自動 Paper、
+每邊手續費／滑價、重啟續算，以及 Telegram `/performance` 唯讀績效頁。
+參閱 [操作與限制](docs/RESEARCH_PAPER.md)。新快照獨立於舊 Paper 與 Testnet。
+
+```bash
+# 從 quant_bot/ 執行；僅公開行情 GET，不需金鑰
+go run ./cmd/research --mode backtest --config config.example.json --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z --slippage-bps 5
+bash scripts/start-paper-live.sh
+```
+
+新 Paper 為已收盤 K 線模擬成交，不是交易所下單；Ctrl-C 停止。2026 年 9 月
+BTCUSDT/1h 實際回測扣費與滑價後為負收益，不能據此宣稱策略可獲利。

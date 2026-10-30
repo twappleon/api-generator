@@ -107,6 +107,11 @@ func Save(path string, s State) error {
 	if err != nil {
 		return err
 	}
+	return WriteAtomic(path, raw)
+}
+
+// WriteAtomic commits already validated bytes using the existing checkpoint protocol.
+func WriteAtomic(path string, raw []byte) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".paper-*")
 	if err != nil {
 		return err
