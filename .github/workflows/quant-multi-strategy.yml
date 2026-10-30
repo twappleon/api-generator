@@ -1,0 +1,42 @@
+name: Binance multi-strategy 4h research (read-only)
+on:
+  push:
+    branches: [cursor/quant-bot-usdt-c6b3]
+    paths:
+      - "quant_bot/cmd/strategy-compare/**"
+      - ".github/workflows/quant-multi-strategy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: quant_bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: false
+      - name: Compile comparator and run unit tests
+        run: |
+          go test ./research ./strategy
+          go vet ./cmd/strategy-compare
+          go build -o /tmp/strategy-compare ./cmd/strategy-compare
+      - name: Compare BTC and ETH on real Binance 4h data 2021-2026
+        run: /tmp/strategy-compare -output /tmp/strategy-comparison.json | tee /tmp/strategy-comparison.log
+      - name: Upload reproducible numeric results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: binance-4h-strategy-comparison
+          if-no-files-found: warn
+          path: |
+            /tmp/strategy-comparison.json
+            /tmp/strategy-comparison.log
+          retention-days: 14
