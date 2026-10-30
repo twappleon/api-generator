@@ -119,3 +119,37 @@ C9：Account 與 OpenOrders 已有真實 Testnet 查詢證據；本次亦驗證 
 
 缺快照指令／callback／刷新為實際平台 PASS；有快照時的資金、持倉、恢復
 進度顯示仍 NOT RUN，不能以先前 mock 成功取代。本次只更新實測文件，未重跑測試。
+
+## 離線 Paper 真實流程 → Telegram → 重啟恢復 — 2026-10-30 18:27
+
+沿用程式 `24ec7c7`，沒有修改程式或手動填造快照。起始預設 Paper 快照
+不存在；依使用者授權執行既有離線 CLI，輸出至本機 `.local/`。
+
+```sh
+cd quant_bot
+go run main.go paper --config config.example.json --exchange binance --iterations 103 --sleep-seconds 0 --offline-sample --state .local/session.paper.json
+go run main.go paper --config config.example.json --exchange binance --iterations 12 --sleep-seconds 0 --offline-sample --state .local/session.paper.json
+```
+
+兩次命令分開執行，第一次正常退出後先操作 Telegram，再啟動第二個程序。
+
+| 驗證階段 | 實際結果 |
+| --- | --- |
+| 第一次模擬 | 第 103 輪產生模擬 BUY，保存持倉 0.029639242508098566、現金 0、入場價 33705.348533385564 |
+| Telegram `/paper` 11:27:23Z | PASS：顯示持倉 0.02963924、現金 0.00000000、進度 103、入場手續費與停損停利；離線樣本／非 Testnet 標示正確 |
+| 新程序恢復 | stdout 明示 `completed=103, cash=0.00000000, position=true`，接續 12 輪後模擬 take_profit SELL |
+| Telegram 重新整理 11:27:44Z | PASS：保留 Paper 頁，更新現金為 1027.94205794 USDT、空倉、進度 115、最後行情 2024-01-09T22:00:00Z |
+| 隔離 | Testnet state 驗證前後均不存在；Paper 程序退出後 writer lock 釋放；Bot 持續運行 |
+
+快照來自真正執行的離線模擬，非手動測試 fixture。模擬行情時間為 2024 年
+生成樣本，檔案寫入／畫面時間為本次 2026 年操作，不是即時價格或真實績效。
+CLI 原始輸出存於 `paper-telegram-flow-first.txt`、`paper-telegram-flow-resume.txt`。
+
+本節將有快照的 Telegram 持倉／資金／保存進度／刷新，以及正常退出後的
+Paper 新程序恢復標為 PASS。Telegram 本身沒有程序心跳／恢復事件來源，
+仍正確顯示「目前程序是否運行／已恢復：未驗證」；本次恢復證據由 CLI
+啟動輸出及前後快照對照取得，不冒稱畫面可自行證明恢復。
+
+未手動寫入快照、未送出任何交易所訂單。最終快照保留於原路徑，下一次
+同設定模擬會從第 115 輪接續。斷電／異常崩潰、真實行情停機補算與跨主機
+恢復仍 NOT RUN。本次沒有程式修改，未重跑單元測試。

@@ -216,3 +216,11 @@ PASS（10:59:19Z／35Z／44Z）。快照仍不存在，真實停機鎖／跨日�
 18:21 重啟後 `/paper`、Paper 按鈕與刷新均 PASS，明確區分 Paper／Testnet，
 且無快照時標示未驗證。資金、非空持倉與恢復進度的真實 UI 仍 NOT RUN；
 詳見 `TELEGRAM_LOCAL_E2E.md`，沒有為實測注入資料或送單。
+
+### Paper 真實模擬流程與 Telegram 資料顯示更新
+
+2026-10-30 18:27 已由離線 CLI 實際產生第 103 輪持倉，Telegram 正確顯示；
+新 CLI 程序恢復並再跑 12 輪後，Telegram 刷新顯示 115 輪／空倉／現金
+1027.94205794。這些項目由 NOT RUN 更新為 PASS，見 `TELEGRAM_LOCAL_E2E.md`。
+沒有手寫快照或送出交易所訂單；Testnet state 仍不存在。程序心跳與異常
+崩潰等其他限制不變。
