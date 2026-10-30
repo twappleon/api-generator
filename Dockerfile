@@ -13,4 +13,4 @@ COPY quant_bot/config.paper-budget50.json /app/config.paper-budget50.json
 ENV TZ=UTC
 # Attach a Railway persistent volume at /data before deploying. Single instance only.
 ENTRYPOINT ["/usr/local/bin/research"]
-CMD ["--mode","supervisor","--config","/app/config.paper-budget50.json","--state","/data/btc-budget50.paper.json","--poll-every","120s","--slippage-bps","5"]
+CMD ["--mode","supervisor","--config","/app/config.paper-budget50.json","--state","/data/btc-budget50.performance.paper.json","--poll-every","120s","--slippage-bps","5"]
