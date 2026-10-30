@@ -125,3 +125,33 @@ func TestPerformanceRuntimeAndStalenessReadOnly(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestPerformanceSupervisorRecoveryReadOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "live.performance.paper.json")
+	now := time.Now()
+	s := research.State{}
+	s.Config.Interval = "1m"
+	for _, tc := range []struct{ state, want string }{{"starting", "啟動中"}, {"watching", "監督中"}, {"restarting", "等待重啟"}, {"failed", "需人工檢查"}, {"stopped", "已停止"}} {
+		sup := research.Supervisor{Version: 1, State: tc.state, Heartbeat: now.UnixMilli(), Restarts: 2, RecoveredAt: now.UnixMilli()}
+		raw, _ := json.Marshal(sup)
+		os.WriteFile(path+".supervisor.json", raw, 0600)
+		got := performanceHealth(path, s, now)
+		for _, want := range []string{tc.want, "已重啟 2 次", "重啟後成功查詢"} {
+			if !strings.Contains(got, want) {
+				t.Fatal(got)
+			}
+		}
+		after, _ := os.ReadFile(path + ".supervisor.json")
+		if string(after) != string(raw) {
+			t.Fatal("reader modified supervisor")
+		}
+		if got = performanceHealth(path, s, now.Add(time.Minute)); !strings.Contains(got, "監督心跳過期") {
+			t.Fatal(got)
+		}
+	}
+	os.WriteFile(path+".supervisor.json", []byte("SECRET broken"), 0600)
+	got := performanceHealth(path, s, now)
+	if !strings.Contains(got, "無有效監督") || strings.Contains(got, "SECRET") {
+		t.Fatal(got)
+	}
+}

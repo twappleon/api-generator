@@ -51,6 +51,19 @@ func (b *bot) performanceView() string {
 
 func performanceHealth(path string, s research.State, now time.Time) string {
 	text := ""
+	supervision := "自動恢復：未啟用或無有效監督狀態\n"
+	if sup, e := research.ReadSupervisor(path); e == nil {
+		if now.UnixMilli()-sup.Heartbeat > 45000 || sup.Heartbeat > now.Add(5*time.Second).UnixMilli() {
+			supervision = "自動恢復：監督心跳過期，狀態未知\n"
+		} else {
+			labels := map[string]string{"starting": "啟動中", "watching": "監督中", "restarting": "異常退出，等待重啟", "stopped": "已停止", "failed": "停止自動恢復，需人工檢查"}
+			supervision = fmt.Sprintf("自動恢復：%s；本次監督已重啟 %d 次\n", labels[sup.State], sup.Restarts)
+			if sup.RecoveredAt > 0 {
+				supervision += "重啟後成功查詢 UTC：" + time.UnixMilli(sup.RecoveredAt).UTC().Format(time.RFC3339) + "\n"
+			}
+		}
+	}
+
 	r, e := research.ReadRuntime(path)
 	if e != nil {
 		text = "運行狀態：未知（尚無有效心跳）\n"
@@ -75,5 +88,5 @@ func performanceHealth(path string, s research.State, now time.Time) string {
 	} else {
 		text += "資料狀態：近期已收盤行情（非即時報價）\n"
 	}
-	return text
+	return text + supervision
 }

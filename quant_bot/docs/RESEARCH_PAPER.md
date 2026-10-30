@@ -100,3 +100,33 @@ go run ./cmd/research --mode paper --config config.paper-live.json \
 - 升級需正常停止舊 Paper 後使用原命令重啟，原績效快照可直接恢復；Bot
   也需重啟才載入新文案。本次開發保留現有運行程序，未在真實網路上斷線，
   未宣稱新版 Telegram 狀態頁已平台實測。沒有安裝自動重啟服務。
+
+## 子程序監督與異常重啟
+
+新增 `bash scripts/start-paper-supervised.sh`，或先建置 research 再使用
+`--mode supervisor --config config.paper-live.json --state .local/live.performance.paper.json`。
+先正常停止原 Paper，確認原鎖釋放再啟動；不允許對已有 writer 的快照並行啟動。
+腳本編譯獨立版本到 `.local/`，以 exec 交給監督程序；舊 binary 不覆蓋。
+預設仍在前景，Ctrl-C／向監督 PID 發 SIGTERM 會停止子程序，不自動重啟。
+
+- 監督程序只有固定的 `paper` 子程序啟動路徑，使用同一 executable、設定、
+  績效快照及成本參數；不呼叫交易所訂單 API。
+- 子程序被 signal 終止或 panic（exit 2）才重啟；正常結束與安全錯誤 exit 1
+  不重啟。資料毀損、設定不符、寫入失敗需人工處理，不重設資金。
+- 必須由父程序 `Wait` 確認自己子程序退出，鎖內容匹配 PID、檔案未被替換、
+  PID 已不存在，才將該殘留鎖 rename 封存為 `.lock.reaped-*`。
+  不自動處理啟動前的未知殘留鎖，PID 重用或無法確認時也拒絕。
+- 10 分鐘內最多自動重啟 5 次，等待為 5/10/15/20/25 秒，超限停機；
+  每次從既有原子 checkpoint 恢復，未提交行情可重播、已提交行情不再計算。
+- 監督使用另一把單實例鎖，以及 `.supervisor.json` 狀態檔，每秒更新心跳。
+  Telegram 顯示監督／等待重啟／停止與本次監督期間重啟數；只有新子程序
+  成功輪詢後才顯示「重啟後成功查詢」。不以 child 啟動當成恢復完成。
+- 監督本身遭 SIGKILL、主機重啟、睡眠或斷電不在此自動恢復範圍；可能留下
+  監督鎖及仍在運行的 child，必須人工檢查。沒有安裝 launchd/systemd 或登入
+  常駐服務，沒有宣稱 24/7 上線。SIGTERM 最多等待 child 5 秒，再強制終止；
+  若被強制終止留下鎖，下一次啟動須人工檢查。
+
+本次實測：隔離子程序 SIGKILL → 自動封存其鎖 → 重啟去重／帳務一致；
+安全退出與重啟頻率限制；2,000 次加速輪詢／1,000 根行情，皆使用測試目錄。
+未實測：真實 24 小時以上運行、主機斷電、監督自身崩潰恢復、新版 Telegram
+監督資訊平台畫面。現有 Paper/Bot 未替換，需切換新啟動方式並重啟 Bot 生效。

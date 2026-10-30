@@ -256,3 +256,14 @@ Then 明確未知，不初始化、不回用舊值；其他用戶／群組不得
   或過期，Then 顯示正確中文狀態；另依行情時間判斷資料過期，不改帳本。
 - F10：Given 已有績效與舊 Paper 快照，When 新功能開發與測試，Then 使用
   隔離測試目錄，不覆蓋既有檔案；真實斷網／新版平台未操作者標 NOT RUN。
+
+## 補充 F11–F14 — 本機 Paper 監督 @offline @process
+
+- F11：Given 隔離快照與真正子程序，When checkpoint 後 SIGKILL，Then 父程序
+  Wait 後只封存該 child 的殘留鎖、自動重啟；已保存行情不重複計算，帳務等同連續運行。
+- F12：Given 安全 exit 1、未知 writer 鎖或 10 分鐘內第六次 crash，When 監督，
+  Then 停止自動恢復、保留帳本；取消監督時 child 退出且不重生。
+- F13：Given 2,000 次加速輪詢且每根行情重複兩次，When 保存／恢復，Then
+  僅計算 1,000 根；加速測試不得標示為真實長時間在線。
+- F14：Given owner 查詢監督 sidecar，When 正常、恢復等待、恢復成功、失敗、
+  過期或損壞，Then 繁中顯示恢復狀態與次數、未知時不宣稱成功；查詢不改檔。

@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -15,13 +16,13 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 func run() error {
-	mode := flag.String("mode", "backtest", "backtest or paper; never exchange orders")
+	mode := flag.String("mode", "backtest", "backtest, paper or supervisor; never exchange orders")
 	config := flag.String("config", "config.example.json", "existing SMA config")
 	slip := flag.Float64("slippage-bps", 5, "adverse slippage per side, basis points")
 	start := flag.String("start", "", "backtest start RFC3339 inclusive")
@@ -62,6 +63,8 @@ func run() error {
 		fmt.Println(research.Summary(s))
 		fmt.Println("Open positions valued at hypothetical net liquidation; not forcibly sold. No orders sent.")
 		return nil
+	case "supervisor":
+		return research.Supervise(ctx, *state, *config, *slip, *every)
 	case "paper":
 		if err := research.Run(ctx, research.Market{}, c, *state, *polls, *every); err != nil {
 			return err

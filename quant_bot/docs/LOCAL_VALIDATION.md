@@ -317,3 +317,26 @@ PASS（10:59:19Z／35Z／44Z）。快照仍不存在，真實停機鎖／跨日�
 - NOT RUN：真實斷網後恢復、新版 Telegram 健康頁平台驗證、新版 SIGKILL
   程序復原、24 小時運行；mock 不代表上述實測。現有 Paper／Bot 尚未重啟
   載入此次改動，使用原命令正常重啟後才生效。沒有發送交易所訂單。
+
+## 2026-10-30 — Paper 子程序監督與長序列恢復
+
+- F11 @process PASS：真正隔離子程序在保存 checkpoint 後 SIGKILL；父程序
+  Wait 確認退出、封存該 PID 殘留鎖、自動重啟，重複行情不多計，最終帳務
+  與連續處理逐欄相同；新 child 成功後才記錄恢復時間。
+- F12 PASS：安全 exit 1 不重啟、第六次 crash 觸發預算停止、未知鎖拒絕，
+  退避可取消，監督取消後 child 確實退出、正常釋放鎖。
+- F13 PASS：2,000 次加速輪詢、每根重複兩次，只保存 1,000 根進度；
+  不等於 1,000 分鐘真實在線，更不等於 24/7 驗證。
+- F14 @mock PASS：Telegram 監督中／重啟等待／停止／故障／已恢復時間、
+  缺失／過期／損壞狀態與唯讀檔案不變。
+- 完整 `bash scripts/verify-local.sh` PASS：93 個頂層測試（race）、vet、
+  離線回測與 Paper、dry-run、安全旗標、兩個 CLI 建置。原始紀錄
+  `paper-supervisor-verification.txt`；新腳本 bash 語法及 --help 啟動測試 PASS。
+- 舊離線快照 SHA-256 仍為
+  `85a0a66d487492e5568a53fa4d1697790bf1ddef6d07ddca4a0699c2590bced3`；
+  網路實測前備份仍為
+  `78daa2be57d12a0cad9103b2c703b043ff08001faaabd2f855049eef0303bbca`。
+  原即時 Paper／Bot 保持運行，本次沒有替換快照、切換監督或送出交易所訂單。
+- NOT RUN：實際連續 24 小時／多天、斷電／主機重啟、監督自身崩潰恢復、
+  新版 Telegram 監督頁平台驗證。需正常停止原 Paper 後改用監督啟動腳本，
+  並重啟 Bot 才會生效。沒有新增自動開機服務或購買雲端方案。
