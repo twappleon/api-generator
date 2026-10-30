@@ -1,0 +1,7 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Donchian A/B 即時模擬績效</title><link rel="stylesheet" href="/site.css"></head><body><main>
+<header><div class="kicker">BINANCE · SPOT RESEARCH · NO ORDERS</div><h1>Donchian A / B 模擬績效</h1><p>固定 Vercel 網址｜自 2026-10-30 起，從 Binance 公開 4h K 線重建模擬結果。不是原 Sprite 輪詢帳本。</p><span id="health" class="pill">正在查詢市場資料…</span></header>
+<section class="compare"><article><h2>A｜原版 Donchian</h2><div class="pnl" id="aPnl">—</div><div id="aReturn">—</div><div class="small" id="aDetail"></div></article><article><h2>B｜加 ATR 波動過濾</h2><div class="pnl" id="bPnl">—</div><div id="bReturn">—</div><div class="small" id="bDetail"></div></article></section>
+<p class="notice" id="winner">尚無有效資料，不宣稱即時獲利。</p><h2>BTC / ETH / SOL 模擬績效</h2><div class="cards" id="coins"></div>
+<section><h2>歷史回測比較（非當前收益）</h2><table><tr><th>指標</th><th>A</th><th>B</th></tr><tr><td>獲利期間</td><td>85/134</td><td>88/134</td></tr><tr><td>報酬中位數</td><td>+1.00%</td><td>+0.89%</td></tr><tr><td>最差單期</td><td>-5.83%</td><td>-5.58%</td></tr><tr><td>最大單期回撤</td><td>11.35%</td><td>10.62%</td></tr></table></section>
+<footer>這是以 4h OHLC 重新計算的「前向 K 線模擬」，不是交易所實際撮合，也不是 Sprite 原始逐分鐘輪詢成交結果。成交假設下一根開盤加上每邊 0.1% 手續費及 5bps 滑價；歷史 K 線無法重建實際訂單簿與盤中成交順序。三幣每策略各以 1,000 USDT 獨立起算，非共享資金池。行情失敗時明確標示資料不可用。</footer>
+</main><script defer src="/site.js"></script></body></html>
