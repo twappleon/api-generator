@@ -356,9 +356,10 @@ func (b *bot) poll() error {
 	return nil
 }
 func main() {
+	pairing := len(os.Args) == 2 && os.Args[1] == "--pair"
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	owner, err := strconv.ParseInt(os.Getenv("TELEGRAM_OWNER_ID"), 10, 64)
-	if err != nil || owner <= 0 || token == "" {
+	if token == "" || (!pairing && (err != nil || owner <= 0)) {
 		log.Fatal("set TELEGRAM_BOT_TOKEN and numeric TELEGRAM_OWNER_ID; no secrets in source code")
 	}
 	if strings.ContainsAny(token, " /") {
@@ -370,10 +371,24 @@ func main() {
 	if state := os.Getenv("BINANCE_TESTNET_STATE"); state != "" {
 		b.state = state
 	}
-	log.Println("read-only Telegram dashboard started; Spot Testnet only")
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	b.ctx = ctx
+	if pairing {
+		err := binancespot.WithLock(b.state+".telegram", func() error {
+			id, err := b.pairOwner(os.Stdin, os.Stderr)
+			if err == nil {
+				fmt.Println(id)
+			}
+			return err
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	log.Println("read-only Telegram dashboard started; Spot Testnet only")
 	if err := binancespot.WithLock(b.state+".telegram", b.poll); err != nil {
 		log.Fatal("Telegram instance lock unavailable; inspect existing process and lock before restarting")
 	}

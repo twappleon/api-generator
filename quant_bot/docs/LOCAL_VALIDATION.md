@@ -72,3 +72,12 @@ CI：推送後另核對 GitHub Actions；本機 PASS 不自動代表遠端 CI PA
 - 訂單逐筆對帳時間未儲存，畫面明示未知；檔案 mtime 不等於對帳時間。
 - 主動通知、通知去重、策略心跳、完整監控仍未實作，不可宣稱可無人值守交易。
 - 原有 `main.go` 公開 Binance Kline URL 和 Bitget 範例維持相容；本次只跑 offline 模式，未執行其私有或實盤指令。Testnet client 沒有主網帳戶／下單能力。
+
+## 本機配對引導補充
+
+新增 `scripts/start-telegram-local.sh` 與 `telegram --pair`：隱藏輸入 Token、
+getMe／webhook 唯讀檢查、一次性配對碼、private sender/chat ID 比對及本機 yes
+確認，結果只進環境變數。啟動腳本已通過 `bash -n`，完整 verify-local 腳本
+重新通過，現在共 40 個頂層測試；新增 3 個配對測試覆蓋候選 ID、明確確認與
+既有 webhook 保留。真實 Telegram 配對仍等待使用者在本機完成 BotFather
+建立與隱藏輸入；這些 mock 結果不代表真實平台已通過。

@@ -70,3 +70,18 @@ Mac / Linux 在 `quant_bot/` 執行 `bash scripts/verify-local.sh`。腳本清�
 | Secrets | `TELEGRAM_BOT_TOKEN`、`TELEGRAM_OWNER_ID`；查資產另需 Testnet 專屬 key / secret |
 
 真實 Bot 配對、平台限頻、Volume 恢復及跨程序關機仍需部署環境實測；mock 通過不代表這些已驗收。
+
+## 本機互動配對（不需要第三方查 ID Bot）
+
+執行 `bash scripts/start-telegram-local.sh`：先建置 binary，再隱藏讀取
+`TELEGRAM_BOT_TOKEN`。若未提供 `TELEGRAM_OWNER_ID`，會呼叫 `telegram --pair`，
+驗證 getMe 與 webhook 狀態，顯示一次性 128-bit 配對碼。五分鐘內私聊自己的
+Bot 傳 `/pair <配對碼>`，再於本機終端輸入 `yes` 確認。只有同一私人聊天的
+sender/chat ID 和配對碼全部符合時，才將 owner ID 傳入子程序環境變數。
+沒有設定檔、Token 不回顯也不寫 log；配對不傳送任何訊息或交易訂單。
+既有 webhook 會阻擋配對，不會自動刪除。請勿同時執行其他 Bot poller。
+
+成功後傳 `/start`，逐一驗證總覽、測試資產、訂單、風控、說明、重新整理。
+未設定 Testnet 金鑰時，資產頁應明確提示尚未設定；不得當作 API 成功。
+控制台 log 在被 Git 忽略的 `.local/telegram.log`。關閉終端或 Ctrl-C 即停止，
+下次啟動需重新輸入環境值／配對；不保存任何憑證。

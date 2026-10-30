@@ -9,3 +9,5 @@ quant_bot/.env
 quant_bot/.env.*
 quant_bot/*.telegram.lock
 quant_bot/telegram
+
+quant_bot/.local/
