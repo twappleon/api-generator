@@ -52,3 +52,12 @@ Render 部署、雲端 Bot 回應、Testnet 查詢、磁碟重啟保留目前均
 - https://render.com/docs/blueprint-spec
 - https://render.com/docs/disks
 - https://render.com/docs/compute-plans
+
+### Dashboard 實際進度
+
+使用者確認目標為 Dashboard 的 `cctrader`（非插件連線的 `crytotrade`）。
+已選取 `cursor/quant-bot-usdt-c6b3`；Dashboard 找到 Blueprint，但顯示
+`Payment Information Required`，要求新增付款方式，提示 US$1 暫時授權。
+狀態：BLOCKED（付款資料未設定）；尚未建立 worker 或部署，未填入金鑰。
+`47bb6e5` 的兩項 GitHub CI 均 PASS。公開 schema 與本機建置通過不代表
+Render 平台完整驗證通過；付款門檻後仍需檢查方案報價及服務設定。
