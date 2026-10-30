@@ -197,18 +197,7 @@ func (b *bot) viewContent(action string) string {
 	case "help", "/help":
 		return "📖 新手操作\n\n💰 測試資產：讀取 Binance Testnet 帳戶餘額\n📋 訂單紀錄：查詢 BTCUSDT 未成交與最近 5 筆測試網訂單\n/orders ETHUSDT：指定交易對\n/openorders BTCUSDT：只查未成交\n/order BTCUSDT <Client ID>：單筆狀態\n/localorders：本機快照（非即時）\n🛡️ 風控狀態：查看停機及當日風險數據\n\n所有按鈕只做查詢，不會買入或賣出。\n查詢失敗時不會猜測餘額或交易狀態。"
 	case "risk", "/risk":
-		s, err := binancespot.LoadState(b.state)
-		if err != nil {
-			return "⚠️ 風控資料讀取失敗，請檢查主機狀態。"
-		}
-		if s.Day == "" && !s.Kill {
-			return "⚪ 尚無可靠風控快照。\n尚未執行 Testnet 訂單前置檢查，不能代表交易安全。"
-		}
-		state := "✅ 未觸發本地停機"
-		if s.Kill {
-			state = "🛑 已停機：" + haltReason(s.KillReason)
-		}
-		return fmt.Sprintf("🛡️ 風控狀態\n%s\n\n風控日期 UTC：%s\n當日基準：%.2f USDT\n記錄峰值：%.2f USDT\n\n注意：數據為最近一次記錄，非即時帳戶淨值。", state, s.Day, s.DayStart, s.Peak) + "\n" + b.snapshotTime()
+		return b.riskView()
 	case "localorders", "/localorders":
 		s, err := binancespot.LoadState(b.state)
 		if err != nil {

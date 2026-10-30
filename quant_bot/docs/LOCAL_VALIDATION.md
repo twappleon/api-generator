@@ -136,3 +136,35 @@ C10 仍 NOT RUN，全程沒有送出訂單。此補充取代上文帳戶查詢�
 - 外部非空／部分成交／單筆 GET order：NOT RUN。先前 BTCUSDT／ETHUSDT
   沒有返回既有訂單；本次未猜測訂單 ID，也未建立任何訂單來製造測試資料。
 - 17:34 新版重啟後，Telegram `/order` 缺參數引導 PASS；BTCUSDT／ETHUSDT 仍未返回既有訂單，單筆 GET order 外部測試仍 NOT RUN。詳見 `TELEGRAM_LOCAL_E2E.md`。
+
+## 風控／本機模擬補充 — 2026-10-30
+
+修正停機後 Observe 仍改寫原日期／資產基準／峰值／停機原因的問題：已鎖定
+時立即拒絕觀測更新；跨日與資產回升均保留原現場。LoadState 拒絕 null、
+非物件、非法日期與負資產值，不重建或清除原檔。
+
+Telegram 風控頁明示停機鎖、過期 UTC 基準、未解訂單數、非即時本機來源；
+沒有基準的 API 前置失敗顯示尚未建立，避免顯示假 0。Paper 與 Testnet
+快照分開標示，不宣稱風控鎖控制原有 Paper 迴圈。
+
+| 項目 | 結果及範圍 |
+| --- | --- |
+| D2／D3 | PASS，本機每日虧損／峰值回撤觸發停機 |
+| D4 同日／跨日回升 | PASS，日期／基準／峰值／原因／未解訂單不變 |
+| D4 真正新程序重新載入 | PASS，每個停機情境啟動兩次獨立測試程序；重新讀檔、換日仍鎖定，guard 在任何 API 呼叫前拒絕；原檔位元組不變 |
+| 未停機跨日 | PASS，更新日基準、保留歷史峰值與訂單 |
+| B7 損毀／語意無效快照 | PASS，本機拒絕，保留原檔 |
+| Telegram callback／refresh／新 bot instance | PASS（mock），停機及過期基準可見；不修改風控檔；不提供解鎖 |
+| A1 回測 | PASS，300 根離線樣本，1 筆模擬交易；非真實績效 |
+| A2 Paper | PASS，原 5 輪啟動測試及新增 300 輪離線測試；300 輪有 2 次模擬 BUY、2 次 take_profit SELL；網路 transport 一旦被呼叫即測試失敗 |
+| 真實 Telegram `/risk` | 10:38:22Z（本地 17:38:22）PASS：目前運行舊版仍明示尚無可靠快照，不能代表交易安全；未注入假 state |
+| 新風控頁的真實停機／跨日 UI | NOT RUN，只有 mock；本機實際 Bot 尚未重啟載入本次修改，沒有真實風控快照 |
+| Testnet 真實跨日淨值／成交 | NOT RUN，沒有交易請求 |
+| Paper 重啟持倉恢復 | NOT IMPLEMENTED，現有 Paper 每次啟動從設定資金開始；上方重啟證據只適用 Testnet 風控帳本 |
+| Railway 持久化／多主機鎖／斷電恢復 | BLOCKED／NOT RUN，未購買或部署 |
+
+完整 `scripts/verify-local.sh` PASS：55 個頂層測試通過，另有 1 個 helper
+在主程序 SKIP（由重啟測試以獨立子程序實際執行）；race、vet、offline
+backtest／paper、dry-run、build、缺憑證與送單保護皆通過。
+原始輸出：`docs/risk-verification.txt`；300 輪 CLI 輸出：`docs/paper-300-verification.txt`。
+所有風控測試檔案在臨時目錄，未寫入使用者的 `state-testnet.json`。

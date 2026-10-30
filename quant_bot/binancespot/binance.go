@@ -234,6 +234,8 @@ type State struct {
  Orders map[string]string `json:"orders"`
 }
 func (s *State) Observe(day string,equity float64,limits RiskLimits) error {
+ // A latched halt preserves its original date, baseline, peak and cause.
+ if s.Kill{return fmt.Errorf("kill switch latched: %s",s.KillReason)}
  if !(equity>0)||math.IsNaN(equity)||math.IsInf(equity,0) {return errors.New("invalid account equity")}
  if s.Orders==nil{s.Orders=make(map[string]string)}
  if s.Day!=day {s.Day=day;s.DayStart=equity}
@@ -280,6 +282,10 @@ func LoadState(path string) (State,error) {
  if errors.Is(err,os.ErrNotExist){return State{Orders:map[string]string{}},nil}
  if err!=nil{return s,err}
  if err=json.Unmarshal(raw,&s);err!=nil{return s,fmt.Errorf("invalid state, fail closed: %w",err)}
+ var object map[string]json.RawMessage
+ if json.Unmarshal(raw,&object)!=nil||object==nil{return State{},errors.New("invalid state object, fail closed")}
+ if s.DayStart<0||s.Peak<0{return State{},errors.New("invalid state equity, fail closed")}
+ if s.Day!="" {if _,err:=time.Parse("2006-01-02",s.Day);err!=nil{return State{},errors.New("invalid state date, fail closed")}}
  if s.Orders==nil{s.Orders=make(map[string]string)}
  return s,nil
 }
