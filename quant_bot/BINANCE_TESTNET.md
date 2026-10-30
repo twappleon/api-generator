@@ -69,3 +69,20 @@ Run deterministic tests with `go test ./... -race -count=1` inside `quant_bot`.
 5. Never retry an ambiguous order, even if querying gives temporary `-2013` order-not-found. Reconcile with exchange account history manually before any operational reset.
 
 Official API references: [Spot REST](https://developers.binance.com/en/docs/products/spot/rest-api), [Spot Testnet](https://developers.binance.com/en/docs/products/spot/testnet), [Trading](https://developers.binance.com/en/docs/products/spot/trading), [Filters](https://developers.binance.com/en/docs/products/spot/common-definition).
+
+## P0 continuation (2026-10-30)
+
+Local validation is reproducible with `bash scripts/verify-local.sh`; see
+[`docs/LOCAL_VALIDATION.md`](docs/LOCAL_VALIDATION.md). Account responses now reject
+missing/malformed balances, cancellation propagates from the Telegram worker,
+and redirects are blocked. Local mock endpoint overrides require a parsed loopback
+URL without userinfo, path, query or fragment. Transport failures omit signed URLs.
+
+Before any P1 integration: recheck official Testnet specifications, configure only
+Testnet credentials in the environment, and explicitly authorize any Testnet order
+E2E separately. This run did not query the external Testnet or send any exchange
+order. Partial fills, full-account NAV/fees, decimal arithmetic, cross-process and
+cross-host recovery, notifications and production monitoring remain unverified or
+unimplemented. The legacy public Binance candle URL remains for compatibility;
+the offline tests prove these simulations make no HTTP requests. No Binance
+production account/order client is introduced.

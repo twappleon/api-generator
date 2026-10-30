@@ -158,3 +158,11 @@ go run quant_bot/main.go bitget-order --symbol BTCUSDT --side buy --order-type m
 ## Binance Spot Testnet (new)
 
 The Binance private API extension, guarded Testnet-only execution CLI, deterministic mock tests, risk controls, and verification matrix are documented in [BINANCE_TESTNET.md](BINANCE_TESTNET.md). The original `main.go` strategy modes remain unchanged. Default: dry-run only; real-money Binance trading is not implemented.
+
+### Telegram P0 local verification
+
+Run `bash scripts/verify-local.sh` from `quant_bot/` for offline simulations,
+Telegram/Binance HTTP mocks, Go race/vet, CLI guards and build checks. See
+[Telegram operations](TELEGRAM.md) and [actual validation matrix](docs/LOCAL_VALIDATION.md).
+External Telegram pairing and Binance Testnet E2E are not verified; Railway is
+blocked by billing. Keep PR #6 draft and do not enable unattended trading.

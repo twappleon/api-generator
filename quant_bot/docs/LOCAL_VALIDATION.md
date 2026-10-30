@@ -1,0 +1,74 @@
+# P0 本機驗證報告 — 2026-10-30
+
+## 階段與提交
+
+- 基線：`622304fa9ea2e8def5b6a60fab2ead2a778f54a9`。
+- 程式／測試階段：`845336da2bd5a28cf4fa9e76533f106a0c55983d`。
+- 現有 branch：`cursor/quant-bot-usdt-c6b3`；沿用 Draft PR #6，不合併。
+- 完成：唯讀中文控制台、來源／時間標示、當頁重新整理、白名單、錯誤去敏、可取消請求、429／5xx 退避、同程序 update 去重、單主機同路徑實例鎖、mock 整合與風控回歸。
+- 修正：無日期的 API preflight kill 仍顯示停機；拒絕無 balances／非法金額的帳戶回應；禁止 Telegram／Binance redirect；以 URL parser 封鎖 loopback userinfo 偽裝。
+- 未完成：外部 Telegram 配對、真實 Testnet E2E、Railway 部署，以及下列高風險事項。
+
+## 實際執行
+
+在 Mac 的 `quant_bot/` 執行 `bash scripts/verify-local.sh`，exit 0。
+完整命令和 stdout/stderr：[`local-verification.txt`](local-verification.txt)。
+
+- `go test ./... -race -count=1 -v -timeout=60s`：37 個頂層測試 PASS，0 FAIL（子案例另列於原始輸出）。
+- `go vet ./...`：exit 0。
+- offline backtest：300 candles，Final USDT 1027.94，Total return 2.79%，Max drawdown 0.10%，1 trade；固定合成資料，不是績效預測。
+- offline Paper：5/5 輪，全部 HOLD，沒有實際交易；額外測試攔截所有 HTTP transport，確保離線回測／Paper 無網路請求。
+- Binance CLI dry-run：輸出意圖，無網路、無委託落盤。
+- Telegram build：成功；缺 Token、缺 owner 分別拒絕，沒有 secret 外洩。
+- 缺 `--send-testnet` 的 `--dry-run=false`：明確拒絕。
+- `git diff --check`：通過。
+
+開發過程曾在 repo root 誤跑 `go test ./...`（Go module 位於 quant_bot）而失敗，已由腳本固定工作目錄。第一個 timeout mock 未讀 request body，導致 mock server 等待取消；已修正 fixture，最終完整測試沒有失敗。沒有變更真實 state、清除交易鎖或繞過風控。
+
+## BDD 對照
+
+| Case | 狀態 | 範圍／證據 |
+| --- | --- | --- |
+| A1 | PASS | 離線回測與 TestOfflineModesNeverUseNetwork |
+| A2 | PASS | 五輪 Paper 與 network-deny transport |
+| B1 | PASS | TestHTTPHomeCallbackAndAuthorization：HTTP /start、中文標示、六按鈕 |
+| B2 | PASS | 身分／chat ID／群聊驗權；無資產查詢、無回覆資料 |
+| B3 | PASS | callback acknowledgement、GET account、refresh；mock only |
+| B4 | PASS | 腳本分別驗證缺 token／owner、無 secret log |
+| B5 | PASS | mock 429 recovery、5xx 安全錯誤／退避、timeout、取消；不代表平台限頻實測 |
+| B6 | PASS | 缺快照呈現不確定，不當作零或安全 |
+| B7 | PASS | JSON 損毀回報錯誤、檔案位元組不變 |
+| B8 | PASS | 同程序去重、重啟重送只做唯讀回覆；offset 不持久化 |
+| C1 | PASS | RFC HMAC 向量、簽名 header／query mock |
+| C2 | PASS | Testnet client 主網拒絕、userinfo 偽裝拒絕、redirect 封鎖 |
+| C3 | PASS | CLI dry-run smoke |
+| C4 | PASS | 缺第二確認旗標，exit 非零且訊息符合預期 |
+| C5 | PASS | NEW／FILLED 重複 ID 拒絕；UNKNOWN 保留／新 ID 拒絕 |
+| C6 | PASS | mock 504 與 transport deadline；保留 UNKNOWN、不重送 POST |
+| C7 | PASS | mock FILLED 對帳與落盤 |
+| C8 | PASS | quantity 上下界／step、price tick、MARKET minimum notional；非完整即時交易規則驗收 |
+| C9 | NOT RUN | 外部 Testnet 帳戶／訂單查詢 UNVERIFIED |
+| C10 | NOT RUN | Testnet 下單 E2E 未獲單獨核准、未執行 |
+| D1 | PASS | max position 在 POST 前拒絕 |
+| D2 | PASS | UTC daily loss latch |
+| D3 | PASS | peak drawdown latch |
+| D4 | PASS | 跨日＋落盤重新載入仍停機 |
+| D5 | PASS | mock 429／418／5xx／401／400 preflight 停機；真實 auth／clock／斷線情境仍 UNVERIFIED |
+| D6 | PASS | BUY／SELL 不使用 locked balances，保留 fee reserve 邏輯 |
+| E1 | PASS | race／vet 與 CI 同一離線腳本 |
+| E2 | PASS | binary build；缺設定拒絕啟動 |
+| E3 | BLOCKED | Railway billing 未解除，Volume／重啟未驗證 |
+| E4 | BLOCKED | 沿用交接的 trial-expired 狀態，本次未再呼叫 Railway、未購買 |
+| E5 | PASS | 本次 offline/mock/dry-run 無 Binance 主網或外部交易請求；控制台維持唯讀 |
+
+CI：推送後另核對 GitHub Actions；本機 PASS 不自動代表遠端 CI PASS。
+
+## 必須保留的限制
+
+- 真實 Telegram Bot Token 配對、Testnet API／成交狀態、Railway 均未驗證。
+- 部分成交、全帳戶 NAV／費用對帳、精確小數、外部存提款／其他 bot、Testnet 重設未完成。
+- UTC 換日停機 latch 有 mock 證據；真實帳戶跨日資產基準仍需驗證。
+- 同主機同路徑鎖有本機測試；跨主機鎖、真實多程序故障恢復／SIGKILL 殘鎖仍需營運驗證。
+- 訂單逐筆對帳時間未儲存，畫面明示未知；檔案 mtime 不等於對帳時間。
+- 主動通知、通知去重、策略心跳、完整監控仍未實作，不可宣稱可無人值守交易。
+- 原有 `main.go` 公開 Binance Kline URL 和 Bitget 範例維持相容；本次只跑 offline 模式，未執行其私有或實盤指令。Testnet client 沒有主網帳戶／下單能力。
