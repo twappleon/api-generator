@@ -45,6 +45,13 @@ func (b *bot) performanceView() string {
 	if s.Updated > 0 {
 		text += "快照更新 UTC：" + time.UnixMilli(s.Updated).UTC().Format(time.RFC3339) + "\n"
 	}
+	if s.Config.TrailingStopPct > 0 || s.Config.MaxHoldingBars > 0 {
+		text += fmt.Sprintf("自動出場：移動停損 %.2f%%／最長持倉 %d 根（0 為關閉）\n", s.Config.TrailingStopPct*100, s.Config.MaxHoldingBars)
+	}
+	if x := s.LastExit; x != nil {
+		labels := map[string]string{"signal": "均線反向訊號", "stop_loss": "固定停損", "trailing_stop": "移動停損", "take_profit": "固定停利", "max_holding": "持倉時間上限"}
+		text += fmt.Sprintf("最近模擬平倉：%s\n出場成交價：%.8f／手續費：%.8f／滑價：%.8f USDT\n該筆已實現（含雙邊費用）：%.8f USDT\n", labels[x.Reason], x.Price, x.Fee, x.Slippage, x.Realized)
+	}
 	text += performanceHealth(path, s, time.Now())
 	return text + "資料為保存時估值，非即時報價；快照不是程序心跳。\n下一根開盤成交模型，非實際成交或獲利保證；此頁不啟動策略或送單。"
 }

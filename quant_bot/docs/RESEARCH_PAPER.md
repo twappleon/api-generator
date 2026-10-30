@@ -130,3 +130,32 @@ go run ./cmd/research --mode paper --config config.paper-live.json \
 安全退出與重啟頻率限制；2,000 次加速輪詢／1,000 根行情，皆使用測試目錄。
 未實測：真實 24 小時以上運行、主機斷電、監督自身崩潰恢復、新版 Telegram
 監督資訊平台畫面。現有 Paper/Bot 未替換，需切換新啟動方式並重啟 Bot 生效。
+
+## 可選自動出場（2026-10-30）
+
+既有 SMA 自動進場保留，新增 `trailing_stop_pct` 與 `max_holding_bars`，
+預設 0 關閉；`config.paper-auto-exit.json` 示範 1% 移動停損與 120 根上限，
+只是未優化的研究參數，並不保證盈利或選中最佳平倉時間。
+
+- 前一根均線反向訊號優先在下一根開盤出場；否則到持倉根數上限在開盤
+  出場（可能虧損），該根不重新進場。之後才檢查固定／移動停損及固定停利。
+- 當收盤淨清算值超過含進場費成本，才依收盤價上移停損；只升不降，
+  下一根生效，不能用本根收盤回頭觸發本根低價。移動停損仍可能虧損，
+  尤其跳空時；它不是保證保本。固定停利繼續有效。
+- 保存最近一筆出場原因、時間、數量、參考價、成交價、出場費、滑價與
+  含雙邊費用的已實現損益。滑價已計入成交價，不再重複扣除。
+- 新版 Telegram `/performance` 顯示出場規則及最近平倉成本；仍為唯讀。
+- 新版可讀既有無 LastExit 的快照。新規則必須使用獨立新快照，不能改原
+  設定續跑舊帳本；新增 LastExit 後的檔案不保證舊 binary 可讀，勿降版覆寫。
+
+隔離運行命令（從 quant_bot 執行；此次未啟動此新即時工作）：
+
+```sh
+go run ./cmd/research --mode supervisor --config config.paper-auto-exit.json \
+  --state .local/auto-exit-v1.performance.paper.json --slippage-bps 5
+```
+
+Bot 可透過本機環境變數 PERFORMANCE_STATE 指向上述新檔案；這次未切換
+正在運行的 Bot／Paper，以保留原 24 小時觀察。本次驗證為隔離 mock、
+單元與 race 測試；新版真實即時行情自然平倉、Telegram 平台畫面、獲利能力
+與樣本外表現均未實測。沒有呼叫任何交易所訂單端點。

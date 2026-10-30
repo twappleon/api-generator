@@ -16,8 +16,16 @@ import (
 
 type Config struct {
 	strategy.Config
-	SlippageBPS float64 `json:"slippage_bps"`
+	SlippageBPS     float64 `json:"slippage_bps"`
+	TrailingStopPct float64 `json:"trailing_stop_pct,omitempty"`
+	MaxHoldingBars  int     `json:"max_holding_bars,omitempty"`
 }
+type Exit struct {
+	Reason                                         string
+	Time                                           int64
+	Qty, Reference, Price, Fee, Slippage, Realized float64
+}
+
 type Candle struct {
 	Time, End              int64
 	Open, High, Low, Close float64
@@ -34,6 +42,7 @@ type State struct {
 	Position                                                  *paperstate.Position
 	Window                                                    []float64
 	Pending                                                   int
+	LastExit                                                  *Exit `json:"LastExit,omitempty"`
 }
 
 func Duration(interval string) int64 {
@@ -41,6 +50,9 @@ func Duration(interval string) int64 {
 }
 func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 func (c Config) Validate() error {
+	if !finite(c.TrailingStopPct) || c.TrailingStopPct < 0 || c.TrailingStopPct >= 1 || c.MaxHoldingBars < 0 || c.MaxHoldingBars > 100000 {
+		return errors.New("invalid automatic exit policy")
+	}
 	if !regexp.MustCompile(`^[A-Z0-9]{2,24}$`).MatchString(c.Symbol) || Duration(c.Interval) == 0 || c.ShortWindow < 1 || c.LongWindow <= c.ShortWindow || c.LongWindow > 1000 {
 		return errors.New("invalid strategy/symbol/interval")
 	}
@@ -59,6 +71,24 @@ func New(c Config, source string) (State, error) {
 	return s, s.Validate()
 }
 func (s State) Validate() error {
+	if x := s.LastExit; x != nil {
+		if s.Trades < 1 || x.Time <= 0 || x.Time > s.Last || !finite(x.Realized) {
+			return errors.New("invalid exit record")
+		}
+		switch x.Reason {
+		case "signal", "stop_loss", "trailing_stop", "take_profit", "max_holding":
+		default:
+			return errors.New("invalid exit reason")
+		}
+		for _, v := range []float64{x.Qty, x.Reference, x.Price, x.Fee, x.Slippage} {
+			if !finite(v) || v < 0 {
+				return errors.New("invalid exit accounting")
+			}
+		}
+		if x.Qty == 0 || x.Price == 0 || x.Reference == 0 {
+			return errors.New("invalid exit fill")
+		}
+	}
 	if err := s.Config.Validate(); err != nil {
 		return err
 	}
@@ -157,7 +187,7 @@ func (s *State) Seed(bars []Candle) error {
 	}
 	return nil
 }
-func (s *State) sell(reference float64) {
+func (s *State) sell(reference float64, reason string, at int64) {
 	p := s.Position
 	price := reference * (1 - s.Config.SlippageBPS/10000)
 	gross := p.Qty * price
@@ -171,6 +201,7 @@ func (s *State) sell(reference float64) {
 	if pnl > 0 {
 		s.Wins++
 	}
+	s.LastExit = &Exit{Reason: reason, Time: at, Qty: p.Qty, Reference: reference, Price: price, Fee: fee, Slippage: p.Qty * (reference - price), Realized: pnl}
 	s.Position = nil
 }
 
@@ -186,10 +217,16 @@ func (s *State) Apply(c Candle) (bool, error) {
 	if s.Last == 0 || c.Time != s.Last+d {
 		return false, errors.New("candle gap; stopped")
 	}
+	exited := false
 	if s.Position != nil && s.Pending == -1 {
-		s.sell(c.Open)
+		s.sell(c.Open, "signal", c.Time)
+		exited = true
 	}
-	if s.Position == nil && s.Pending == 1 {
+	if p := s.Position; p != nil && s.Config.MaxHoldingBars > 0 && (c.Time-p.EntryTime)/d >= int64(s.Config.MaxHoldingBars) {
+		s.sell(c.Open, "max_holding", c.Time)
+		exited = true
+	}
+	if s.Position == nil && s.Pending == 1 && !exited {
 		price := c.Open * (1 + s.Config.SlippageBPS/10000)
 		qty := math.Min(s.Cash*s.Config.RiskPerTrade/(price*s.Config.StopLossPct), s.Cash/(price*(1+s.Config.FeeRate)))
 		if qty > 0 {
@@ -206,9 +243,20 @@ func (s *State) Apply(c Candle) (bool, error) {
 	if p := s.Position; p != nil {
 		// Conservative when both levels are touched: stop first; gaps fill at worse open.
 		if c.Low <= p.StopLoss {
-			s.sell(math.Min(c.Open, p.StopLoss))
+			reason := "stop_loss"
+			if p.StopLoss > p.EntryPrice*(1-s.Config.StopLossPct) {
+				reason = "trailing_stop"
+			}
+			s.sell(math.Min(c.Open, p.StopLoss), reason, c.Time)
 		} else if c.High >= p.TakeProfit {
-			s.sell(p.TakeProfit)
+			s.sell(p.TakeProfit, "take_profit", c.Time)
+		}
+	}
+	// Raise the stop only AFTER evaluating this bar: it becomes active next bar.
+	if p := s.Position; p != nil && s.Config.TrailingStopPct > 0 {
+		net := p.Qty * c.Close * (1 - s.Config.SlippageBPS/10000) * (1 - s.Config.FeeRate)
+		if net > p.Qty*p.EntryPrice+p.EntryFee {
+			p.StopLoss = math.Max(p.StopLoss, c.Close*(1-s.Config.TrailingStopPct))
 		}
 	}
 	s.observe(c)
@@ -251,12 +299,17 @@ func Read(path string) (State, error) {
 		return s, errors.New("snapshot too large")
 	}
 	var fields map[string]json.RawMessage
-	if json.Unmarshal(raw, &fields) != nil || len(fields) != 20 {
+	if json.Unmarshal(raw, &fields) != nil || (len(fields) != 20 && len(fields) != 21) {
 		return s, errors.New("incomplete performance snapshot")
 	}
 	for _, k := range strings.Fields("Kind Version Source Config Cash Equity Peak MaxDrawdown Fees Slippage Realized Trades Wins Steps Last Updated Mark Position Window Pending") {
 		if _, ok := fields[k]; !ok {
 			return s, errors.New("missing field")
+		}
+	}
+	if len(fields) == 21 {
+		if _, ok := fields["LastExit"]; !ok {
+			return s, errors.New("unknown snapshot field")
 		}
 	}
 	for k, v := range fields {

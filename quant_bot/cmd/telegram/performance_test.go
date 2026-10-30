@@ -155,3 +155,37 @@ func TestPerformanceSupervisorRecoveryReadOnly(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestPerformanceAutomaticExitDetails(t *testing.T) {
+	b := &bot{performanceState: filepath.Join(t.TempDir(), "auto.performance.paper.json")}
+	s, e := research.New(research.Config{Config: strategy.Config{Symbol: "BTCUSDT", Interval: "1m", ShortWindow: 2, LongWindow: 3, InitialUSDT: 1000, RiskPerTrade: .02, FeeRate: .001, StopLossPct: .1, TakeProfitPct: .2}, SlippageBPS: 5, MaxHoldingBars: 1}, "live-paper")
+	if e != nil {
+		t.Fatal(e)
+	}
+	bars := []research.Candle{}
+	for i, p := range []float64{4, 3, 2, 5} {
+		bars = append(bars, research.Candle{Time: int64(i+1) * 60000, End: int64(i+2)*60000 - 1, Open: p, High: p, Low: p, Close: p})
+	}
+	if e = s.Seed(bars); e != nil {
+		t.Fatal(e)
+	}
+	for i := 5; i <= 6; i++ {
+		if _, e = s.Apply(research.Candle{Time: int64(i) * 60000, End: int64(i+1)*60000 - 1, Open: 10, High: 10, Low: 10, Close: 10}); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if e = research.Save(b.performanceState, s); e != nil {
+		t.Fatal(e)
+	}
+	before, _ := os.ReadFile(b.performanceState)
+	got := b.performanceView()
+	for _, want := range []string{"持倉時間上限", "該筆已實現", "出場成交價", "最長持倉 1 根"} {
+		if !strings.Contains(got, want) {
+			t.Fatal(got)
+		}
+	}
+	after, _ := os.ReadFile(b.performanceState)
+	if string(before) != string(after) {
+		t.Fatal("exit view wrote snapshot")
+	}
+}

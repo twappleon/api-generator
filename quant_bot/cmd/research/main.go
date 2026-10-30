@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"quant_bot/research"
-	"quant_bot/strategy"
 	"syscall"
 	"time"
 )
@@ -35,11 +34,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	var base strategy.Config
-	if err = json.Unmarshal(raw, &base); err != nil {
+	var c research.Config
+	if err = json.Unmarshal(raw, &c); err != nil {
 		return err
 	}
-	c := research.Config{Config: base, SlippageBPS: *slip}
+	c.SlippageBPS = *slip
 	if err = c.Validate(); err != nil {
 		return err
 	}
