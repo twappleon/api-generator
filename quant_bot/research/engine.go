@@ -145,7 +145,7 @@ func (s State) Validate() error {
 }
 func (c Candle) Validate(d int64) error {
 	if d <= 0 || c.Time <= 0 || c.Time%d != 0 || c.End != c.Time+d-1 {
-		return errors.New("invalid candle time")
+		return fmt.Errorf("invalid candle time: open=%d close=%d expected-duration-ms=%d observed-duration-ms=%d", c.Time, c.End, d, c.End-c.Time+1)
 	}
 	for _, v := range []float64{c.Open, c.High, c.Low, c.Close} {
 		if !finite(v) || v <= 0 {
