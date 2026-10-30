@@ -55,3 +55,28 @@ Testnet API Key 與 Secret，完成配對後啟動。憑證只傳入程序環境
 Testnet 實測證據，但 openOrders／單筆訂單查詢仍 NOT RUN，不能將 C9 整項
 標為 PASS。C10 下單／成交仍 NOT RUN；Railway 仍 BLOCKED。本次無程式修改，
 未重跑 Go 單元測試；先前 42 個測試的結果與本次外部查詢證據分開記錄。
+
+## Testnet 訂單唯讀實測 — 2026-10-30 17:22（Asia/Phnom_Penh）
+
+執行版本：`9222613`。使用者重新隱藏輸入憑證、配對並啟動後，直接操作
+macOS Telegram 私聊，觀察以下外部 Testnet 回覆；未建立測試訂單以製造資料。
+
+| 操作 | 查詢完成 UTC | 實際結果 |
+| --- | --- | --- |
+| `/openorders BTCUSDT` | 10:22:09Z | PASS：GET openOrders，0 筆；沒有歷史查詢區塊 |
+| `/orders ETHUSDT` | 10:22:21Z | PASS：GET openOrders 0 筆；GET allOrders 未返回紀錄 |
+| ETHUSDT 頁「重新整理」 | 10:22:32Z | PASS：保留 ETHUSDT，兩個查詢時間更新；仍為空結果 |
+| 「訂單紀錄」按鈕 | 10:22:43Z | PASS：回到預設 BTCUSDT；未成交 0 筆、歷史未返回紀錄 |
+
+所有回覆明示單一交易對／非全帳戶、Testnet、唯讀、資料來源及各查詢時間；
+不將空結果推論成完整歷史不存在。查詢時本機日誌有啟動紀錄、0 次 request
+failed、無停止紀錄；交易 state 檔仍不存在。本次未建立、取消或修改任何訂單。
+
+C9：Account 與 OpenOrders 已有真實 Testnet 查詢證據；本次亦驗證 allOrders
+空結果。單筆 GET order、真實非空訂單／部分成交等仍 NOT RUN；不把 C9 整項
+或 C10 標示 PASS。非空資料與失敗分類仍只有 mock 證據。
+
+程式提交 `9222613` 的 46 個頂層 Go 測試、race／vet／完整離線腳本已通過；
+[push CI](https://github.com/twappleon/api-generator/actions/runs/41039667717)
+與 [PR CI](https://github.com/twappleon/api-generator/actions/runs/41039675733)
+均為 success。本次只補實測紀錄，未重跑 Go 測試。

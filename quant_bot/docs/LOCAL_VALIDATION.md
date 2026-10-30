@@ -114,7 +114,7 @@ C10 仍 NOT RUN，全程沒有送出訂單。此補充取代上文帳戶查詢�
   offline backtest／paper、CLI dry-run、建置與缺憑證／送單旗標防護全部通過。
 - 新測試：簽名及 GET 限定、symbol／limit 驗證、取消、無效回應拒絕、
   owner 授權、指定交易對重新整理、空結果、部分查詢失敗與錯誤脫敏、無 state 寫入。
-- 外部 Telegram openOrders／allOrders：等待本機新版重啟，尚未標示 PASS。
+- 外部 Telegram openOrders／allOrders：2026-10-30 17:22 已驗證 BTCUSDT／ETHUSDT 空結果、按鈕及保留交易對重新整理；詳見 `TELEGRAM_LOCAL_E2E.md`。
 - 真實非空歷史／單筆 GET order／下單成交仍 NOT RUN。
 
 本次離線輸出：`docs/order-query-verification.txt`。
