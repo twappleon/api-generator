@@ -168,3 +168,9 @@ Telegram 風控頁明示停機鎖、過期 UTC 基準、未解訂單數、非即
 backtest／paper、dry-run、build、缺憑證與送單保護皆通過。
 原始輸出：`docs/risk-verification.txt`；300 輪 CLI 輸出：`docs/paper-300-verification.txt`。
 所有風控測試檔案在臨時目錄，未寫入使用者的 `state-testnet.json`。
+
+### 17:59 風控頁後續驗證
+
+使用者重啟配對後，真實 Telegram `/risk`、風控按鈕、重新整理的缺快照分支
+PASS（10:59:19Z／35Z／44Z）。快照仍不存在，真實停機鎖／跨日及非空資料
+顯示仍 NOT RUN；未寫假 state，未送單。詳見 `TELEGRAM_LOCAL_E2E.md`。
