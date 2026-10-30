@@ -7,7 +7,7 @@
 直接傳 `/start`，按下方按鈕：
 - 🏠 總覽：目前模式及功能限制
 - 💰 測試資產：Binance Spot Testnet 資產查詢
-- 📋 訂單紀錄：本地持久化訂單 ID / 最近記錄狀態
+- 📋 訂單紀錄：BTCUSDT 的 Testnet 未成交訂單與最近 5 筆訂單；缺金鑰時明示只能看本機快照
 - 🛡️ 風控狀態：顯示停機、每日基準、峰值（非即時）
 - ℹ️ 使用說明
 
@@ -46,7 +46,7 @@ Mac / Linux 在 `quant_bot/` 執行 `bash scripts/verify-local.sh`。腳本清�
 
 - 六個按鈕均唯讀；「重新整理」查詢目前頁面，重啟後預設總覽。
 - 資產是當次 Testnet GET account 查詢；失敗不使用舊餘額。檔案時間僅代表本地檔案修改時間，**不是交易所時間或逐筆對帳時間**。
-- 訂單按 Client Order ID 排序，最多顯示 15 筆，不宣稱是最新 15 筆。逐筆對帳時間尚未記錄；使用原 ID 透過 `binance-spot status` 核對。
+- `/localorders` 本機訂單按 Client Order ID 排序，最多顯示 15 筆，不宣稱是最新 15 筆。逐筆對帳時間尚未記錄；使用原 ID 透過 `binance-spot status` 核對。
 - polling 網路／5xx 失敗採 1、2、4、8、16、30 秒退避；429 優先等待 `retry_after`（上限一天）。等待可被 SIGINT／SIGTERM 中斷。
 - Telegram 和 Binance 請求禁止轉址。Telegram 不記錄回傳 description、原始 transport error 或含 Token 網址。
 - 同一程序依 update ID 去重；offset 不跨重啟保存。重新投遞僅可能多一次查詢及畫面回覆，不會送單。若回覆失敗，不自動重送同一訊息；使用者可重新整理。
@@ -117,3 +117,20 @@ Testnet GET account、查詢時間與餘額。沒有真實回覆前不標示驗�
 啟動腳本會在隱藏輸入憑證前檢查控制台鎖；若已存在則停止，不自動移除。
 2026-10-30 曾確認殘留鎖 PID 99151 已不存在，且無控制台程序，才將該鎖
 歸檔至本機 `.local/`；未動交易 state 或風控狀態。
+
+## Testnet 訂單唯讀查詢
+
+- `/orders` 或「訂單紀錄」：預設 BTCUSDT，依序 GET openOrders 與 GET allOrders。
+- `/orders ETHUSDT`：指定單一交易對；最近紀錄最多 5 筆，含活動及已結束訂單，非成交明細。
+- `/openorders BTCUSDT`：只查該交易對未成交訂單；顯示總筆數，最多列出 5 筆。
+- 「重新整理」保留指令的交易對及查詢種類；「訂單紀錄」按鈕回到預設 BTCUSDT。
+- `/localorders`：原本本機追蹤快照，仍標示非即時，不因交易所查詢而改寫。
+
+各查詢有獨立來源與完成時間；單一交易對沒有訂單不代表全帳戶沒有訂單。
+Testnet 資料可能重設；空陣列只表示本次未返回資料，不能證明永久沒有歷史。
+歷史查詢失敗時保留已成功的未成交結果及其時間，明示歷史未知；不顯示舊結果。
+憑證／時間／限頻／交易對／伺服器錯誤以安全中文分類，不回傳交易所原始錯誤。
+只需 USER_DATA，無須 TRADE，沒有下單、撤單或修改訂單功能。
+
+規格核對：[官方 Testnet REST API](https://developers.binance.com/en/docs/products/spot/testnet/rest-api)
+（2026-10-30）：openOrders 指定 symbol；allOrders 必須指定 symbol，使用 limit=5。

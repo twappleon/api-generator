@@ -104,3 +104,17 @@ getMe／webhook 唯讀檢查、一次性配對碼、private sender/chat ID 比�
 C9 現為部分驗證：帳戶查詢 PASS，openOrders／單筆訂單查詢 NOT RUN。
 C10 仍 NOT RUN，全程沒有送出訂單。此補充取代上文帳戶查詢尚未驗證的狀態，
 不代表完整 Testnet 交易 E2E 通過。
+
+## 訂單唯讀查詢開發驗證 — 2026-10-30
+
+新增 Testnet GET openOrders／allOrders 與 Telegram 單一交易對查詢、重新整理、
+中文錯誤分類；保留 `/localorders` 的非即時快照。未建立、取消或修改任何交易所訂單。
+
+- `bash scripts/verify-local.sh`：PASS，46 個頂層 Go 測試（含 race）、vet、
+  offline backtest／paper、CLI dry-run、建置與缺憑證／送單旗標防護全部通過。
+- 新測試：簽名及 GET 限定、symbol／limit 驗證、取消、無效回應拒絕、
+  owner 授權、指定交易對重新整理、空結果、部分查詢失敗與錯誤脫敏、無 state 寫入。
+- 外部 Telegram openOrders／allOrders：等待本機新版重啟，尚未標示 PASS。
+- 真實非空歷史／單筆 GET order／下單成交仍 NOT RUN。
+
+本次離線輸出：`docs/order-query-verification.txt`。
