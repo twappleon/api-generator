@@ -1,0 +1,53 @@
+name: One-time Binance public-data backtest validation
+on:
+  push:
+    branches:
+      - cursor/quant-bot-usdt-c6b3
+    paths:
+      - ".github/workflows/quant-validation-20261030.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-data-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: quant_bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: false
+      - name: Verify research engine and tests
+        run: |
+          go test ./... -race -count=1
+          go vet ./...
+      - name: Real Binance 1h historical backtests (research only)
+        shell: bash
+        run: |
+          set -uo pipefail
+          sed 's/BTCUSDT/ETHUSDT/g' config.conservative.json > config.validation.eth.json
+          failed=0
+          run_case() {
+            local pair="$1" conf="$2" start="$3" end="$4"
+            echo "::group::${pair} ${start} to ${end}"
+            echo "## ${pair}: ${start} to ${end} (end exclusive)" >> "$GITHUB_STEP_SUMMARY"
+            if go run ./cmd/research --mode backtest --config "$conf" --start "${start}T00:00:00Z" --end "${end}T00:00:00Z" --slippage-bps 5 2>&1 | tee /tmp/backtest-${pair}-${start}.txt; then
+              echo "PASS: command exited 0" >> "$GITHUB_STEP_SUMMARY"
+            else
+              failed=1
+              echo "FAIL: market access / input / code error (see logs)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo "::endgroup::"
+          }
+          run_case BTCUSDT config.conservative.json 2024-01-01 2025-01-01
+          run_case BTCUSDT config.conservative.json 2025-01-01 2026-01-01
+          run_case BTCUSDT config.conservative.json 2026-01-01 2026-10-01
+          run_case ETHUSDT config.validation.eth.json 2025-01-01 2026-01-01
+          run_case ETHUSDT config.validation.eth.json 2026-01-01 2026-10-01
+          exit "$failed"
