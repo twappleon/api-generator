@@ -168,3 +168,30 @@ Telegram local pairing and read-only private-chat buttons are verified (see
 [local E2E evidence](docs/TELEGRAM_LOCAL_E2E.md)). Live Testnet balance queries, openOrders/allOrders empty results for BTCUSDT and
 ETHUSDT, and refresh are verified. Nonempty orders, single-order status, and trading
 E2E remain unverified. Railway is blocked by billing. Keep PR #6 draft and do not enable unattended trading.
+
+## Paper 快照與重啟恢復
+
+Paper CLI 現在預設使用目前工作目錄的 `.local/session.paper.json`。建議固定
+在 `quant_bot/` 執行，或明確指定同一個絕對 `--state` 路徑。保守模式啟動腳本
+已固定進入 `quant_bot/`。根目錄 `go.work` 保留原有 `go run quant_bot/main.go` 用法。
+
+```sh
+cd quant_bot
+go run main.go paper --config config.example.json --iterations 103 --sleep-seconds 0 --offline-sample --state .local/demo.paper.json
+# 結束後重新執行：接續持倉、現金及下一根離線行情，再執行 12 輪
+go run main.go paper --config config.example.json --iterations 12 --sleep-seconds 0 --offline-sample --state .local/demo.paper.json
+```
+
+快照含 Paper schema/version、完整策略／交易所／離線來源設定、現金、持倉
+數量／入場價／手續費／停損停利、最後處理行情時間與進度。每輪決策後先以
+0600 臨時檔寫入、sync、rename，再輸出結果；寫入失敗立即停止。
+
+只接受 `.paper.json` 路徑，拒絕 Testnet state 路徑、快照 symlink、不同設定
+或來源、損毀／缺欄位檔案。缺檔才初始化；不提供自動清空或覆寫損毀資料。
+新模擬請指定不同路徑。單一 snapshot 同時只允許一個 writer；強制終止可能
+留 `.lock`，須確認原 PID 已停止才人工處理，不能盲目刪鎖。
+
+離線恢復接續原樣本索引；即時公開行情模式會略過已處理時間，避免重啟重複
+套用同一根行情，但**不補算停機期間漏掉的行情**。未驗證真實行情重啟、
+斷電耐久性或跨主機一致性；此實作不適合無人值守交易。
+Paper 與 Testnet 風控快照完全分開，Telegram 風控頁仍不展示 Paper 績效。

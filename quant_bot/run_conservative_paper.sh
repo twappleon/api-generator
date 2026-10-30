@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT_DIR/quant_bot"
 LOG_DIR="$ROOT_DIR/quant_bot/logs"
 mkdir -p "$LOG_DIR"
 

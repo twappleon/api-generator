@@ -174,3 +174,22 @@ backtest／paper、dry-run、build、缺憑證與送單保護皆通過。
 使用者重啟配對後，真實 Telegram `/risk`、風控按鈕、重新整理的缺快照分支
 PASS（10:59:19Z／35Z／44Z）。快照仍不存在，真實停機鎖／跨日及非空資料
 顯示仍 NOT RUN；未寫假 state，未送單。詳見 `TELEGRAM_LOCAL_E2E.md`。
+
+## Paper 持久化／恢復 — 2026-10-30
+
+本節更新先前「Paper 重啟持倉恢復未實作」：現在已有獨立 `.paper.json`、
+原子快照、設定／來源比對、writer lock 與逐根行情去重。Testnet 帳本未改寫。
+
+- PASS（離線獨立程序）：第 103 輪模擬 BUY 後退出，保存持倉與現金 0；
+  新程序載入 `completed=103, position=true`，再跑 12 輪，停利後現金
+  1027.9420579420582、持倉空、進度 115。與連續 115 輪的完整快照相同。
+- PASS（真實 CLI／離線資料）：兩次獨立 `go run main.go paper` 重複上述流程；
+  證據見 `paper-cli-restart.json`，只在臨時目錄產生快照，沒有交易所請求。
+- PASS：禁止網路的模擬測試；無效 schema／缺欄位／null／負數拒絕且原檔不變；
+  設定／來源不符拒絕、鎖互斥、0600 權限及 Testnet 檔案隔離。
+- 完整本機驗證：59 個頂層測試 PASS，2 個 subprocess helper 在主程序 SKIP、
+  由父測試實際啟動執行；race、vet、離線 backtest／paper、dry-run、build PASS。
+- NOT RUN：真實行情恢復／斷電／磁碟故障注入／多主機鎖。即時模式不回補
+  停機期間行情；不宣稱完整停機期間損益重建或 Testnet 實盤風控通過。
+
+輸出：`paper-resume-verification.txt`。未傳送交易訂單，未讀取或寫入憑證。

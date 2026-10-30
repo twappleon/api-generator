@@ -9,7 +9,7 @@ run() { echo "+ $*"; "$@"; }
 run go test ./... -race -count=1 -v -timeout=60s
 run go vet ./...
 run go run main.go backtest --config config.example.json --limit 300 --offline-sample
-run go run main.go paper --config config.example.json --iterations 5 --sleep-seconds 0 --offline-sample
+run go run main.go paper --config config.example.json --iterations 5 --sleep-seconds 0 --offline-sample --state "$work/verify.paper.json"
 run go run ./cmd/binance-spot order --symbol BTCUSDT --side BUY --type LIMIT --quantity 0.001 --price 50000 --client-order-id codex-smoke-001
 run go build -o "$work/telegram" ./cmd/telegram
 for missing in token owner; do

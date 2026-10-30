@@ -11,3 +11,9 @@ quant_bot/*.telegram.lock
 quant_bot/telegram
 
 quant_bot/.local/
+
+# Paper snapshots are separate local simulation state
+quant_bot/**/*.paper.json
+quant_bot/**/*.paper.json.lock
+
+/.local/

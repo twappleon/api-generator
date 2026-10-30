@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"quant_bot/paperstate"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,14 +52,7 @@ type Candle struct {
 	Volume   float64
 }
 
-type Position struct {
-	EntryPrice float64
-	Qty        float64
-	StopLoss   float64
-	TakeProfit float64
-	EntryTime  int64
-	EntryFee   float64
-}
+type Position = paperstate.Position
 
 type Trade struct {
 	EntryTime  int64
@@ -577,6 +571,15 @@ func runBacktest(cfg Config, exchange string, limit int, offlineSample bool) err
 }
 
 func runPaper(cfg Config, exchange string, iterations, sleepSeconds int, offlineSample bool) error {
+	return runPaperLoop(cfg, exchange, iterations, sleepSeconds, offlineSample, "")
+}
+func runPaperSaved(cfg Config, exchange string, iterations, sleepSeconds int, offlineSample bool, path string) error {
+	if path == "" {
+		return fmt.Errorf("Paper state path required")
+	}
+	return paperstate.WithLock(path, func() error { return runPaperLoop(cfg, exchange, iterations, sleepSeconds, offlineSample, path) })
+}
+func runPaperLoop(cfg Config, exchange string, iterations, sleepSeconds int, offlineSample bool, statePath string) error {
 	if iterations < 0 {
 		return fmt.Errorf("iterations must be >= 0")
 	}
@@ -587,8 +590,26 @@ func runPaper(cfg Config, exchange string, iterations, sleepSeconds int, offline
 		return fmt.Errorf("offline-sample does not support infinite mode; set iterations > 0")
 	}
 
-	cash := cfg.InitialUSDT
-	var position *Position
+	rawConfig, _ := json.Marshal(struct {
+		Config   Config
+		Exchange string
+		Offline  bool
+	}{cfg, exchange, offlineSample})
+	snapshot := paperstate.State{Kind: "paper", Version: 1, Config: string(rawConfig), Cash: cfg.InitialUSDT}
+	if statePath != "" {
+		var err error
+		snapshot, err = paperstate.Load(statePath, string(rawConfig), cfg.InitialUSDT)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Paper-only snapshot loaded: completed=%d, cash=%.8f, position=%t\n", snapshot.Step, snapshot.Cash, snapshot.Position != nil)
+	}
+	if offlineSample && (iterations > 1000000 || snapshot.Step > 1000000-iterations) {
+		return fmt.Errorf("offline Paper sample limit exceeded")
+	}
+	cash := snapshot.Cash
+	position := snapshot.Position
+	startStep := snapshot.Step
 	totalText := "inf"
 	if iterations > 0 {
 		totalText = strconv.Itoa(iterations)
@@ -607,7 +628,7 @@ func runPaper(cfg Config, exchange string, iterations, sleepSeconds int, offline
 
 	var allCandles []Candle
 	if offlineSample {
-		allCandles = generateSampleCandles(lookback+iterations+2, 30000.0)
+		allCandles = generateSampleCandles(lookback+startStep+iterations+2, 30000.0)
 	}
 
 	for step := 1; ; step++ {
@@ -617,7 +638,7 @@ func runPaper(cfg Config, exchange string, iterations, sleepSeconds int, offline
 		var candles []Candle
 		var err error
 		if offlineSample {
-			candles = allCandles[step : step+lookback]
+			candles = allCandles[startStep+step : startStep+step+lookback]
 		} else {
 			candles, err = fetchCandles(exchange, cfg.Symbol, cfg.Interval, lookback)
 			if err != nil {
@@ -640,6 +661,12 @@ func runPaper(cfg Config, exchange string, iterations, sleepSeconds int, offline
 		latest := candles[len(candles)-1]
 		signal := signals[len(signals)-1]
 
+		if latest.OpenTime <= snapshot.LastCandle {
+			if sleepSeconds > 0 {
+				time.Sleep(time.Duration(sleepSeconds) * time.Second)
+			}
+			continue
+		}
 		action := "HOLD"
 		if position != nil {
 			exitReason := ""
@@ -684,6 +711,19 @@ func runPaper(cfg Config, exchange string, iterations, sleepSeconds int, offline
 			}
 		}
 
+		// Round-off at an all-cash simulated buy can leave a tiny negative residue.
+		if cash < 0 && cash > -1e-8 {
+			cash = 0
+		}
+		snapshot.Cash = cash
+		snapshot.Position = position
+		snapshot.Step = startStep + step
+		snapshot.LastCandle = latest.OpenTime
+		if statePath != "" {
+			if err := paperstate.Save(statePath, snapshot); err != nil {
+				return fmt.Errorf("Paper checkpoint failed; stopped: %w", err)
+			}
+		}
 		positionValue := 0.0
 		if position != nil {
 			positionValue = position.Qty * latest.Close
@@ -1027,6 +1067,7 @@ func main() {
 		fs := flag.NewFlagSet("paper", flag.ExitOnError)
 		configPath := fs.String("config", "", "Path to JSON config file")
 		exchange := fs.String("exchange", exchangeBinance, "Exchange: binance or bitget")
+		statePath := fs.String("state", ".local/session.paper.json", "Paper-only snapshot (.paper.json); resumes if present")
 		iterations := fs.Int("iterations", 20, "Number of loops to run")
 		sleepSeconds := fs.Int("sleep-seconds", 10, "Sleep between loops")
 		offlineSample := fs.Bool("offline-sample", false, "Use generated sample candles instead of API")
@@ -1042,7 +1083,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Config or input error: %v\n", err)
 			os.Exit(2)
 		}
-		if err := runPaper(cfg, normalizedExchange, *iterations, *sleepSeconds, *offlineSample); err != nil {
+		if err := runPaperSaved(cfg, normalizedExchange, *iterations, *sleepSeconds, *offlineSample, *statePath); err != nil {
 			fmt.Fprintf(os.Stderr, "Market data/paper error: %v\n", err)
 			os.Exit(1)
 		}
