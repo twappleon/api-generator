@@ -290,13 +290,12 @@ func cycle(ctx context.Context,path string,symbols []string)error{
   p:=state.Pairs[sym]
   count,e:=process(p,feeds[sym],quotes[sym],now);if e!=nil{return fmt.Errorf("%s processing: %w",sym,e)}
   total+=count
-  fmt.Printf("PAPER %s new_closed_bars=%d close=%s A equity=%.3f trades=%d pos=%.8f dd=%.3f%% | B equity=%.3f trades=%d pos=%.8f dd=%.3f%%\n",sym,count,time.UnixMilli(p.LastOpen).UTC().Format(time.RFC3339),p.A.Equity,p.A.Trades,p.A.Qty,p.A.MaxDD*100,p.B.Equity,p.B.Trades,p.B.Qty,p.B.MaxDD*100)
+  fmt.Printf("PAPER %s new_closed_bars=%d latest_bar=%s ticker=%.8f quote_utc=%s atr_pct=%.3f signalA=%t signalB=%t A_equity=%.3f A_trades=%d A_qty=%.8f A_dd=%.3f%% B_equity=%.3f B_trades=%d B_qty=%.8f B_dd=%.3f%%\n",sym,count,time.UnixMilli(p.LastOpen).UTC().Format(time.RFC3339),p.Quote,p.QuoteUTC,p.ATRPct,p.SignalA,p.SignalB,p.A.Equity,p.A.Trades,p.A.Qty,p.A.MaxDD*100,p.B.Equity,p.B.Trades,p.B.Qty,p.B.MaxDD*100)
  }
  state.UpdatedUTC=time.UnixMilli(now).UTC().Format(time.RFC3339)
- if initializing||total>0 {
-  if e=saveState(path,state);e!=nil{return e}
-  if initializing{fmt.Println("INITIALIZED: 0 historical trades; forward-only paper starts now.")}
- } else{fmt.Printf("HEARTBEAT no newly closed bars at %s; no changes to strategy states\n",state.UpdatedUTC)}
+ if e=saveState(path,state);e!=nil{return e}
+ if initializing{fmt.Println("INITIALIZED: 0 historical trades; forward-only paper starts now.")}
+ if total==0{fmt.Printf("HEARTBEAT no new closed bar at %s; current quote checked and checkpoint saved\n",state.UpdatedUTC)}
  return nil
 }
 func main(){
