@@ -210,3 +210,9 @@ PASS（10:59:19Z／35Z／44Z）。快照仍不存在，真實停機鎖／跨日�
 
 原始輸出：`paper-telegram-verification.txt`。恢復狀態僅為可恢復進度，
 目前沒有模擬程序心跳、恢復事件紀錄、即時總淨值或 PnL 面板。
+
+### Paper 真實 Telegram 缺快照驗證更新
+
+18:21 重啟後 `/paper`、Paper 按鈕與刷新均 PASS，明確區分 Paper／Testnet，
+且無快照時標示未驗證。資金、非空持倉與恢復進度的真實 UI 仍 NOT RUN；
+詳見 `TELEGRAM_LOCAL_E2E.md`，沒有為實測注入資料或送單。
