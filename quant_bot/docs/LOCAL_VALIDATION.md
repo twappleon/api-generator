@@ -81,3 +81,11 @@ getMe／webhook 唯讀檢查、一次性配對碼、private sender/chat ID 比�
 重新通過，現在共 40 個頂層測試；新增 3 個配對測試覆蓋候選 ID、明確確認與
 既有 webhook 保留。真實 Telegram 配對仍等待使用者在本機完成 BotFather
 建立與隱藏輸入；這些 mock 結果不代表真實平台已通過。
+
+## 終端關閉／配對取消修正
+
+針對使用者回報終端已關閉，補上 SIGHUP 正常退出、可取消的配對確認輸入、
+明確的配對失敗提示，以及取得控制台鎖後才記錄啟動成功。未移除任何 state
+或鎖。`bash -n` 與完整 `scripts/verify-local.sh` 通過，42 個頂層測試 PASS；
+新增確認等待取消、stdin EOF 拒絕測試。真實配對重新啟動仍需使用者在本機
+輸入 Token，不能由本機測試通過推論 Telegram 已上線。

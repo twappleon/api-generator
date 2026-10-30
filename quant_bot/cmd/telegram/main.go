@@ -372,7 +372,7 @@ func main() {
 		b.state = state
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	b.ctx = ctx
 	if pairing {
@@ -388,8 +388,10 @@ func main() {
 		}
 		return
 	}
-	log.Println("read-only Telegram dashboard started; Spot Testnet only")
-	if err := binancespot.WithLock(b.state+".telegram", b.poll); err != nil {
+	if err := binancespot.WithLock(b.state+".telegram", func() error {
+		log.Println("read-only Telegram dashboard started; Spot Testnet only")
+		return b.poll()
+	}); err != nil {
 		log.Fatal("Telegram instance lock unavailable; inspect existing process and lock before restarting")
 	}
 	log.Println("Telegram dashboard stopped")

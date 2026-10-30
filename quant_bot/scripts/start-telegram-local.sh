@@ -7,20 +7,27 @@ if [[ ! -t 0 ]]; then
   echo '請在本機互動終端執行此腳本。' >&2
   exit 1
 fi
+trap 'printf "\n流程已停止。重新執行此腳本即可重新配對；不要刪除交易 state 或鎖。\n" >&2' HUP INT TERM
 umask 077
 mkdir -p .local
 echo '正在建置唯讀 Telegram 控制台…'
-go build -o .local/telegram ./cmd/telegram
+go_binary=$(command -v go || true)
+if [[ -z "$go_binary" && -x "$HOME/.local/bin/go" ]]; then go_binary="$HOME/.local/bin/go"; fi
+if [[ -z "$go_binary" ]]; then echo '找不到 Go，請先設定 PATH。' >&2; exit 1; fi
+"$go_binary" build -o .local/telegram ./cmd/telegram
+export BINANCE_TESTNET_STATE="${BINANCE_TESTNET_STATE:-$PWD/state-testnet.json}"
 if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
   read -r -s -p '請輸入 BotFather Token（隱藏輸入，不會存檔）：' TELEGRAM_BOT_TOKEN
   printf '\n'
 fi
 export TELEGRAM_BOT_TOKEN
 if [[ -z "${TELEGRAM_OWNER_ID:-}" ]]; then
-  TELEGRAM_OWNER_ID="$(./.local/telegram --pair)"
+  if ! TELEGRAM_OWNER_ID="$(./.local/telegram --pair)"; then
+    echo '配對未完成，控制台尚未啟動。請重新執行腳本並取得新的配對碼；配對碼要傳給自己的 Bot，不是 BotFather。' >&2
+    exit 1
+  fi
 fi
 export TELEGRAM_OWNER_ID
-export BINANCE_TESTNET_STATE="${BINANCE_TESTNET_STATE:-$PWD/state-testnet.json}"
 echo '即將啟動唯讀控制台。請在 Telegram 私聊你的 Bot 傳 /start。'
 echo '停止方式：Ctrl-C。不要關閉終端，否則控制台會停止。'
 echo '執行日誌：quant_bot/.local/telegram.log（不記錄 Token 或訊息內容）'

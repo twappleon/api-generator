@@ -85,3 +85,13 @@ sender/chat ID 和配對碼全部符合時，才將 owner ID 傳入子程序環�
 未設定 Testnet 金鑰時，資產頁應明確提示尚未設定；不得當作 API 成功。
 控制台 log 在被 Git 忽略的 `.local/telegram.log`。關閉終端或 Ctrl-C 即停止，
 下次啟動需重新輸入環境值／配對；不保存任何憑證。
+
+### 終端被關閉後重新啟動
+
+重新執行 `bash scripts/start-telegram-local.sh` 並輸入 Token。配對碼每次更新，
+請只傳給終端顯示的自有 Bot，不要傳給 BotFather。確認 `yes` 後，保持終端
+開啟，再在 Bot 私聊傳 `/start`。本機流程不是背景服務；關閉終端會停止它。
+
+配對等待確認現在可被取消；SIGHUP（終端關閉）、SIGINT、SIGTERM 會走正常
+退出並釋放控制台鎖。強制 SIGKILL 仍可能留下鎖，必須診斷，不能自行刪鎖。
+啟動成功訊息在取得鎖之後才顯示，失敗不宣稱在線。

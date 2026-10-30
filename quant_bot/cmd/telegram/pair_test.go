@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPairingCandidate(t *testing.T) {
@@ -90,5 +93,28 @@ func TestPairingPreservesExistingWebhook(t *testing.T) {
 	var out bytes.Buffer
 	if _, err := b.pairOwner(strings.NewReader("yes\n"), &out); err == nil {
 		t.Fatal("existing webhook ignored")
+	}
+}
+
+func TestPairingConfirmationCancellation(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- confirmPairing(ctx, reader) }()
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("cancelled confirmation accepted")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal read blocked cancellation")
+	}
+}
+func TestPairingConfirmationEOF(t *testing.T) {
+	if confirmPairing(context.Background(), strings.NewReader("")) == nil {
+		t.Fatal("closed terminal accepted")
 	}
 }
