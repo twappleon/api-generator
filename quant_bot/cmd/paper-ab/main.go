@@ -26,7 +26,7 @@ const (
  base = "https://data-api.binance.vision"
  fee = 0.001
  slip = 0.0005
- schema = 1
+ schema = 2
  cadence = int64(4*60*60*1000)
 )
 type Bar struct {
@@ -60,6 +60,11 @@ type Ledger struct {
 }
 type Pair struct {
  LastOpen int64 `json:"last_open"`
+ Quote float64 `json:"quote"`
+ QuoteUTC string `json:"quote_utc"`
+ SignalA bool `json:"signal_a"`
+ SignalB bool `json:"signal_b"`
+ ATRPct float64 `json:"atr_pct"`
  A Ledger `json:"a"`
  B Ledger `json:"b"`
 }
@@ -144,10 +149,11 @@ func validate(l Ledger)error {
  if l.Qty>0&&(l.Entry<=0||l.Stop<=0) {return errors.New("invalid open position")}
  return nil
 }
-func trade(l *Ledger,b Bar,side string,priceValue,qty,profit float64,reason string){
- l.LastTrade=&Trade{Time:b.CloseTime,Side:side,Price:priceValue,Qty:qty,PnL:profit,Reason:reason}
+
+func trade(l *Ledger,ms int64,side string,px,qty,profit float64,reason string){
+ l.LastTrade=&Trade{Time:ms,Side:side,Price:px,Qty:qty,PnL:profit,Reason:reason}
 }
-func sell(l *Ledger,b Bar,reference float64,why string){
+func sell(l *Ledger,ms int64,reference float64,why string){
  if l.Qty==0{return}
  px:=reference*(1-slip)
  q:=l.Qty
@@ -156,24 +162,36 @@ func sell(l *Ledger,b Bar,reference float64,why string){
  pnl:=proceeds-f-q*l.Entry-l.EntryFee
  l.Cash+=proceeds-f;l.Fees+=f;l.Realized+=pnl
  l.Trades++;if pnl>0{l.Wins++}
- trade(l,b,"SELL",px,q,pnl,why)
+ trade(l,ms,"SELL",px,q,pnl,why)
  l.Qty=0;l.Entry=0;l.EntryFee=0;l.Stop=0
 }
-func evaluate(l *Ledger,variant string,bb []Bar,i int){
- b:=bb[i]; c:=b.Close
- a:=atr(bb,i); trend:=ema(bb,i,200)
+func mark(l *Ledger,q float64){
+ l.Equity=l.Cash+l.Qty*q*(1-slip)*(1-fee)
+ if l.Equity>l.Peak{l.Peak=l.Equity}
+ dd:=(l.Peak-l.Equity)/l.Peak
+ if dd>l.MaxDD {l.MaxDD=dd}
+}
+func priceStop(l *Ledger,ms int64,q float64){
+ if l.Qty>0 && q<=l.Stop{sell(l,ms,q,"quote-stop-checked-at-poll")}
+ mark(l,q)
+}
+func evaluateLive(l *Ledger,variant string,bb []Bar,i int,q float64,ms int64) {
+ b:=bb[i];c:=b.Close
+ a:=atr(bb,i);trend:=ema(bb,i,200)
  if i<250||a<=0{return}
  stopped:=false
- if l.Qty>0 {
-  if b.Open<=l.Stop {sell(l,b,b.Open,"gap-stop");stopped=true
-  }else if b.Low<=l.Stop{sell(l,b,l.Stop,"intrabar-stop-estimate");stopped=true}
+ if l.Qty>0 && q<=l.Stop {
+  sell(l,ms,q,"quote-stop-checked-at-poll")
+  stopped=true
  }
- if l.Qty>0 && c<low(bb,i,10){sell(l,b,c,"donchian-exit")}
+ if l.Qty>0&&c<low(bb,i,10) {
+  sell(l,ms,q,"donchian-10-exit-live-quote")
+  stopped=true
+ }
  canEnter:=c>high(bb,i,20)&&c>trend
- if variant=="B" {canEnter=canEnter && a/c <.035}
- if l.Qty==0 && canEnter && !stopped && l.LastTrade!=nil && l.LastTrade.Time==b.CloseTime && l.LastTrade.Side=="SELL" {canEnter=false}
- if l.Qty==0 && canEnter && !stopped {
-  px:=c*(1+slip)
+ if variant=="B"{canEnter=canEnter&&a/c<.035}
+ if l.Qty==0 && canEnter && !stopped{
+  px:=q*(1+slip)
   amount:=math.Min((l.Cash*.005)/(3*a),math.Min(l.Cash,350)/(px*(1+fee)))
   if amount>0 {
    f:=amount*px*fee
@@ -181,34 +199,43 @@ func evaluate(l *Ledger,variant string,bb []Bar,i int){
     l.Cash-=amount*px+f;l.Qty=amount;l.Entry=px;l.EntryFee=f;l.Fees+=f
     l.Stop=math.Max(0.000000001,px-3*a)
     l.Buys++
-    trade(l,b,"BUY",px,amount,0,"breakout-close-paper")
+    trade(l,ms,"BUY",px,amount,0,"closed-4h-signal-live-quote")
    }
   }
  }
- if l.Qty>0 && c>l.Entry+a{
+ if l.Qty>0&&c>l.Entry+a{
   next:=c-3*a
-  if next>l.Stop {l.Stop=next} // applies only to following bar
+  if next>l.Stop{l.Stop=next}
  }
- l.Equity=l.Cash+l.Qty*c*(1-slip)*(1-fee)
- if l.Equity>l.Peak{l.Peak=l.Equity}
- dd:=(l.Peak-l.Equity)/l.Peak
- if dd>l.MaxDD{l.MaxDD=dd}
+ mark(l,q)
 }
-func process(p *Pair,bb []Bar)(int,error){
+func process(p *Pair,bb []Bar,q float64,ms int64)(int,error){
  idx:=-1
  for i,b:=range bb{if b.OpenTime==p.LastOpen{idx=i;break}}
- if idx<0{return 0,errors.New("paper state older than 1000 bars or data mismatch")}
- applied:=0
- for i:=idx+1;i<len(bb);i++{
-  if i<250{return applied,errors.New("not enough indicator warmup")}
-  evaluate(&p.A,"A",bb,i)
-  evaluate(&p.B,"B",bb,i)
-  p.LastOpen=bb[i].OpenTime;applied++
+ if idx<0{return 0,errors.New("snapshot too old or market data mismatch")}
+ unseen:=len(bb)-idx-1
+ if unseen>1{return 0,fmt.Errorf("missed %d completed bars: fail closed, no historical fills",unseen)}
+ if unseen==1{
+  i:=len(bb)-1
+  evaluateLive(&p.A,"A",bb,i,q,ms)
+  evaluateLive(&p.B,"B",bb,i,q,ms)
+  p.LastOpen=bb[i].OpenTime
+ }else{
+  priceStop(&p.A,ms,q)
+  priceStop(&p.B,ms,q)
  }
- return applied,nil
+ i:=len(bb)-1
+ a:=atr(bb,i)
+ c:=bb[i].Close
+ p.Quote=q
+ p.QuoteUTC=time.UnixMilli(ms).UTC().Format(time.RFC3339)
+ p.ATRPct=100*a/c
+ p.SignalA=c>high(bb,i,20)&&c>ema(bb,i,200)
+ p.SignalB=p.SignalA&&a/c<.035
+ return unseen,nil
 }
 func config(symbols []string)string{
- return "paper-ab-v1|4h|Donchian20-10|EMA200|ATR14-3|fee0.001|slippage0.0005|risk0.005|cap350|vol0.035|"+strings.Join(symbols,",")
+ return "paper-ab-v2|4h|closedbar-signal-at-new-live-quote|poll-stops|Donchian20-10|EMA200|ATR14-3|fee0.001|slippage0.0005|risk0.005|cap350|vol0.035|"+strings.Join(symbols,",")
 }
 func loadState(path string)(State,error){
  raw,e:=os.ReadFile(path);if e!=nil{return State{},e}
@@ -232,9 +259,15 @@ func saveState(path string,s State)error{
 func cycle(ctx context.Context,path string,symbols []string)error{
  now,e:=serverTime(ctx);if e!=nil{return e}
  var feeds=map[string][]Bar{}
+ var quotes=map[string]float64{}
  for _,sym:=range symbols{
   bb,e:=bars(ctx,sym,now);if e!=nil{return fmt.Errorf("%s: %w",sym,e)}
   feeds[sym]=bb
+  var ticker struct {Price string `json:"price"`}
+  if e=get(ctx,"/api/v3/ticker/price",url.Values{"symbol":{sym}},&ticker);e!=nil{return fmt.Errorf("%s ticker: %w",sym,e)}
+  v,e:=strconv.ParseFloat(ticker.Price,64)
+  if e!=nil||!finite(v)||v<=0{return fmt.Errorf("%s: invalid real time quote",sym)}
+  quotes[sym]=v
  }
  state,e:=loadState(path)
  initializing:=os.IsNotExist(e)
@@ -255,7 +288,7 @@ func cycle(ctx context.Context,path string,symbols []string)error{
  total:=0
  for _,sym:=range symbols{
   p:=state.Pairs[sym]
-  count,e:=process(p,feeds[sym]);if e!=nil{return fmt.Errorf("%s processing: %w",sym,e)}
+  count,e:=process(p,feeds[sym],quotes[sym],now);if e!=nil{return fmt.Errorf("%s processing: %w",sym,e)}
   total+=count
   fmt.Printf("PAPER %s new_closed_bars=%d close=%s A equity=%.3f trades=%d pos=%.8f dd=%.3f%% | B equity=%.3f trades=%d pos=%.8f dd=%.3f%%\n",sym,count,time.UnixMilli(p.LastOpen).UTC().Format(time.RFC3339),p.A.Equity,p.A.Trades,p.A.Qty,p.A.MaxDD*100,p.B.Equity,p.B.Trades,p.B.Qty,p.B.MaxDD*100)
  }
@@ -267,7 +300,7 @@ func cycle(ctx context.Context,path string,symbols []string)error{
  return nil
 }
 func main(){
- path:=flag.String("state","/home/sprite/paper-ab-data/state.json","persistent paper snapshot")
+ path:=flag.String("state","/home/sprite/paper-ab-data/forward-v2.json","persistent paper snapshot")
  symbolArg:=flag.String("symbols","BTCUSDT,ETHUSDT,SOLUSDT","fixed symbols; changing requires a new state path")
  once:=flag.Bool("once",false,"read Binance once and exit; no live orders")
  interval:=flag.Duration("poll",60*time.Second,"poll interval for completed candles")
