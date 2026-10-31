@@ -664,3 +664,20 @@ original process identities confirmed. 234 observations, 62 gaps above 90s,
 latest 561.631051s; observer log empty and completion marker absent. Continue
 original deadline without claiming continuous 24h success. No original state,
 strategy, locks or processes modified, no forced fills or exchange orders.
+
+
+## 2026-10-31 03:43 UTC: Telegram Bot process disappeared
+
+Observer last reported Bot present at 03:41:11.481314Z, then absent at
+03:42:11.539093Z and 03:43:11.633952Z. Actual process inspection confirms
+PID41637 no longer exists; process-name scan finds the Telegram desktop app
+but no telegram Bot executable. Cause and exit status are unknown; do not
+infer crash versus deliberate user stop. No token/environment was inspected.
+Paper supervisor40999 and child41886 remain alive with fresh heartbeats,
+restart count1, closed trades11, flat, realized -26.079235500049457 USDT.
+Caffeinate45020 and observer45021 identities confirmed, observer log empty.
+246 observation records, 62 historical gaps above90s, no completion marker.
+Telegram queries cannot currently be validated. User intervention is needed
+to restart the Bot with hidden local token input. No automatic secret recovery,
+lock removal, process stop/restart, snapshot changes or exchange orders.
+Continue Paper observation to the original deadline and record Bot downtime.
