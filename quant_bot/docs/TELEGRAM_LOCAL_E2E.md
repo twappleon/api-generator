@@ -622,3 +622,45 @@ Original process identities confirmed; 193 observations, 53 gaps above 90s,
 latest gap 251.370438s. Observer log empty, completion marker absent.
 Continue original 24h deadline, preserving gaps; no continuous pass claimed.
 No state/strategy/lock changes, forced fills or exchange orders.
+
+
+## 2026-10-31 03:32 UTC: Paper closes 10 and 11
+
+Actual check later than scheduled trigger. Cumulative closed trades 11, wins 3,
+realized -26.079235500049457 USDT, flat, cash/equity 973.9207644999517.
+New realized loss since trade 9: -7.331197435850417 USDT. Saved evidence:
+```json
+[
+  {
+    "before": "snapshot-1793413620000-ba2c5dc6feac.json",
+    "after": "snapshot-1793415720000-d8b8902c9d3c.json",
+    "observed": "2026-10-31T03:19:24.495022+00:00",
+    "trades_before": 9,
+    "trades_after": 10,
+    "realized_delta": -2.5857886956319014,
+    "fee_delta": 2.937605994060199,
+    "slippage_delta": 1.4685587855806492,
+    "verification": "aggregate only; per-exit cost verification NOT TESTED"
+  },
+  {
+    "before": "snapshot-1793415720000-d8b8902c9d3c.json",
+    "after": "snapshot-1793417220000-f2bfdf41ab94.json",
+    "observed": "2026-10-31T03:28:56.139954+00:00",
+    "trades_before": 10,
+    "trades_after": 11,
+    "realized_delta": -4.745408740218515,
+    "fee_delta": 0.9748956601601115,
+    "slippage_delta": 0.4876916759179615,
+    "verification": "single exit snapshot arithmetic PASS; original OHLC not independently verified"
+  }
+]
+```
+Per-exit costs are verified only where explicitly marked PASS above; aggregate
+changes may include entries and are not exit-only costs. Telegram display
+remains NOT TESTED: previously confirmed locked Mac, no user unlock confirmation.
+No lock bypass. Original OHLC/per-bar execution not independently verified.
+Runtime/supervisor heartbeats recent at 03:32:30Z, restarts unchanged at 1;
+original process identities confirmed. 234 observations, 62 gaps above 90s,
+latest 561.631051s; observer log empty and completion marker absent. Continue
+original deadline without claiming continuous 24h success. No original state,
+strategy, locks or processes modified, no forced fills or exchange orders.
