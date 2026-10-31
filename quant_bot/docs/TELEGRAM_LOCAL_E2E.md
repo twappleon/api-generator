@@ -713,3 +713,36 @@ identities confirmed. 322 records, 62 historical gaps above90s (unchanged),
 empty observer log, no completion marker. The elapsed 16h10m is not continuous
 validated uptime. Continue to original 12:38:31Z deadline. No snapshots,
 strategy, locks or processes changed; no exchange orders submitted.
+
+
+## 2026-10-31 05:54 UTC: thirteenth natural Paper close
+
+Observer captured trade 12 -> 13 at 05:51:06.385284Z. Evidence in
+.local/soak24-20261030T123831Z/: snapshot-1793425740000-dabe1a8331ce.json
+(05:49 bar) -> snapshot-1793425800000-489a515ab588.json (05:50 bar).
+Position 0.01252272068358017 BTC became flat across one bar.
+
+Single-exit snapshot arithmetic PASS using running edc46d8 sell formula,
+fee rate 0.001 and slippage 5 bps (tolerance 1e-8):
+- Exit fee: 0.9671968777439233 USDT; exit slippage: 0.48384035905143286 USDT.
+- Inferred reference 77274.00, simulated fill 77235.363 USDT.
+- Entry price 77333.577465; entry fee 0.9684267900562047 USDT.
+- Net realized delta -3.165535980082339 USDT includes both fees;
+  cumulative realized -33.77031913382267 USDT.
+- Cash/equity immediately after exit 966.2296808661786 USDT.
+- PnL residual 6.77e-13; slippage residual 8.48e-14.
+
+A subsequent natural entry at the 05:51 bar is separate from the verified
+exit: latest position 0.01248617669119485 BTC, entry 77306.644005, entry fee
+0.9652644164497289 USDT. At inspection cash0, equity963.3601450226697,
+total fees26.566645856729185 and slippage13.283082890795315 USDT.
+Original OHLC/reference not independently verified. Telegram display NOT
+TESTED: Bot41637 absent, process-name scan finds only desktop Telegram.
+No secrets accessed or automatic Bot restart attempted.
+
+At 05:54:39Z runtime/supervisor heartbeats recent, restarts unchanged at1;
+original supervisor40999/child41886/caffeinate45020/observer45021 confirmed.
+399 observations, 62 historical gaps above90s (unchanged), observer log empty,
+no completion marker. Continue original deadline; no continuous24h claim.
+No original snapshots, strategy, locks or processes modified; no forced
+fills or exchange orders.
