@@ -62,6 +62,7 @@ type Ledger struct {
 }
 type Pair struct {
  LastOpen int64 `json:"last_open"`
+ MissedBars int `json:"missed_bars"`
  Quote float64 `json:"quote"`
  QuoteUTC string `json:"quote_utc"`
  SignalA bool `json:"signal_a"`
@@ -216,7 +217,19 @@ func process(p *Pair,bb []Bar,q float64,ms int64)(int,error){
  for i,b:=range bb{if b.OpenTime==p.LastOpen{idx=i;break}}
  if idx<0{return 0,errors.New("snapshot too old or market data mismatch")}
  unseen:=len(bb)-idx-1
- if unseen>1{return 0,fmt.Errorf("missed %d completed bars: fail closed, no historical fills",unseen)}
+ if unseen>1{
+  // If there are open positions, missing intrabar stops are unknowable:
+  // fail closed for manual recovery, rather than inventing a fill.
+  if p.A.Qty>0||p.B.Qty>0{
+   return 0,fmt.Errorf("missed %d completed bars with open positions: fail closed, reconcile manually",unseen)
+  }
+  // Flat accounts may safely resume observation, but missed periods
+  // never generate synthetic entries or exits.
+  fmt.Printf("GAP_RECOVERY flat_pair skipped_closed_bars=%d start_open=%d resume_open=%d; NO historical fills\n",unseen,p.LastOpen,bb[len(bb)-1].OpenTime)
+  p.MissedBars+=unseen
+  p.LastOpen=bb[len(bb)-1].OpenTime
+  unseen=0
+ }
  if unseen==1{
   i:=len(bb)-1
   evaluateLive(&p.A,"A",bb,i,q,ms)
@@ -283,7 +296,7 @@ func cycle(ctx context.Context,path string,symbols []string)error{
  } else {
   if state.Version!=schema||state.Settings!=config(symbols)||len(state.Pairs)!=len(symbols){return errors.New("state schema/settings mismatch")}
   for _,sym:=range symbols{
-   p:=state.Pairs[sym];if p==nil||p.LastOpen<=0{return fmt.Errorf("%s missing checkpoint",sym)}
+   p:=state.Pairs[sym];if p==nil||p.LastOpen<=0||p.MissedBars<0{return fmt.Errorf("%s missing or invalid checkpoint",sym)}
    if e=validate(p.A);e!=nil{return e};if e=validate(p.B);e!=nil{return e}
   }
  }
