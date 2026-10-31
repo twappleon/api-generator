@@ -829,3 +829,34 @@ caffeinate45020 and observer45021 identities confirmed. 604 records,
 marker. Continue original deadline without continuous24h claim. No original
 snapshots, strategy, locks or processes modified; no secret access, forced
 fills or exchange orders.
+
+
+## 2026-10-31 11:13 UTC: natural Paper closes 17 and 18 after observation gaps
+
+Actual inspection 11:13:29Z (heartbeat trigger09:45:10Z); do not treat trigger
+time as execution time or continuous monitoring. Preserved evidence under
+.local/soak24-20261030T123831Z/:
+
+| Close | Before snapshot | After snapshot | Observed UTC | Exit fee USDT | Exit slippage USDT | Net realized delta USDT |
+| --- | --- | --- | --- | --- | --- | --- |
+| 17 | snapshot-1793438760000-ae4250a43463.json | snapshot-1793440740000-781526b4e65c.json | 10:17:36.442130 | 0.955341763469221 | 0.4779098366528842 | -2.4192682142358066 |
+| 18 | snapshot-1793443740000-6d0d587fce5c.json | snapshot-1793444160000-57faf3f51ff4.json | 10:57:48.664779 | 0.9516826929330122 | 0.47607938615953316 | -3.6554114656729695 |
+
+Both transitions have one additional closed trade and held-to-flat position.
+Single-exit accounting reconciliation PASS at tolerance1e-8 using running
+edc46d8 sell formula, fee0.001 and slippage5bps. Inferred fills are
+77427.376945 and77376.442425. PnL residuals1.90e-12/2.31e-12 and slippage
+residuals -7.56e-14/-3.35e-14. However snapshots span33 and7 bars; original
+OHLC, exact exit bar and uninterrupted real-time execution NOT independently
+verified. Observation times above are not asserted execution times.
+
+Latest flat cash/equity950.7310102400769, cumulative realized -49.26898975992494,
+fees35.191425433541085 and slippage17.59571359630592 USDT; trades18, wins3.
+Telegram display NOT TESTED: Bot41637 absent, only desktop Telegram found.
+Runtime/supervisor heartbeats fresh, restarts unchanged at1; original
+supervisor40999/child41886/caffeinate45020/observer45021 identities confirmed.
+643 observations,72 gaps above90s (up from64); latest gap11:00:11.325953 to
+11:12:54.828747Z is763.502794s. Observer log empty, completion marker absent.
+Continue original12:38:31Z deadline; elapsed time is not continuous24h PASS.
+No original snapshots, strategy, locks or processes changed; no secrets read,
+forced fills or exchange orders.
