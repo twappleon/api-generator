@@ -681,3 +681,35 @@ Telegram queries cannot currently be validated. User intervention is needed
 to restart the Bot with hidden local token input. No automatic secret recovery,
 lock removal, process stop/restart, snapshot changes or exchange orders.
 Continue Paper observation to the original deadline and record Bot downtime.
+
+
+## 2026-10-31 04:48 UTC: twelfth natural Paper close
+
+Observer captured trade 11 -> 12 at 04:46:06.386906Z. Preserved evidence in
+.local/soak24-20261030T123831Z/: before
+snapshot-1793421840000-1d78a2aabe09.json (04:44 bar), after
+snapshot-1793421900000-308f05b62d4e.json (04:45 bar). Position changed from
+0.01258165735229713 BTC to flat across one bar; no forced fill.
+
+Using the running edc46d8 research/engine.go sell formula and snapshot fee
+rate 0.001/slippage 5 bps, single-exit arithmetic PASS (tolerance 1e-8):
+- Exit fee delta: 0.9703655824286912 USDT.
+- Exit slippage delta: 0.48542550396627426 USDT.
+- Inferred reference: 77164.00; simulated fill: 77125.418 USDT.
+- Entry fee: 0.9729478166832685 USDT; entry price: 77330.656005.
+- Net realized PnL delta: -4.525547653690872 USDT, including both fees.
+- Cash/equity after close: 969.3952168462608 USDT; cumulative realized
+  -30.60478315374033, fees 23.665757772479328, slippage 11.832880109702042.
+
+PnL residual 1.58e-12 and slippage residual -1.08e-14. Original OHLC and
+execution reference were not independently verified; inferred prices are
+accounting reconciliation, not an exchange fill. Telegram display NOT TESTED:
+Bot PID41637 remains absent and process-name scan finds only Telegram desktop.
+Previously reported user restart requirement remains; no secrets accessed.
+
+At 04:48:36Z runtime running with recent heartbeat, supervisor watching,
+restarts unchanged at 1; supervisor40999/child41886/caffeinate45020/observer45021
+identities confirmed. 322 records, 62 historical gaps above90s (unchanged),
+empty observer log, no completion marker. The elapsed 16h10m is not continuous
+validated uptime. Continue to original 12:38:31Z deadline. No snapshots,
+strategy, locks or processes changed; no exchange orders submitted.
