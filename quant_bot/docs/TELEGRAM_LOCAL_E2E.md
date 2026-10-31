@@ -567,3 +567,31 @@ exactly one close, with no position afterwards. Exit fee 0.9824070450557727
 and exit slippage 0.49144924715140803 USDT reconcile with the engine formula
 within 1e-8; net realized change -5.324237796415106 USDT verified.
 Independent original OHLC and Telegram display remain unverified.
+
+
+## 2026-10-31 01:06 UTC: eighth Paper close
+
+Cumulative closed trades 8, wins 3, realized -15.315454848735563 USDT.
+Trade 8 net increment +3.259907140547831 USDT; a subsequent position is open.
+Actual snapshot evidence and arithmetic status:
+```json
+[
+  {
+    "before": "snapshot-1793406300000-57c31881f4a7.json",
+    "after": "snapshot-1793407440000-9eb7b49720e6.json",
+    "observed": "2026-10-31T00:45:17.509082+00:00",
+    "trades": 8,
+    "realized_delta": 3.2599071405478313,
+    "fee_delta": 0.9856702153666319,
+    "slippage_delta": 0.49308164850751535,
+    "verification": "single exit snapshot arithmetic PASS; original OHLC not independently verified"
+  }
+]
+```
+Telegram remains unverified: the last direct UI attempt reported locked Mac,
+with no subsequent user unlock confirmation. No lock bypass or claim of UI pass.
+At 01:06:02Z heartbeats were recent, supervisor restarts remained 1, original
+process identities matched. 181 observation records with 51 gaps above 90s;
+latest gap 913.908614 seconds. Observer log empty, completion marker absent.
+Continue to original deadline; preserve sleep gaps and do not claim continuous
+24h success. No strategy/state/lock changes, forced fills, or exchange orders.
