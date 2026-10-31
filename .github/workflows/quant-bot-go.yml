@@ -1,0 +1,28 @@
+name: Quant Bot Go - offline safety tests
+on:
+  push:
+    branches:
+      - cursor/quant-bot-usdt-c6b3
+    paths:
+      - "quant_bot/**"
+      - ".github/workflows/quant-bot-go.yml"
+  pull_request:
+    paths:
+      - "quant_bot/**"
+      - ".github/workflows/quant-bot-go.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: quant_bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: false
+      - name: Offline mocks, race, vet, simulations and CLI safety gates
+        run: bash scripts/verify-local.sh
