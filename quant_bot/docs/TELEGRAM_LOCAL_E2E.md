@@ -774,3 +774,30 @@ child41886, caffeinate45020 and observer45021 identities confirmed.
 no completion marker. Continue original deadline without continuous24h claim.
 No original snapshots, strategy, locks or processes modified; no forced
 fills or exchange orders.
+
+
+## 2026-10-31 07:40 UTC: fifteenth natural Paper close
+
+Observer captured trade14 -> 15 at 07:39:09.823106Z. Evidence in
+.local/soak24-20261030T123831Z/: snapshot-1793432220000-d6523013638b.json
+(07:37 bar) -> snapshot-1793432280000-82977812c9d2.json (07:38 bar).
+Position0.01244652184742499 BTC became flat across one bar.
+
+Single-exit snapshot arithmetic PASS using running edc46d8 sell formula,
+fee rate0.001/slippage5bps, tolerance1e-8:
+- Exit fee0.9625059016376056; exit slippage0.48149369766758277 USDT.
+- Inferred reference77370.00, simulated fill77331.315 USDT.
+- Entry77358.65999999999; entry fee0.9628462517775215 USDT.
+- Net realized delta -2.2657022933328363 USDT includes both fees.
+- Flat cash/equity961.5433957359662; cumulative realized -38.456604264035235,
+  fees29.456771882045512 and slippage14.72838737315988 USDT.
+- PnL residual1.85e-12; slippage residual2.40e-14.
+
+Original OHLC/reference not independently verified. Telegram display NOT
+TESTED: Bot41637 remains absent; process-name scan finds only Telegram desktop.
+At 07:40:11Z runtime/supervisor heartbeats recent, restarts unchanged at1;
+original supervisor40999/child41886/caffeinate45020/observer45021 confirmed.
+527 records, 62 historical gaps above90s (unchanged), empty observer log, no
+completion marker. Continue original deadline without continuous24h claim.
+No original snapshots, strategy, locks or processes modified; no secret
+access, forced fills or exchange orders.
