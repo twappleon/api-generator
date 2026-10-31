@@ -31,6 +31,7 @@ func TestLiveSignalSameMarketQuoteAndIdempotency(t *testing.T) {
 func TestGapFailsClosed(t *testing.T){
  bb:=fixture()
  p:=&Pair{LastOpen:bb[len(bb)-3].OpenTime,A:fresh(),B:fresh()}
+ p.A.Qty=.1;p.A.Entry=100;p.A.Stop=90;p.A.Cash=989.9;p.A.Equity=999.9
  n,e:=process(p,bb,120,bb[len(bb)-1].CloseTime+1000)
  if e==nil || !strings.Contains(e.Error(),"fail closed") || n!=0 || p.A.Buys!=0 || p.LastOpen!=bb[len(bb)-3].OpenTime{t.Fatalf("gap should fail closed: n=%d err=%v",n,e)}
 }
@@ -40,4 +41,18 @@ func TestQuoteStopExecutedOnce(t *testing.T){
  if l.Qty!=0||l.Trades!=1||l.LastTrade.Side!="SELL"||l.Realized>=0{t.Fatalf("stop failed: %+v",l)}
  priceStop(&l,12346,70)
  if l.Trades!=1{t.Fatalf("duplicate stop: %d",l.Trades)}
+}
+
+func TestGapFlatResumesWithoutHistoricalFills(t *testing.T) {
+ bb:=fixture()
+ p:=&Pair{LastOpen:bb[len(bb)-3].OpenTime,A:fresh(),B:fresh()}
+ n,e:=process(p,bb,120,bb[len(bb)-1].CloseTime+1000)
+ if e!=nil||n!=0 {t.Fatalf("flat recovery failed n=%d err=%v",n,e)}
+ if p.LastOpen!=bb[len(bb)-1].OpenTime||p.MissedBars!=2 {t.Fatalf("wrong checkpoint or skipped count: %+v",p)}
+ if p.A.Buys!=0||p.B.Buys!=0||p.A.Trades!=0||p.B.Trades!=0 {
+  t.Fatal("replayed historical fills during gap")
+ }
+ if p.Quote!=120||p.QuoteUTC==""{t.Fatal("quote not updated after recovery")}
+ n,e=process(p,bb,120,bb[len(bb)-1].CloseTime+2000)
+ if e!=nil||n!=0||p.MissedBars!=2||p.A.Buys!=0 {t.Fatalf("idempotency failed: %+v, %v",p,e)}
 }
