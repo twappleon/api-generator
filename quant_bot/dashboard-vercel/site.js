@@ -35,6 +35,9 @@ function coinCard(name, pair) {
     " · EMA200 $" + ema.toFixed(2) +
     " · 距離突破 " + Number(pair.distance_to_breakout_pct).toFixed(2) + "%" +
     " · ATR " + Number(pair.atr_pct).toFixed(2) + "%" +
+    " · 近30天符合條件的原始訊號 " + pair.signals_last_30d + " 次" +
+    " · 本次模擬啟動後訊號 " + pair.signals_since_start + " 次" +
+    " · 最近一次歷史訊號 " + (pair.last_signal_utc || "無") +
     " · " + pair.reason_no_trade +
     " · 下一根收盤 " + pair.next_close_utc;
   card.appendChild(detail);
