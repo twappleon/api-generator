@@ -1,0 +1,785 @@
++ go test ./... -race -count=1 -v -timeout=60s
+=== RUN   TestOfflineModesNeverUseNetwork
+Backtest exchange: binance
+Backtest symbol: BTCUSDT (1h)
+Candles: 300
+Initial USDT: 1000.00
+Final USDT: 1027.94
+Total return: 2.79%
+Max drawdown: 0.10%
+Trades: 1, Win rate: 100.00%
+
+[1] 2024-01-09 10:00:00 UTC -> 2024-01-09 22:00:00 UTC, entry=33705.3485, exit=34716.5090, qty=0.029639, pnl=27.9421 USDT, reason=take_profit
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/5] 2024-01-05 04:00:00 UTC price=49068.8091 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[002/5] 2024-01-05 05:00:00 UTC price=49120.5608 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[003/5] 2024-01-05 06:00:00 UTC price=49149.7244 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[004/5] 2024-01-05 07:00:00 UTC price=49152.7871 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[005/5] 2024-01-05 08:00:00 UTC price=49126.5597 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+Paper trading finished.
+--- PASS: TestOfflineModesNeverUseNetwork (0.00s)
+=== RUN   TestOfflinePaperExercisesBuyAndSellWithoutNetwork
+--- PASS: TestOfflinePaperExercisesBuyAndSellWithoutNetwork (0.01s)
+=== RUN   TestPaperAbruptExitAndStaleLockRecovery
+Paper-only snapshot loaded: completed=0, cash=1000.00000000, position=false
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/103] 2024-01-05 04:00:00 UTC price=49068.8091 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[002/103] 2024-01-05 05:00:00 UTC price=49120.5608 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[003/103] 2024-01-05 06:00:00 UTC price=49149.7244 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[004/103] 2024-01-05 07:00:00 UTC price=49152.7871 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[005/103] 2024-01-05 08:00:00 UTC price=49126.5597 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[006/103] 2024-01-05 09:00:00 UTC price=49068.2625 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[007/103] 2024-01-05 10:00:00 UTC price=48975.6037 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[008/103] 2024-01-05 11:00:00 UTC price=48846.8457 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[009/103] 2024-01-05 12:00:00 UTC price=48680.8580 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[010/103] 2024-01-05 13:00:00 UTC price=48477.1545 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[011/103] 2024-01-05 14:00:00 UTC price=48235.9130 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[012/103] 2024-01-05 15:00:00 UTC price=47957.9755 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[013/103] 2024-01-05 16:00:00 UTC price=47644.8313 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[014/103] 2024-01-05 17:00:00 UTC price=47298.5807 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[015/103] 2024-01-05 18:00:00 UTC price=46921.8831 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[016/103] 2024-01-05 19:00:00 UTC price=46517.8900 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[017/103] 2024-01-05 20:00:00 UTC price=46090.1665 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[018/103] 2024-01-05 21:00:00 UTC price=45642.6042 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[019/103] 2024-01-05 22:00:00 UTC price=45179.3278 signal=-1 action=HOLD cash=1000.0000 equity=1000.0000
+[020/103] 2024-01-05 23:00:00 UTC price=44704.6004 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[021/103] 2024-01-06 00:00:00 UTC price=44236.1403 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[022/103] 2024-01-06 01:00:00 UTC price=43764.5089 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[023/103] 2024-01-06 02:00:00 UTC price=43293.8354 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[024/103] 2024-01-06 03:00:00 UTC price=42828.0460 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[025/103] 2024-01-06 04:00:00 UTC price=42370.7967 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[026/103] 2024-01-06 05:00:00 UTC price=41925.4163 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[027/103] 2024-01-06 06:00:00 UTC price=41494.8591 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[028/103] 2024-01-06 07:00:00 UTC price=41081.6687 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[029/103] 2024-01-06 08:00:00 UTC price=40687.9521 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[030/103] 2024-01-06 09:00:00 UTC price=40315.3631 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[031/103] 2024-01-06 10:00:00 UTC price=39965.0941 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[032/103] 2024-01-06 11:00:00 UTC price=39637.8765 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[033/103] 2024-01-06 12:00:00 UTC price=39333.9879 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[034/103] 2024-01-06 13:00:00 UTC price=39053.2656 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[035/103] 2024-01-06 14:00:00 UTC price=38795.1262 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[036/103] 2024-01-06 15:00:00 UTC price=38558.5897 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[037/103] 2024-01-06 16:00:00 UTC price=38342.3095 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[038/103] 2024-01-06 17:00:00 UTC price=38144.6058 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[039/103] 2024-01-06 18:00:00 UTC price=37963.5039 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[040/103] 2024-01-06 19:00:00 UTC price=37796.7768 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[041/103] 2024-01-06 20:00:00 UTC price=37641.9916 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[042/103] 2024-01-06 21:00:00 UTC price=37496.5591 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[043/103] 2024-01-06 22:00:00 UTC price=37357.7873 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[044/103] 2024-01-06 23:00:00 UTC price=37222.9380 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[045/103] 2024-01-07 00:00:00 UTC price=37089.2841 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[046/103] 2024-01-07 01:00:00 UTC price=36954.1698 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[047/103] 2024-01-07 02:00:00 UTC price=36815.0691 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[048/103] 2024-01-07 03:00:00 UTC price=36669.6438 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[049/103] 2024-01-07 04:00:00 UTC price=36515.7985 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[050/103] 2024-01-07 05:00:00 UTC price=36351.7308 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[051/103] 2024-01-07 06:00:00 UTC price=36175.9752 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[052/103] 2024-01-07 07:00:00 UTC price=35987.4405 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[053/103] 2024-01-07 08:00:00 UTC price=35785.4365 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[054/103] 2024-01-07 09:00:00 UTC price=35569.6925 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[055/103] 2024-01-07 10:00:00 UTC price=35340.3637 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[056/103] 2024-01-07 11:00:00 UTC price=35098.0272 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[057/103] 2024-01-07 12:00:00 UTC price=34843.6670 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[058/103] 2024-01-07 13:00:00 UTC price=34578.6489 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[059/103] 2024-01-07 14:00:00 UTC price=34304.6850 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[060/103] 2024-01-07 15:00:00 UTC price=34023.7919 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[061/103] 2024-01-07 16:00:00 UTC price=33738.2404 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[062/103] 2024-01-07 17:00:00 UTC price=33450.5024 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[063/103] 2024-01-07 18:00:00 UTC price=33163.1936 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[064/103] 2024-01-07 19:00:00 UTC price=32879.0164 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[065/103] 2024-01-07 20:00:00 UTC price=32600.7028 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[066/103] 2024-01-07 21:00:00 UTC price=32330.9598 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[067/103] 2024-01-07 22:00:00 UTC price=32072.4186 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[068/103] 2024-01-07 23:00:00 UTC price=31827.5884 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[069/103] 2024-01-08 00:00:00 UTC price=31598.8150 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[070/103] 2024-01-08 01:00:00 UTC price=31388.2451 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[071/103] 2024-01-08 02:00:00 UTC price=31197.7971 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[072/103] 2024-01-08 03:00:00 UTC price=31029.1360 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[073/103] 2024-01-08 04:00:00 UTC price=30883.6549 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[074/103] 2024-01-08 05:00:00 UTC price=30762.4608 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[075/103] 2024-01-08 06:00:00 UTC price=30666.3645 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[076/103] 2024-01-08 07:00:00 UTC price=30595.8754 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[077/103] 2024-01-08 08:00:00 UTC price=30551.1988 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[078/103] 2024-01-08 09:00:00 UTC price=30532.2369 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[079/103] 2024-01-08 10:00:00 UTC price=30538.5933 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[080/103] 2024-01-08 11:00:00 UTC price=30569.5791 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[081/103] 2024-01-08 12:00:00 UTC price=30615.0526 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[082/103] 2024-01-08 13:00:00 UTC price=30682.9078 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[083/103] 2024-01-08 14:00:00 UTC price=30771.6320 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[084/103] 2024-01-08 15:00:00 UTC price=30879.4811 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[085/103] 2024-01-08 16:00:00 UTC price=31004.5036 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[086/103] 2024-01-08 17:00:00 UTC price=31144.5681 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[087/103] 2024-01-08 18:00:00 UTC price=31297.3958 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[088/103] 2024-01-08 19:00:00 UTC price=31460.5961 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[089/103] 2024-01-08 20:00:00 UTC price=31631.7075 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[090/103] 2024-01-08 21:00:00 UTC price=31808.2410 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[091/103] 2024-01-08 22:00:00 UTC price=31987.7269 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[092/103] 2024-01-08 23:00:00 UTC price=32167.7639 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[093/103] 2024-01-09 00:00:00 UTC price=32346.0690 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[094/103] 2024-01-09 01:00:00 UTC price=32520.5271 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[095/103] 2024-01-09 02:00:00 UTC price=32689.2391 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[096/103] 2024-01-09 03:00:00 UTC price=32850.5666 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[097/103] 2024-01-09 04:00:00 UTC price=33003.1715 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[098/103] 2024-01-09 05:00:00 UTC price=33146.0502 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[099/103] 2024-01-09 06:00:00 UTC price=33278.5590 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[100/103] 2024-01-09 07:00:00 UTC price=33400.4321 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[101/103] 2024-01-09 08:00:00 UTC price=33511.7896 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[102/103] 2024-01-09 09:00:00 UTC price=33613.1359 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[103/103] 2024-01-09 10:00:00 UTC price=33705.3485 signal=+1 action=BUY qty=0.029639 cash=0.0000 equity=999.0010
+Paper trading finished.
+Paper-only snapshot loaded: completed=0, cash=1000.00000000, position=false
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/115] 2024-01-05 04:00:00 UTC price=49068.8091 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[002/115] 2024-01-05 05:00:00 UTC price=49120.5608 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[003/115] 2024-01-05 06:00:00 UTC price=49149.7244 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[004/115] 2024-01-05 07:00:00 UTC price=49152.7871 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[005/115] 2024-01-05 08:00:00 UTC price=49126.5597 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[006/115] 2024-01-05 09:00:00 UTC price=49068.2625 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[007/115] 2024-01-05 10:00:00 UTC price=48975.6037 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[008/115] 2024-01-05 11:00:00 UTC price=48846.8457 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[009/115] 2024-01-05 12:00:00 UTC price=48680.8580 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[010/115] 2024-01-05 13:00:00 UTC price=48477.1545 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[011/115] 2024-01-05 14:00:00 UTC price=48235.9130 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[012/115] 2024-01-05 15:00:00 UTC price=47957.9755 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[013/115] 2024-01-05 16:00:00 UTC price=47644.8313 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[014/115] 2024-01-05 17:00:00 UTC price=47298.5807 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[015/115] 2024-01-05 18:00:00 UTC price=46921.8831 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[016/115] 2024-01-05 19:00:00 UTC price=46517.8900 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[017/115] 2024-01-05 20:00:00 UTC price=46090.1665 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[018/115] 2024-01-05 21:00:00 UTC price=45642.6042 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[019/115] 2024-01-05 22:00:00 UTC price=45179.3278 signal=-1 action=HOLD cash=1000.0000 equity=1000.0000
+[020/115] 2024-01-05 23:00:00 UTC price=44704.6004 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[021/115] 2024-01-06 00:00:00 UTC price=44236.1403 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[022/115] 2024-01-06 01:00:00 UTC price=43764.5089 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[023/115] 2024-01-06 02:00:00 UTC price=43293.8354 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[024/115] 2024-01-06 03:00:00 UTC price=42828.0460 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[025/115] 2024-01-06 04:00:00 UTC price=42370.7967 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[026/115] 2024-01-06 05:00:00 UTC price=41925.4163 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[027/115] 2024-01-06 06:00:00 UTC price=41494.8591 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[028/115] 2024-01-06 07:00:00 UTC price=41081.6687 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[029/115] 2024-01-06 08:00:00 UTC price=40687.9521 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[030/115] 2024-01-06 09:00:00 UTC price=40315.3631 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[031/115] 2024-01-06 10:00:00 UTC price=39965.0941 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[032/115] 2024-01-06 11:00:00 UTC price=39637.8765 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[033/115] 2024-01-06 12:00:00 UTC price=39333.9879 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[034/115] 2024-01-06 13:00:00 UTC price=39053.2656 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[035/115] 2024-01-06 14:00:00 UTC price=38795.1262 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[036/115] 2024-01-06 15:00:00 UTC price=38558.5897 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[037/115] 2024-01-06 16:00:00 UTC price=38342.3095 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[038/115] 2024-01-06 17:00:00 UTC price=38144.6058 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[039/115] 2024-01-06 18:00:00 UTC price=37963.5039 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[040/115] 2024-01-06 19:00:00 UTC price=37796.7768 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[041/115] 2024-01-06 20:00:00 UTC price=37641.9916 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[042/115] 2024-01-06 21:00:00 UTC price=37496.5591 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[043/115] 2024-01-06 22:00:00 UTC price=37357.7873 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[044/115] 2024-01-06 23:00:00 UTC price=37222.9380 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[045/115] 2024-01-07 00:00:00 UTC price=37089.2841 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[046/115] 2024-01-07 01:00:00 UTC price=36954.1698 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[047/115] 2024-01-07 02:00:00 UTC price=36815.0691 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[048/115] 2024-01-07 03:00:00 UTC price=36669.6438 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[049/115] 2024-01-07 04:00:00 UTC price=36515.7985 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[050/115] 2024-01-07 05:00:00 UTC price=36351.7308 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[051/115] 2024-01-07 06:00:00 UTC price=36175.9752 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[052/115] 2024-01-07 07:00:00 UTC price=35987.4405 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[053/115] 2024-01-07 08:00:00 UTC price=35785.4365 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[054/115] 2024-01-07 09:00:00 UTC price=35569.6925 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[055/115] 2024-01-07 10:00:00 UTC price=35340.3637 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[056/115] 2024-01-07 11:00:00 UTC price=35098.0272 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[057/115] 2024-01-07 12:00:00 UTC price=34843.6670 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[058/115] 2024-01-07 13:00:00 UTC price=34578.6489 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[059/115] 2024-01-07 14:00:00 UTC price=34304.6850 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[060/115] 2024-01-07 15:00:00 UTC price=34023.7919 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[061/115] 2024-01-07 16:00:00 UTC price=33738.2404 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[062/115] 2024-01-07 17:00:00 UTC price=33450.5024 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[063/115] 2024-01-07 18:00:00 UTC price=33163.1936 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[064/115] 2024-01-07 19:00:00 UTC price=32879.0164 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[065/115] 2024-01-07 20:00:00 UTC price=32600.7028 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[066/115] 2024-01-07 21:00:00 UTC price=32330.9598 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[067/115] 2024-01-07 22:00:00 UTC price=32072.4186 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[068/115] 2024-01-07 23:00:00 UTC price=31827.5884 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[069/115] 2024-01-08 00:00:00 UTC price=31598.8150 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[070/115] 2024-01-08 01:00:00 UTC price=31388.2451 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[071/115] 2024-01-08 02:00:00 UTC price=31197.7971 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[072/115] 2024-01-08 03:00:00 UTC price=31029.1360 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[073/115] 2024-01-08 04:00:00 UTC price=30883.6549 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[074/115] 2024-01-08 05:00:00 UTC price=30762.4608 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[075/115] 2024-01-08 06:00:00 UTC price=30666.3645 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[076/115] 2024-01-08 07:00:00 UTC price=30595.8754 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[077/115] 2024-01-08 08:00:00 UTC price=30551.1988 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[078/115] 2024-01-08 09:00:00 UTC price=30532.2369 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[079/115] 2024-01-08 10:00:00 UTC price=30538.5933 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[080/115] 2024-01-08 11:00:00 UTC price=30569.5791 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[081/115] 2024-01-08 12:00:00 UTC price=30615.0526 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[082/115] 2024-01-08 13:00:00 UTC price=30682.9078 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[083/115] 2024-01-08 14:00:00 UTC price=30771.6320 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[084/115] 2024-01-08 15:00:00 UTC price=30879.4811 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[085/115] 2024-01-08 16:00:00 UTC price=31004.5036 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[086/115] 2024-01-08 17:00:00 UTC price=31144.5681 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[087/115] 2024-01-08 18:00:00 UTC price=31297.3958 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[088/115] 2024-01-08 19:00:00 UTC price=31460.5961 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[089/115] 2024-01-08 20:00:00 UTC price=31631.7075 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[090/115] 2024-01-08 21:00:00 UTC price=31808.2410 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[091/115] 2024-01-08 22:00:00 UTC price=31987.7269 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[092/115] 2024-01-08 23:00:00 UTC price=32167.7639 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[093/115] 2024-01-09 00:00:00 UTC price=32346.0690 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[094/115] 2024-01-09 01:00:00 UTC price=32520.5271 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[095/115] 2024-01-09 02:00:00 UTC price=32689.2391 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[096/115] 2024-01-09 03:00:00 UTC price=32850.5666 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[097/115] 2024-01-09 04:00:00 UTC price=33003.1715 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[098/115] 2024-01-09 05:00:00 UTC price=33146.0502 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[099/115] 2024-01-09 06:00:00 UTC price=33278.5590 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[100/115] 2024-01-09 07:00:00 UTC price=33400.4321 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[101/115] 2024-01-09 08:00:00 UTC price=33511.7896 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[102/115] 2024-01-09 09:00:00 UTC price=33613.1359 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[103/115] 2024-01-09 10:00:00 UTC price=33705.3485 signal=+1 action=BUY qty=0.029639 cash=0.0000 equity=999.0010
+[104/115] 2024-01-09 11:00:00 UTC price=33789.6577 signal=+0 action=HOLD cash=0.0000 equity=1001.4999
+[105/115] 2024-01-09 12:00:00 UTC price=33867.6170 signal=+0 action=HOLD cash=0.0000 equity=1003.8105
+[106/115] 2024-01-09 13:00:00 UTC price=33941.0676 signal=+0 action=HOLD cash=0.0000 equity=1005.9875
+[107/115] 2024-01-09 14:00:00 UTC price=34012.0945 signal=+0 action=HOLD cash=0.0000 equity=1008.0927
+[108/115] 2024-01-09 15:00:00 UTC price=34082.9799 signal=+0 action=HOLD cash=0.0000 equity=1010.1937
+[109/115] 2024-01-09 16:00:00 UTC price=34156.1520 signal=+0 action=HOLD cash=0.0000 equity=1012.3625
+[110/115] 2024-01-09 17:00:00 UTC price=34234.1320 signal=+0 action=HOLD cash=0.0000 equity=1014.6737
+[111/115] 2024-01-09 18:00:00 UTC price=34319.4814 signal=+0 action=HOLD cash=0.0000 equity=1017.2034
+[112/115] 2024-01-09 19:00:00 UTC price=34414.7492 signal=+0 action=HOLD cash=0.0000 equity=1020.0271
+[113/115] 2024-01-09 20:00:00 UTC price=34522.4211 signal=+0 action=HOLD cash=0.0000 equity=1023.2184
+[114/115] 2024-01-09 21:00:00 UTC price=34644.8711 signal=+0 action=HOLD cash=0.0000 equity=1026.8477
+[115/115] 2024-01-09 22:00:00 UTC price=34784.3165 signal=+0 action=SELL (take_profit), pnl=27.9421 USDT cash=1027.9421 equity=1027.9421
+Paper trading finished.
+--- PASS: TestPaperAbruptExitAndStaleLockRecovery (2.00s)
+=== RUN   TestPaperCorruptStartupPreservesEvidence
+=== RUN   TestPaperCorruptStartupPreservesEvidence/{"kind":"paper"
+=== RUN   TestPaperCorruptStartupPreservesEvidence/null
+=== RUN   TestPaperCorruptStartupPreservesEvidence/{}
+=== RUN   TestPaperCorruptStartupPreservesEvidence/{"kind":"testnet"}
+--- PASS: TestPaperCorruptStartupPreservesEvidence (0.01s)
+    --- PASS: TestPaperCorruptStartupPreservesEvidence/{"kind":"paper" (0.00s)
+    --- PASS: TestPaperCorruptStartupPreservesEvidence/null (0.00s)
+    --- PASS: TestPaperCorruptStartupPreservesEvidence/{} (0.00s)
+    --- PASS: TestPaperCorruptStartupPreservesEvidence/{"kind":"testnet"} (0.00s)
+=== RUN   TestPaperDuplicateAndOlderCandlesAcrossRestart
+Paper-only snapshot loaded: completed=0, cash=1000.00000000, position=false
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/1] 2024-01-09 10:00:00 UTC price=33705.3485 signal=+1 action=BUY qty=0.029639 cash=0.0000 equity=999.0010
+Paper trading finished.
+Paper-only snapshot loaded: completed=1, cash=0.00000000, position=true
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+Paper trading finished.
+Paper-only snapshot loaded: completed=1, cash=0.00000000, position=true
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+Paper trading finished.
+Paper-only snapshot loaded: completed=1, cash=0.00000000, position=true
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[002/2] 2024-01-09 11:00:00 UTC price=33789.6577 signal=+0 action=HOLD cash=0.0000 equity=1001.4999
+Paper trading finished.
+Paper-only snapshot loaded: completed=2, cash=0.00000000, position=true
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+Paper trading finished.
+--- PASS: TestPaperDuplicateAndOlderCandlesAcrossRestart (0.03s)
+=== RUN   TestPaperUnfinishedTemporaryWriteIgnored
+Paper-only snapshot loaded: completed=0, cash=1000.00000000, position=false
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/103] 2024-01-05 04:00:00 UTC price=49068.8091 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[002/103] 2024-01-05 05:00:00 UTC price=49120.5608 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[003/103] 2024-01-05 06:00:00 UTC price=49149.7244 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[004/103] 2024-01-05 07:00:00 UTC price=49152.7871 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[005/103] 2024-01-05 08:00:00 UTC price=49126.5597 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[006/103] 2024-01-05 09:00:00 UTC price=49068.2625 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[007/103] 2024-01-05 10:00:00 UTC price=48975.6037 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[008/103] 2024-01-05 11:00:00 UTC price=48846.8457 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[009/103] 2024-01-05 12:00:00 UTC price=48680.8580 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[010/103] 2024-01-05 13:00:00 UTC price=48477.1545 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[011/103] 2024-01-05 14:00:00 UTC price=48235.9130 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[012/103] 2024-01-05 15:00:00 UTC price=47957.9755 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[013/103] 2024-01-05 16:00:00 UTC price=47644.8313 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[014/103] 2024-01-05 17:00:00 UTC price=47298.5807 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[015/103] 2024-01-05 18:00:00 UTC price=46921.8831 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[016/103] 2024-01-05 19:00:00 UTC price=46517.8900 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[017/103] 2024-01-05 20:00:00 UTC price=46090.1665 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[018/103] 2024-01-05 21:00:00 UTC price=45642.6042 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[019/103] 2024-01-05 22:00:00 UTC price=45179.3278 signal=-1 action=HOLD cash=1000.0000 equity=1000.0000
+[020/103] 2024-01-05 23:00:00 UTC price=44704.6004 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[021/103] 2024-01-06 00:00:00 UTC price=44236.1403 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[022/103] 2024-01-06 01:00:00 UTC price=43764.5089 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[023/103] 2024-01-06 02:00:00 UTC price=43293.8354 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[024/103] 2024-01-06 03:00:00 UTC price=42828.0460 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[025/103] 2024-01-06 04:00:00 UTC price=42370.7967 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[026/103] 2024-01-06 05:00:00 UTC price=41925.4163 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[027/103] 2024-01-06 06:00:00 UTC price=41494.8591 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[028/103] 2024-01-06 07:00:00 UTC price=41081.6687 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[029/103] 2024-01-06 08:00:00 UTC price=40687.9521 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[030/103] 2024-01-06 09:00:00 UTC price=40315.3631 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[031/103] 2024-01-06 10:00:00 UTC price=39965.0941 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[032/103] 2024-01-06 11:00:00 UTC price=39637.8765 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[033/103] 2024-01-06 12:00:00 UTC price=39333.9879 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[034/103] 2024-01-06 13:00:00 UTC price=39053.2656 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[035/103] 2024-01-06 14:00:00 UTC price=38795.1262 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[036/103] 2024-01-06 15:00:00 UTC price=38558.5897 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[037/103] 2024-01-06 16:00:00 UTC price=38342.3095 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[038/103] 2024-01-06 17:00:00 UTC price=38144.6058 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[039/103] 2024-01-06 18:00:00 UTC price=37963.5039 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[040/103] 2024-01-06 19:00:00 UTC price=37796.7768 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[041/103] 2024-01-06 20:00:00 UTC price=37641.9916 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[042/103] 2024-01-06 21:00:00 UTC price=37496.5591 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[043/103] 2024-01-06 22:00:00 UTC price=37357.7873 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[044/103] 2024-01-06 23:00:00 UTC price=37222.9380 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[045/103] 2024-01-07 00:00:00 UTC price=37089.2841 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[046/103] 2024-01-07 01:00:00 UTC price=36954.1698 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[047/103] 2024-01-07 02:00:00 UTC price=36815.0691 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[048/103] 2024-01-07 03:00:00 UTC price=36669.6438 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[049/103] 2024-01-07 04:00:00 UTC price=36515.7985 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[050/103] 2024-01-07 05:00:00 UTC price=36351.7308 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[051/103] 2024-01-07 06:00:00 UTC price=36175.9752 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[052/103] 2024-01-07 07:00:00 UTC price=35987.4405 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[053/103] 2024-01-07 08:00:00 UTC price=35785.4365 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[054/103] 2024-01-07 09:00:00 UTC price=35569.6925 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[055/103] 2024-01-07 10:00:00 UTC price=35340.3637 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[056/103] 2024-01-07 11:00:00 UTC price=35098.0272 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[057/103] 2024-01-07 12:00:00 UTC price=34843.6670 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[058/103] 2024-01-07 13:00:00 UTC price=34578.6489 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[059/103] 2024-01-07 14:00:00 UTC price=34304.6850 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[060/103] 2024-01-07 15:00:00 UTC price=34023.7919 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[061/103] 2024-01-07 16:00:00 UTC price=33738.2404 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[062/103] 2024-01-07 17:00:00 UTC price=33450.5024 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[063/103] 2024-01-07 18:00:00 UTC price=33163.1936 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[064/103] 2024-01-07 19:00:00 UTC price=32879.0164 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[065/103] 2024-01-07 20:00:00 UTC price=32600.7028 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[066/103] 2024-01-07 21:00:00 UTC price=32330.9598 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[067/103] 2024-01-07 22:00:00 UTC price=32072.4186 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[068/103] 2024-01-07 23:00:00 UTC price=31827.5884 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[069/103] 2024-01-08 00:00:00 UTC price=31598.8150 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[070/103] 2024-01-08 01:00:00 UTC price=31388.2451 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[071/103] 2024-01-08 02:00:00 UTC price=31197.7971 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[072/103] 2024-01-08 03:00:00 UTC price=31029.1360 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[073/103] 2024-01-08 04:00:00 UTC price=30883.6549 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[074/103] 2024-01-08 05:00:00 UTC price=30762.4608 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[075/103] 2024-01-08 06:00:00 UTC price=30666.3645 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[076/103] 2024-01-08 07:00:00 UTC price=30595.8754 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[077/103] 2024-01-08 08:00:00 UTC price=30551.1988 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[078/103] 2024-01-08 09:00:00 UTC price=30532.2369 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[079/103] 2024-01-08 10:00:00 UTC price=30538.5933 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[080/103] 2024-01-08 11:00:00 UTC price=30569.5791 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[081/103] 2024-01-08 12:00:00 UTC price=30615.0526 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[082/103] 2024-01-08 13:00:00 UTC price=30682.9078 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[083/103] 2024-01-08 14:00:00 UTC price=30771.6320 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[084/103] 2024-01-08 15:00:00 UTC price=30879.4811 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[085/103] 2024-01-08 16:00:00 UTC price=31004.5036 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[086/103] 2024-01-08 17:00:00 UTC price=31144.5681 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[087/103] 2024-01-08 18:00:00 UTC price=31297.3958 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[088/103] 2024-01-08 19:00:00 UTC price=31460.5961 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[089/103] 2024-01-08 20:00:00 UTC price=31631.7075 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[090/103] 2024-01-08 21:00:00 UTC price=31808.2410 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[091/103] 2024-01-08 22:00:00 UTC price=31987.7269 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[092/103] 2024-01-08 23:00:00 UTC price=32167.7639 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[093/103] 2024-01-09 00:00:00 UTC price=32346.0690 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[094/103] 2024-01-09 01:00:00 UTC price=32520.5271 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[095/103] 2024-01-09 02:00:00 UTC price=32689.2391 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[096/103] 2024-01-09 03:00:00 UTC price=32850.5666 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[097/103] 2024-01-09 04:00:00 UTC price=33003.1715 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[098/103] 2024-01-09 05:00:00 UTC price=33146.0502 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[099/103] 2024-01-09 06:00:00 UTC price=33278.5590 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[100/103] 2024-01-09 07:00:00 UTC price=33400.4321 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[101/103] 2024-01-09 08:00:00 UTC price=33511.7896 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[102/103] 2024-01-09 09:00:00 UTC price=33613.1359 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[103/103] 2024-01-09 10:00:00 UTC price=33705.3485 signal=+1 action=BUY qty=0.029639 cash=0.0000 equity=999.0010
+Paper trading finished.
+Paper-only snapshot loaded: completed=103, cash=0.00000000, position=true
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/12] 2024-01-09 11:00:00 UTC price=33789.6577 signal=+0 action=HOLD cash=0.0000 equity=1001.4999
+[002/12] 2024-01-09 12:00:00 UTC price=33867.6170 signal=+0 action=HOLD cash=0.0000 equity=1003.8105
+[003/12] 2024-01-09 13:00:00 UTC price=33941.0676 signal=+0 action=HOLD cash=0.0000 equity=1005.9875
+[004/12] 2024-01-09 14:00:00 UTC price=34012.0945 signal=+0 action=HOLD cash=0.0000 equity=1008.0927
+[005/12] 2024-01-09 15:00:00 UTC price=34082.9799 signal=+0 action=HOLD cash=0.0000 equity=1010.1937
+[006/12] 2024-01-09 16:00:00 UTC price=34156.1520 signal=+0 action=HOLD cash=0.0000 equity=1012.3625
+[007/12] 2024-01-09 17:00:00 UTC price=34234.1320 signal=+0 action=HOLD cash=0.0000 equity=1014.6737
+[008/12] 2024-01-09 18:00:00 UTC price=34319.4814 signal=+0 action=HOLD cash=0.0000 equity=1017.2034
+[009/12] 2024-01-09 19:00:00 UTC price=34414.7492 signal=+0 action=HOLD cash=0.0000 equity=1020.0271
+[010/12] 2024-01-09 20:00:00 UTC price=34522.4211 signal=+0 action=HOLD cash=0.0000 equity=1023.2184
+[011/12] 2024-01-09 21:00:00 UTC price=34644.8711 signal=+0 action=HOLD cash=0.0000 equity=1026.8477
+[012/12] 2024-01-09 22:00:00 UTC price=34784.3165 signal=+0 action=SELL (take_profit), pnl=27.9421 USDT cash=1027.9421 equity=1027.9421
+Paper trading finished.
+Paper-only snapshot loaded: completed=0, cash=1000.00000000, position=false
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/115] 2024-01-05 04:00:00 UTC price=49068.8091 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[002/115] 2024-01-05 05:00:00 UTC price=49120.5608 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[003/115] 2024-01-05 06:00:00 UTC price=49149.7244 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[004/115] 2024-01-05 07:00:00 UTC price=49152.7871 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[005/115] 2024-01-05 08:00:00 UTC price=49126.5597 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[006/115] 2024-01-05 09:00:00 UTC price=49068.2625 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[007/115] 2024-01-05 10:00:00 UTC price=48975.6037 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[008/115] 2024-01-05 11:00:00 UTC price=48846.8457 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[009/115] 2024-01-05 12:00:00 UTC price=48680.8580 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[010/115] 2024-01-05 13:00:00 UTC price=48477.1545 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[011/115] 2024-01-05 14:00:00 UTC price=48235.9130 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[012/115] 2024-01-05 15:00:00 UTC price=47957.9755 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[013/115] 2024-01-05 16:00:00 UTC price=47644.8313 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[014/115] 2024-01-05 17:00:00 UTC price=47298.5807 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[015/115] 2024-01-05 18:00:00 UTC price=46921.8831 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[016/115] 2024-01-05 19:00:00 UTC price=46517.8900 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[017/115] 2024-01-05 20:00:00 UTC price=46090.1665 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[018/115] 2024-01-05 21:00:00 UTC price=45642.6042 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[019/115] 2024-01-05 22:00:00 UTC price=45179.3278 signal=-1 action=HOLD cash=1000.0000 equity=1000.0000
+[020/115] 2024-01-05 23:00:00 UTC price=44704.6004 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[021/115] 2024-01-06 00:00:00 UTC price=44236.1403 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[022/115] 2024-01-06 01:00:00 UTC price=43764.5089 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[023/115] 2024-01-06 02:00:00 UTC price=43293.8354 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[024/115] 2024-01-06 03:00:00 UTC price=42828.0460 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[025/115] 2024-01-06 04:00:00 UTC price=42370.7967 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[026/115] 2024-01-06 05:00:00 UTC price=41925.4163 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[027/115] 2024-01-06 06:00:00 UTC price=41494.8591 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[028/115] 2024-01-06 07:00:00 UTC price=41081.6687 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[029/115] 2024-01-06 08:00:00 UTC price=40687.9521 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[030/115] 2024-01-06 09:00:00 UTC price=40315.3631 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[031/115] 2024-01-06 10:00:00 UTC price=39965.0941 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[032/115] 2024-01-06 11:00:00 UTC price=39637.8765 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[033/115] 2024-01-06 12:00:00 UTC price=39333.9879 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[034/115] 2024-01-06 13:00:00 UTC price=39053.2656 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[035/115] 2024-01-06 14:00:00 UTC price=38795.1262 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[036/115] 2024-01-06 15:00:00 UTC price=38558.5897 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[037/115] 2024-01-06 16:00:00 UTC price=38342.3095 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[038/115] 2024-01-06 17:00:00 UTC price=38144.6058 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[039/115] 2024-01-06 18:00:00 UTC price=37963.5039 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[040/115] 2024-01-06 19:00:00 UTC price=37796.7768 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[041/115] 2024-01-06 20:00:00 UTC price=37641.9916 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[042/115] 2024-01-06 21:00:00 UTC price=37496.5591 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[043/115] 2024-01-06 22:00:00 UTC price=37357.7873 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[044/115] 2024-01-06 23:00:00 UTC price=37222.9380 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[045/115] 2024-01-07 00:00:00 UTC price=37089.2841 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[046/115] 2024-01-07 01:00:00 UTC price=36954.1698 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[047/115] 2024-01-07 02:00:00 UTC price=36815.0691 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[048/115] 2024-01-07 03:00:00 UTC price=36669.6438 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[049/115] 2024-01-07 04:00:00 UTC price=36515.7985 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[050/115] 2024-01-07 05:00:00 UTC price=36351.7308 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[051/115] 2024-01-07 06:00:00 UTC price=36175.9752 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[052/115] 2024-01-07 07:00:00 UTC price=35987.4405 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[053/115] 2024-01-07 08:00:00 UTC price=35785.4365 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[054/115] 2024-01-07 09:00:00 UTC price=35569.6925 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[055/115] 2024-01-07 10:00:00 UTC price=35340.3637 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[056/115] 2024-01-07 11:00:00 UTC price=35098.0272 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[057/115] 2024-01-07 12:00:00 UTC price=34843.6670 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[058/115] 2024-01-07 13:00:00 UTC price=34578.6489 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[059/115] 2024-01-07 14:00:00 UTC price=34304.6850 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[060/115] 2024-01-07 15:00:00 UTC price=34023.7919 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[061/115] 2024-01-07 16:00:00 UTC price=33738.2404 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[062/115] 2024-01-07 17:00:00 UTC price=33450.5024 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[063/115] 2024-01-07 18:00:00 UTC price=33163.1936 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[064/115] 2024-01-07 19:00:00 UTC price=32879.0164 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[065/115] 2024-01-07 20:00:00 UTC price=32600.7028 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[066/115] 2024-01-07 21:00:00 UTC price=32330.9598 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[067/115] 2024-01-07 22:00:00 UTC price=32072.4186 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[068/115] 2024-01-07 23:00:00 UTC price=31827.5884 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[069/115] 2024-01-08 00:00:00 UTC price=31598.8150 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[070/115] 2024-01-08 01:00:00 UTC price=31388.2451 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[071/115] 2024-01-08 02:00:00 UTC price=31197.7971 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[072/115] 2024-01-08 03:00:00 UTC price=31029.1360 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[073/115] 2024-01-08 04:00:00 UTC price=30883.6549 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[074/115] 2024-01-08 05:00:00 UTC price=30762.4608 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[075/115] 2024-01-08 06:00:00 UTC price=30666.3645 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[076/115] 2024-01-08 07:00:00 UTC price=30595.8754 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[077/115] 2024-01-08 08:00:00 UTC price=30551.1988 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[078/115] 2024-01-08 09:00:00 UTC price=30532.2369 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[079/115] 2024-01-08 10:00:00 UTC price=30538.5933 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[080/115] 2024-01-08 11:00:00 UTC price=30569.5791 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[081/115] 2024-01-08 12:00:00 UTC price=30615.0526 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[082/115] 2024-01-08 13:00:00 UTC price=30682.9078 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[083/115] 2024-01-08 14:00:00 UTC price=30771.6320 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[084/115] 2024-01-08 15:00:00 UTC price=30879.4811 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[085/115] 2024-01-08 16:00:00 UTC price=31004.5036 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[086/115] 2024-01-08 17:00:00 UTC price=31144.5681 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[087/115] 2024-01-08 18:00:00 UTC price=31297.3958 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[088/115] 2024-01-08 19:00:00 UTC price=31460.5961 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[089/115] 2024-01-08 20:00:00 UTC price=31631.7075 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[090/115] 2024-01-08 21:00:00 UTC price=31808.2410 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[091/115] 2024-01-08 22:00:00 UTC price=31987.7269 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[092/115] 2024-01-08 23:00:00 UTC price=32167.7639 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[093/115] 2024-01-09 00:00:00 UTC price=32346.0690 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[094/115] 2024-01-09 01:00:00 UTC price=32520.5271 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[095/115] 2024-01-09 02:00:00 UTC price=32689.2391 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[096/115] 2024-01-09 03:00:00 UTC price=32850.5666 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[097/115] 2024-01-09 04:00:00 UTC price=33003.1715 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[098/115] 2024-01-09 05:00:00 UTC price=33146.0502 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[099/115] 2024-01-09 06:00:00 UTC price=33278.5590 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[100/115] 2024-01-09 07:00:00 UTC price=33400.4321 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[101/115] 2024-01-09 08:00:00 UTC price=33511.7896 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[102/115] 2024-01-09 09:00:00 UTC price=33613.1359 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[103/115] 2024-01-09 10:00:00 UTC price=33705.3485 signal=+1 action=BUY qty=0.029639 cash=0.0000 equity=999.0010
+[104/115] 2024-01-09 11:00:00 UTC price=33789.6577 signal=+0 action=HOLD cash=0.0000 equity=1001.4999
+[105/115] 2024-01-09 12:00:00 UTC price=33867.6170 signal=+0 action=HOLD cash=0.0000 equity=1003.8105
+[106/115] 2024-01-09 13:00:00 UTC price=33941.0676 signal=+0 action=HOLD cash=0.0000 equity=1005.9875
+[107/115] 2024-01-09 14:00:00 UTC price=34012.0945 signal=+0 action=HOLD cash=0.0000 equity=1008.0927
+[108/115] 2024-01-09 15:00:00 UTC price=34082.9799 signal=+0 action=HOLD cash=0.0000 equity=1010.1937
+[109/115] 2024-01-09 16:00:00 UTC price=34156.1520 signal=+0 action=HOLD cash=0.0000 equity=1012.3625
+[110/115] 2024-01-09 17:00:00 UTC price=34234.1320 signal=+0 action=HOLD cash=0.0000 equity=1014.6737
+[111/115] 2024-01-09 18:00:00 UTC price=34319.4814 signal=+0 action=HOLD cash=0.0000 equity=1017.2034
+[112/115] 2024-01-09 19:00:00 UTC price=34414.7492 signal=+0 action=HOLD cash=0.0000 equity=1020.0271
+[113/115] 2024-01-09 20:00:00 UTC price=34522.4211 signal=+0 action=HOLD cash=0.0000 equity=1023.2184
+[114/115] 2024-01-09 21:00:00 UTC price=34644.8711 signal=+0 action=HOLD cash=0.0000 equity=1026.8477
+[115/115] 2024-01-09 22:00:00 UTC price=34784.3165 signal=+0 action=SELL (take_profit), pnl=27.9421 USDT cash=1027.9421 equity=1027.9421
+Paper trading finished.
+--- PASS: TestPaperUnfinishedTemporaryWriteIgnored (1.04s)
+=== RUN   TestPaperCheckpointFailureStopsBeforeNextMarketPoll
+Paper-only snapshot loaded: completed=0, cash=1000.00000000, position=false
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/1] 2024-01-09 10:00:00 UTC price=33705.3485 signal=+1 action=BUY qty=0.029639 cash=0.0000 equity=999.0010
+Paper trading finished.
+Paper-only snapshot loaded: completed=1, cash=0.00000000, position=true
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+Paper-only snapshot loaded: completed=1, cash=0.00000000, position=true
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/1] 2024-01-09 11:00:00 UTC price=33789.6577 signal=+0 action=SELL (stop_loss), pnl=-16.9680 USDT cash=983.0320 equity=983.0320
+Paper trading finished.
+Paper-only snapshot loaded: completed=0, cash=1000.00000000, position=false
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/1] 2024-01-09 10:00:00 UTC price=33705.3485 signal=+1 action=BUY qty=0.029639 cash=0.0000 equity=999.0010
+Paper trading finished.
+Paper-only snapshot loaded: completed=1, cash=0.00000000, position=true
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/1] 2024-01-09 11:00:00 UTC price=33789.6577 signal=+0 action=SELL (stop_loss), pnl=-16.9680 USDT cash=983.0320 equity=983.0320
+Paper trading finished.
+--- PASS: TestPaperCheckpointFailureStopsBeforeNextMarketPoll (0.03s)
+=== RUN   TestPaperResumeIndependentProcess
+--- PASS: TestPaperResumeIndependentProcess (4.05s)
+=== RUN   TestPaperResumeHelper
+    paper_resume_test.go:57: subprocess only
+--- SKIP: TestPaperResumeHelper (0.00s)
+=== RUN   TestPaperConfigMismatchPreservesSnapshot
+Paper-only snapshot loaded: completed=0, cash=1000.00000000, position=false
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/1] 2024-01-05 04:00:00 UTC price=49068.8091 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+Paper trading finished.
+--- PASS: TestPaperConfigMismatchPreservesSnapshot (0.01s)
+PASS
+ok  	quant_bot	9.814s
+=== RUN   TestSignatureKnownVector
+--- PASS: TestSignatureKnownVector (0.00s)
+=== RUN   TestAccountSignedAndOrderStatus
+--- PASS: TestAccountSignedAndOrderStatus (0.00s)
+=== RUN   TestGuardedOrderAndIdempotency
+--- PASS: TestGuardedOrderAndIdempotency (0.03s)
+=== RUN   TestUnknownExecutionDoesNotRetry
+--- PASS: TestUnknownExecutionDoesNotRetry (0.01s)
+=== RUN   TestRiskLimits
+--- PASS: TestRiskLimits (0.00s)
+=== RUN   TestMaxPositionAndRules
+--- PASS: TestMaxPositionAndRules (0.00s)
+=== RUN   TestCorruptStateFailClosed
+--- PASS: TestCorruptStateFailClosed (0.00s)
+=== RUN   TestValidationRejectsMarketBelowNotional
+--- PASS: TestValidationRejectsMarketBelowNotional (0.00s)
+=== RUN   TestBadHTTPStatusCircuitAndNoRetry
+--- PASS: TestBadHTTPStatusCircuitAndNoRetry (0.00s)
+=== RUN   TestSignParams
+--- PASS: TestSignParams (0.00s)
+=== RUN   TestPreflightFailurePersistsKill
+--- PASS: TestPreflightFailurePersistsKill (0.01s)
+=== RUN   TestMainnetEndpointBlocked
+--- PASS: TestMainnetEndpointBlocked (0.00s)
+=== RUN   TestReadOnlyOrderQueries
+--- PASS: TestReadOnlyOrderQueries (0.00s)
+=== RUN   TestOrderQueryRejectsMalformedResponses
+=== RUN   TestOrderQueryRejectsMalformedResponses/null
+=== RUN   TestOrderQueryRejectsMalformedResponses/{}
+=== RUN   TestOrderQueryRejectsMalformedResponses/[{"symbol":"ETHUSDT","orderId":1,"clientOrderId":"a","status":"NEW","executedQty":"0"}]
+=== RUN   TestOrderQueryRejectsMalformedResponses/[{"symbol":"BTCUSDT","orderId":1,"clientOrderId":"a","status":"NEW","executedQty":"NaN"}]
+--- PASS: TestOrderQueryRejectsMalformedResponses (0.00s)
+    --- PASS: TestOrderQueryRejectsMalformedResponses/null (0.00s)
+    --- PASS: TestOrderQueryRejectsMalformedResponses/{} (0.00s)
+    --- PASS: TestOrderQueryRejectsMalformedResponses/[{"symbol":"ETHUSDT","orderId":1,"clientOrderId":"a","status":"NEW","executedQty":"0"}] (0.00s)
+    --- PASS: TestOrderQueryRejectsMalformedResponses/[{"symbol":"BTCUSDT","orderId":1,"clientOrderId":"a","status":"NEW","executedQty":"NaN"}] (0.00s)
+=== RUN   TestSingleOrderReadOnlyIdentityAndCancellation
+--- PASS: TestSingleOrderReadOnlyIdentityAndCancellation (0.00s)
+=== RUN   TestRiskLatchAcrossDayAndProcessRestart
+=== RUN   TestRiskLatchAcrossDayAndProcessRestart/daily
+=== RUN   TestRiskLatchAcrossDayAndProcessRestart/drawdown
+--- PASS: TestRiskLatchAcrossDayAndProcessRestart (4.10s)
+    --- PASS: TestRiskLatchAcrossDayAndProcessRestart/daily (2.05s)
+    --- PASS: TestRiskLatchAcrossDayAndProcessRestart/drawdown (2.05s)
+=== RUN   TestRiskRestartHelper
+    risk_restart_test.go:57: subprocess only
+--- SKIP: TestRiskRestartHelper (0.00s)
+=== RUN   TestUnhaltedDayRolloverKeepsPeakAndOrders
+--- PASS: TestUnhaltedDayRolloverKeepsPeakAndOrders (0.00s)
+=== RUN   TestMalformedRiskSnapshotsRemainUntouched
+--- PASS: TestMalformedRiskSnapshotsRemainUntouched (0.02s)
+=== RUN   TestInsufficientAvailableAssets
+--- PASS: TestInsufficientAvailableAssets (0.00s)
+=== RUN   TestRestartPreservesKill
+--- PASS: TestRestartPreservesKill (0.01s)
+=== RUN   TestBinanceRedirectCannotEscapeTestnet
+--- PASS: TestBinanceRedirectCannotEscapeTestnet (0.00s)
+=== RUN   TestMalformedAccountFailsClosed
+--- PASS: TestMalformedAccountFailsClosed (0.00s)
+=== RUN   TestAccountCancellation
+--- PASS: TestAccountCancellation (0.00s)
+=== RUN   TestPreflightFailureCodes
+=== RUN   TestPreflightFailureCodes/418
+=== RUN   TestPreflightFailureCodes/500
+=== RUN   TestPreflightFailureCodes/401
+=== RUN   TestPreflightFailureCodes/400
+--- PASS: TestPreflightFailureCodes (0.06s)
+    --- PASS: TestPreflightFailureCodes/418 (0.01s)
+    --- PASS: TestPreflightFailureCodes/500 (0.02s)
+    --- PASS: TestPreflightFailureCodes/401 (0.01s)
+    --- PASS: TestPreflightFailureCodes/400 (0.01s)
+=== RUN   TestEndpointValidation
+--- PASS: TestEndpointValidation (0.00s)
+=== RUN   TestPostTimeoutReservesIDWithoutRetry
+--- PASS: TestPostTimeoutReservesIDWithoutRetry (0.02s)
+=== RUN   TestPositionCapBlocksPost
+--- PASS: TestPositionCapBlocksPost (0.02s)
+=== RUN   TestExchangeQuantityAndNotionalBoundaries
+--- PASS: TestExchangeQuantityAndNotionalBoundaries (0.00s)
+PASS
+ok  	quant_bot/binancespot	5.529s
+?   	quant_bot/cmd/binance-spot	[no test files]
+=== RUN   TestAuthorizedPrivateOwnerOnly
+--- PASS: TestAuthorizedPrivateOwnerOnly (0.00s)
+=== RUN   TestNormalizeAndMenu
+--- PASS: TestNormalizeAndMenu (0.00s)
+=== RUN   TestRiskMessagesAndReadOnly
+--- PASS: TestRiskMessagesAndReadOnly (0.01s)
+=== RUN   TestInvalidStateFailClosed
+--- PASS: TestInvalidStateFailClosed (0.00s)
+=== RUN   TestLiveOrderViewsReadOnlyAndRefresh
+--- PASS: TestLiveOrderViewsReadOnlyAndRefresh (0.01s)
+=== RUN   TestOrderRowsAndErrorClassification
+--- PASS: TestOrderRowsAndErrorClassification (0.00s)
+=== RUN   TestNonemptyPartialAndSingleOrderViews
+--- PASS: TestNonemptyPartialAndSingleOrderViews (0.00s)
+=== RUN   TestOrderDisplayBoundAndUnknownStatus
+--- PASS: TestOrderDisplayBoundAndUnknownStatus (0.00s)
+=== RUN   TestPairingCandidate
+--- PASS: TestPairingCandidate (0.00s)
+=== RUN   TestPairingRequiresLocalConfirmation
+=== RUN   TestPairingRequiresLocalConfirmation/yes
+=== RUN   TestPairingRequiresLocalConfirmation/no
+--- PASS: TestPairingRequiresLocalConfirmation (0.00s)
+    --- PASS: TestPairingRequiresLocalConfirmation/yes (0.00s)
+    --- PASS: TestPairingRequiresLocalConfirmation/no (0.00s)
+=== RUN   TestPairingPreservesExistingWebhook
+--- PASS: TestPairingPreservesExistingWebhook (0.00s)
+=== RUN   TestPairingConfirmationCancellation
+--- PASS: TestPairingConfirmationCancellation (0.00s)
+=== RUN   TestPairingConfirmationEOF
+--- PASS: TestPairingConfirmationEOF (0.00s)
+=== RUN   TestPaperOwnerCallbackRefreshAndIsolation
+--- PASS: TestPaperOwnerCallbackRefreshAndIsolation (0.01s)
+=== RUN   TestPaperMissingCorruptAndSourceMismatch
+--- PASS: TestPaperMissingCorruptAndSourceMismatch (0.01s)
+=== RUN   TestRiskCallbackRefreshRestartPreservesHalt
+--- PASS: TestRiskCallbackRefreshRestartPreservesHalt (0.01s)
+=== RUN   TestRiskWithoutBaselineAndInvalidSnapshot
+--- PASS: TestRiskWithoutBaselineAndInvalidSnapshot (0.00s)
+=== RUN   TestHTTPHomeCallbackAndAuthorization
+--- PASS: TestHTTPHomeCallbackAndAuthorization (0.00s)
+=== RUN   TestTransportErrorsAreRedactedAndBackoff
+=== RUN   TestTransportErrorsAreRedactedAndBackoff/429
+=== RUN   TestTransportErrorsAreRedactedAndBackoff/500
+=== RUN   TestTransportErrorsAreRedactedAndBackoff/503
+--- PASS: TestTransportErrorsAreRedactedAndBackoff (0.01s)
+    --- PASS: TestTransportErrorsAreRedactedAndBackoff/429 (0.00s)
+    --- PASS: TestTransportErrorsAreRedactedAndBackoff/500 (0.00s)
+    --- PASS: TestTransportErrorsAreRedactedAndBackoff/503 (0.00s)
+=== RUN   TestTimeoutAndGracefulShutdown
+--- PASS: TestTimeoutAndGracefulShutdown (0.03s)
+=== RUN   TestPollDuplicateUpdatesAndOffsets
+2026/10/30 18:40:46 Telegram request failed: Telegram network failure or timeout; consecutive=1; backoff=1s
+--- PASS: TestPollDuplicateUpdatesAndOffsets (0.00s)
+=== RUN   TestPolling429Recovery
+2026/10/30 18:40:46 Telegram request failed: Telegram API failure (HTTP 429); consecutive=1; backoff=1s
+2026/10/30 18:40:47 Telegram request failed: Telegram network failure or timeout; consecutive=2; backoff=2s
+--- PASS: TestPolling429Recovery (1.00s)
+=== RUN   TestSnapshotErrorsPreserveFileAndDoNotLeak
+--- PASS: TestSnapshotErrorsPreserveFileAndDoNotLeak (0.00s)
+=== RUN   TestTelegramRedirectBlocked
+--- PASS: TestTelegramRedirectBlocked (0.00s)
+=== RUN   TestSingleInstanceLock
+--- PASS: TestSingleInstanceLock (0.00s)
+=== RUN   TestPreflightHaltWithoutDayIsVisible
+--- PASS: TestPreflightHaltWithoutDayIsVisible (0.01s)
+=== RUN   TestShutdownCancelsInflightPolling
+2026/10/30 18:40:47 Telegram request failed: Telegram network failure or timeout; consecutive=1; backoff=1s
+--- PASS: TestShutdownCancelsInflightPolling (0.00s)
+PASS
+ok  	quant_bot/cmd/telegram	2.825s
+=== RUN   TestStateIsolationLockAndAtomicSave
+--- PASS: TestStateIsolationLockAndAtomicSave (0.01s)
+=== RUN   TestMalformedSnapshotsNeverReset
+--- PASS: TestMalformedSnapshotsNeverReset (0.00s)
+=== RUN   TestSaveFilesystemFailuresPreserveCommittedSnapshot
+--- PASS: TestSaveFilesystemFailuresPreserveCommittedSnapshot (0.01s)
+=== RUN   TestLockCleanupFailureIsReported
+--- PASS: TestLockCleanupFailureIsReported (0.00s)
+PASS
+ok  	quant_bot/paperstate	2.207s
++ go vet ./...
++ go run main.go backtest --config config.example.json --limit 300 --offline-sample
+Backtest exchange: binance
+Backtest symbol: BTCUSDT (1h)
+Candles: 300
+Initial USDT: 1000.00
+Final USDT: 1027.94
+Total return: 2.79%
+Max drawdown: 0.10%
+Trades: 1, Win rate: 100.00%
+
+[1] 2024-01-09 10:00:00 UTC -> 2024-01-09 22:00:00 UTC, entry=33705.3485, exit=34716.5090, qty=0.029639, pnl=27.9421 USDT, reason=take_profit
++ go run main.go paper --config config.example.json --iterations 5 --sleep-seconds 0 --offline-sample --state /var/folders/sq/0y_nn54157d24plhgytntcz80000gn/T/tmp.daN8ZKGY0a/verify.paper.json
+Paper-only snapshot loaded: completed=0, cash=1000.00000000, position=false
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/5] 2024-01-05 04:00:00 UTC price=49068.8091 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[002/5] 2024-01-05 05:00:00 UTC price=49120.5608 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[003/5] 2024-01-05 06:00:00 UTC price=49149.7244 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[004/5] 2024-01-05 07:00:00 UTC price=49152.7871 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+[005/5] 2024-01-05 08:00:00 UTC price=49126.5597 signal=+0 action=HOLD cash=1000.0000 equity=1000.0000
+Paper trading finished.
++ go run ./cmd/binance-spot order --symbol BTCUSDT --side BUY --type LIMIT --quantity 0.001 --price 50000 --client-order-id codex-smoke-001
+DRY RUN: no API request made, no exchange filters or balances verified.
+{
+  "Symbol": "BTCUSDT",
+  "Side": "BUY",
+  "Type": "LIMIT",
+  "Quantity": "0.001",
+  "Price": "50000",
+  "ClientID": "codex-smoke-001"
+}
++ go build -o /var/folders/sq/0y_nn54157d24plhgytntcz80000gn/T/tmp.daN8ZKGY0a/telegram ./cmd/telegram
+PASS: missing token refused without secret disclosure
+PASS: missing owner refused without secret disclosure
+PASS: explicit Testnet send guard; no order sent
+PASS: local verification complete (external Telegram/Testnet NOT RUN)

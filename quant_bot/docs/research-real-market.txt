@@ -1,0 +1,6 @@
+range_utc=[2026-09-01T00:00:00Z,2026-10-01T00:00:00Z) sma=20/50 fee_rate=0.001000 slippage_bps=5.00 source=data-api.binance.vision
+historical BTCUSDT 1h steps=720 cash=973.77813071 equity_net=973.77813071 return=-2.6222% realized=-26.22186929 fees=22.14574312 slippage=11.07287331 trades=11 wins=3 max_drawdown=6.0576%
+Open positions valued at hypothetical net liquidation; not forcibly sold. No orders sent.
+live-paper BTCUSDT 1m steps=0 cash=1000.00000000 equity_net=1000.00000000 return=0.0000% realized=0.00000000 fees=0.00000000 slippage=0.00000000 trades=0 wins=0 max_drawdown=0.0000%
+live-paper BTCUSDT 1m steps=1 cash=1000.00000000 equity_net=1000.00000000 return=0.0000% realized=0.00000000 fees=0.00000000 slippage=0.00000000 trades=0 wins=0 max_drawdown=0.0000%
+live-paper BTCUSDT 1m steps=2 cash=1000.00000000 equity_net=1000.00000000 return=0.0000% realized=0.00000000 fees=0.00000000 slippage=0.00000000 trades=0 wins=0 max_drawdown=0.0000%

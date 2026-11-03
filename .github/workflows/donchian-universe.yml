@@ -1,0 +1,47 @@
+name: Fixed Donchian Binance USDT Universe (research only)
+on:
+  push:
+    branches: [cursor/quant-bot-usdt-c6b3]
+    paths:
+      - "quant_bot/cmd/donchian-universe/**"
+      - ".github/workflows/donchian-universe.yml"
+  pull_request:
+    paths:
+      - "quant_bot/cmd/donchian-universe/**"
+      - ".github/workflows/donchian-universe.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  run-universe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: quant_bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: false
+      - name: Go compile and related tests
+        run: |
+          go test ./research ./strategy
+          go vet ./cmd/donchian-universe
+          go build -o /tmp/donchian-universe ./cmd/donchian-universe
+      - name: Download Binance 4h OHLC and run fixed-parameter backtest
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/donchian-universe -output /tmp/donchian-universe.json | tee /tmp/donchian-universe.log
+      - name: Upload all numerical results and audit logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixed-donchian-24-pairs
+          if-no-files-found: warn
+          path: |
+            /tmp/donchian-universe.json
+            /tmp/donchian-universe.log
+          retention-days: 30

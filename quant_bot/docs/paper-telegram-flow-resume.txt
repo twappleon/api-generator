@@ -1,0 +1,17 @@
+Paper-only snapshot loaded: completed=103, cash=0.00000000, position=true
+Paper trading started. This mode DOES NOT place real orders.
+Exchange: binance
+Controls: short_window=20, long_window=50, stop_loss=1.50%, take_profit=3.00%
+[001/12] 2024-01-09 11:00:00 UTC price=33789.6577 signal=+0 action=HOLD cash=0.0000 equity=1001.4999
+[002/12] 2024-01-09 12:00:00 UTC price=33867.6170 signal=+0 action=HOLD cash=0.0000 equity=1003.8105
+[003/12] 2024-01-09 13:00:00 UTC price=33941.0676 signal=+0 action=HOLD cash=0.0000 equity=1005.9875
+[004/12] 2024-01-09 14:00:00 UTC price=34012.0945 signal=+0 action=HOLD cash=0.0000 equity=1008.0927
+[005/12] 2024-01-09 15:00:00 UTC price=34082.9799 signal=+0 action=HOLD cash=0.0000 equity=1010.1937
+[006/12] 2024-01-09 16:00:00 UTC price=34156.1520 signal=+0 action=HOLD cash=0.0000 equity=1012.3625
+[007/12] 2024-01-09 17:00:00 UTC price=34234.1320 signal=+0 action=HOLD cash=0.0000 equity=1014.6737
+[008/12] 2024-01-09 18:00:00 UTC price=34319.4814 signal=+0 action=HOLD cash=0.0000 equity=1017.2034
+[009/12] 2024-01-09 19:00:00 UTC price=34414.7492 signal=+0 action=HOLD cash=0.0000 equity=1020.0271
+[010/12] 2024-01-09 20:00:00 UTC price=34522.4211 signal=+0 action=HOLD cash=0.0000 equity=1023.2184
+[011/12] 2024-01-09 21:00:00 UTC price=34644.8711 signal=+0 action=HOLD cash=0.0000 equity=1026.8477
+[012/12] 2024-01-09 22:00:00 UTC price=34784.3165 signal=+0 action=SELL (take_profit), pnl=27.9421 USDT cash=1027.9421 equity=1027.9421
+Paper trading finished.

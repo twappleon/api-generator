@@ -1,0 +1,62 @@
+[
+  {
+    "file": "20251030.json",
+    "sha256": "f0824d1546e2bd24d7e78154df848e50cb38ec5cf85a987edcd317acdf49110e",
+    "bars": 44640
+  },
+  {
+    "file": "20251130.json",
+    "sha256": "7a86538666e81686a17bffb8d6055afef96abc7a9bb3889ece6c4b79e6a6bf78",
+    "bars": 43200
+  },
+  {
+    "file": "20251230.json",
+    "sha256": "fc9447253e2ce2b852bb464c2a99f9c4f08ff0a9337cd177f7d00fb68c09506e",
+    "bars": 44640
+  },
+  {
+    "file": "20260130.json",
+    "sha256": "74dec8d2c6924b59b3a2bf36f68ec93ee2c647fd3ca34a6b92b39afe7dec05b3",
+    "bars": 44640
+  },
+  {
+    "file": "20260302.json",
+    "sha256": "dcb854b182db8f4f4eb5e20786bb69a5f529ccd82b0a55584bea79768b11f8f5",
+    "bars": 44640
+  },
+  {
+    "file": "20260402.json",
+    "sha256": "a6191cd329e9d02670651de2bbf0549707778ae5f7199777fa75688f4c439730",
+    "bars": 43200
+  },
+  {
+    "file": "20260502.json",
+    "sha256": "e490043c8ef806949cc3a3299c4b90139190c215d244af763dfdc5027d1203da",
+    "bars": 44640
+  },
+  {
+    "file": "20260602.json",
+    "sha256": "47bc75df7ccba7f690f6d984906c779532d81eb6161e7e2face3c66afba0de0b",
+    "bars": 43200
+  },
+  {
+    "file": "20260702.json",
+    "sha256": "bbd7d3bffb1025b14330876a3a279a38940a83048ad4e725d535447305150d88",
+    "bars": 44640
+  },
+  {
+    "file": "20260802.json",
+    "sha256": "d54f9d181b1450a29b4eb070f0432ef1dd7bab38928a06970393c4b0437f39f2",
+    "bars": 44640
+  },
+  {
+    "file": "20260902.json",
+    "sha256": "9326db9f163d27476d777222535b3661db98869a6780a38e8bc09d74dd5c0265",
+    "bars": 43200
+  },
+  {
+    "file": "20261002.json",
+    "sha256": "dfc322c89e38240ced28f5a6c54408366e9c418bd435a4b7108d8213c3399f1d",
+    "bars": 40320
+  }
+]

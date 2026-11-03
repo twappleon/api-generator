@@ -1,0 +1,353 @@
+# P0 本機驗證報告 — 2026-10-30
+
+## 階段與提交
+
+- 基線：`622304fa9ea2e8def5b6a60fab2ead2a778f54a9`。
+- 程式／測試階段：`845336da2bd5a28cf4fa9e76533f106a0c55983d`。
+- 現有 branch：`cursor/quant-bot-usdt-c6b3`；沿用 Draft PR #6，不合併。
+- 完成：唯讀中文控制台、來源／時間標示、當頁重新整理、白名單、錯誤去敏、可取消請求、429／5xx 退避、同程序 update 去重、單主機同路徑實例鎖、mock 整合與風控回歸。
+- 修正：無日期的 API preflight kill 仍顯示停機；拒絕無 balances／非法金額的帳戶回應；禁止 Telegram／Binance redirect；以 URL parser 封鎖 loopback userinfo 偽裝。
+- 未完成：外部 Telegram 配對、真實 Testnet E2E、Railway 部署，以及下列高風險事項。
+
+## 實際執行
+
+在 Mac 的 `quant_bot/` 執行 `bash scripts/verify-local.sh`，exit 0。
+完整命令和 stdout/stderr：[`local-verification.txt`](local-verification.txt)。
+
+- `go test ./... -race -count=1 -v -timeout=60s`：37 個頂層測試 PASS，0 FAIL（子案例另列於原始輸出）。
+- `go vet ./...`：exit 0。
+- offline backtest：300 candles，Final USDT 1027.94，Total return 2.79%，Max drawdown 0.10%，1 trade；固定合成資料，不是績效預測。
+- offline Paper：5/5 輪，全部 HOLD，沒有實際交易；額外測試攔截所有 HTTP transport，確保離線回測／Paper 無網路請求。
+- Binance CLI dry-run：輸出意圖，無網路、無委託落盤。
+- Telegram build：成功；缺 Token、缺 owner 分別拒絕，沒有 secret 外洩。
+- 缺 `--send-testnet` 的 `--dry-run=false`：明確拒絕。
+- `git diff --check`：通過。
+
+開發過程曾在 repo root 誤跑 `go test ./...`（Go module 位於 quant_bot）而失敗，已由腳本固定工作目錄。第一個 timeout mock 未讀 request body，導致 mock server 等待取消；已修正 fixture，最終完整測試沒有失敗。沒有變更真實 state、清除交易鎖或繞過風控。
+
+## BDD 對照
+
+| Case | 狀態 | 範圍／證據 |
+| --- | --- | --- |
+| A1 | PASS | 離線回測與 TestOfflineModesNeverUseNetwork |
+| A2 | PASS | 五輪 Paper 與 network-deny transport |
+| B1 | PASS | TestHTTPHomeCallbackAndAuthorization：HTTP /start、中文標示、六按鈕 |
+| B2 | PASS | 身分／chat ID／群聊驗權；無資產查詢、無回覆資料 |
+| B3 | PASS | callback acknowledgement、GET account、refresh；mock only |
+| B4 | PASS | 腳本分別驗證缺 token／owner、無 secret log |
+| B5 | PASS | mock 429 recovery、5xx 安全錯誤／退避、timeout、取消；不代表平台限頻實測 |
+| B6 | PASS | 缺快照呈現不確定，不當作零或安全 |
+| B7 | PASS | JSON 損毀回報錯誤、檔案位元組不變 |
+| B8 | PASS | 同程序去重、重啟重送只做唯讀回覆；offset 不持久化 |
+| C1 | PASS | RFC HMAC 向量、簽名 header／query mock |
+| C2 | PASS | Testnet client 主網拒絕、userinfo 偽裝拒絕、redirect 封鎖 |
+| C3 | PASS | CLI dry-run smoke |
+| C4 | PASS | 缺第二確認旗標，exit 非零且訊息符合預期 |
+| C5 | PASS | NEW／FILLED 重複 ID 拒絕；UNKNOWN 保留／新 ID 拒絕 |
+| C6 | PASS | mock 504 與 transport deadline；保留 UNKNOWN、不重送 POST |
+| C7 | PASS | mock FILLED 對帳與落盤 |
+| C8 | PASS | quantity 上下界／step、price tick、MARKET minimum notional；非完整即時交易規則驗收 |
+| C9 | NOT RUN | 外部 Testnet 帳戶／訂單查詢 UNVERIFIED |
+| C10 | NOT RUN | Testnet 下單 E2E 未獲單獨核准、未執行 |
+| D1 | PASS | max position 在 POST 前拒絕 |
+| D2 | PASS | UTC daily loss latch |
+| D3 | PASS | peak drawdown latch |
+| D4 | PASS | 跨日＋落盤重新載入仍停機 |
+| D5 | PASS | mock 429／418／5xx／401／400 preflight 停機；真實 auth／clock／斷線情境仍 UNVERIFIED |
+| D6 | PASS | BUY／SELL 不使用 locked balances，保留 fee reserve 邏輯 |
+| E1 | PASS | race／vet 與 CI 同一離線腳本 |
+| E2 | PASS | binary build；缺設定拒絕啟動 |
+| E3 | BLOCKED | Railway billing 未解除，Volume／重啟未驗證 |
+| E4 | BLOCKED | 沿用交接的 trial-expired 狀態，本次未再呼叫 Railway、未購買 |
+| E5 | PASS | 本次 offline/mock/dry-run 無 Binance 主網或外部交易請求；控制台維持唯讀 |
+
+CI：推送後另核對 GitHub Actions；本機 PASS 不自動代表遠端 CI PASS。
+
+## 必須保留的限制
+
+- 真實 Telegram Bot Token 配對、Testnet API／成交狀態、Railway 均未驗證。
+- 部分成交、全帳戶 NAV／費用對帳、精確小數、外部存提款／其他 bot、Testnet 重設未完成。
+- UTC 換日停機 latch 有 mock 證據；真實帳戶跨日資產基準仍需驗證。
+- 同主機同路徑鎖有本機測試；跨主機鎖、真實多程序故障恢復／SIGKILL 殘鎖仍需營運驗證。
+- 訂單逐筆對帳時間未儲存，畫面明示未知；檔案 mtime 不等於對帳時間。
+- 主動通知、通知去重、策略心跳、完整監控仍未實作，不可宣稱可無人值守交易。
+- 原有 `main.go` 公開 Binance Kline URL 和 Bitget 範例維持相容；本次只跑 offline 模式，未執行其私有或實盤指令。Testnet client 沒有主網帳戶／下單能力。
+
+## 本機配對引導補充
+
+新增 `scripts/start-telegram-local.sh` 與 `telegram --pair`：隱藏輸入 Token、
+getMe／webhook 唯讀檢查、一次性配對碼、private sender/chat ID 比對及本機 yes
+確認，結果只進環境變數。啟動腳本已通過 `bash -n`，完整 verify-local 腳本
+重新通過，現在共 40 個頂層測試；新增 3 個配對測試覆蓋候選 ID、明確確認與
+既有 webhook 保留。真實 Telegram 配對仍等待使用者在本機完成 BotFather
+建立與隱藏輸入；這些 mock 結果不代表真實平台已通過。
+
+## 終端關閉／配對取消修正
+
+針對使用者回報終端已關閉，補上 SIGHUP 正常退出、可取消的配對確認輸入、
+明確的配對失敗提示，以及取得控制台鎖後才記錄啟動成功。未移除任何 state
+或鎖。`bash -n` 與完整 `scripts/verify-local.sh` 通過，42 個頂層測試 PASS；
+新增確認等待取消、stdin EOF 拒絕測試。真實配對重新啟動仍需使用者在本機
+輸入 Token，不能由本機測試通過推論 Telegram 已上線。
+
+## 真實 Telegram 私聊驗證已完成
+
+2026-10-30 本機 owner 配對後，`/start` 與六個 inline 按鈕已有真實 Telegram
+回覆證據；見 [TELEGRAM_LOCAL_E2E.md](TELEGRAM_LOCAL_E2E.md)。此項更新前述
+「等待配對」狀態，但不改變 Binance Testnet E2E 與 Railway 尚未通過的結論。
+
+## Testnet 帳戶唯讀查詢補充
+
+2026-10-30 17:09–17:12，本機配對與 Testnet 憑證接入成功。Telegram 的
+`/balance`、「測試資產」與資產頁「重新整理」均取得外部 Testnet GET account
+回覆及更新時間；詳細證據見 [TELEGRAM_LOCAL_E2E.md](TELEGRAM_LOCAL_E2E.md)。
+C9 現為部分驗證：帳戶查詢 PASS，openOrders／單筆訂單查詢 NOT RUN。
+C10 仍 NOT RUN，全程沒有送出訂單。此補充取代上文帳戶查詢尚未驗證的狀態，
+不代表完整 Testnet 交易 E2E 通過。
+
+## 訂單唯讀查詢開發驗證 — 2026-10-30
+
+新增 Testnet GET openOrders／allOrders 與 Telegram 單一交易對查詢、重新整理、
+中文錯誤分類；保留 `/localorders` 的非即時快照。未建立、取消或修改任何交易所訂單。
+
+- `bash scripts/verify-local.sh`：PASS，46 個頂層 Go 測試（含 race）、vet、
+  offline backtest／paper、CLI dry-run、建置與缺憑證／送單旗標防護全部通過。
+- 新測試：簽名及 GET 限定、symbol／limit 驗證、取消、無效回應拒絕、
+  owner 授權、指定交易對重新整理、空結果、部分查詢失敗與錯誤脫敏、無 state 寫入。
+- 外部 Telegram openOrders／allOrders：2026-10-30 17:22 已驗證 BTCUSDT／ETHUSDT 空結果、按鈕及保留交易對重新整理；詳見 `TELEGRAM_LOCAL_E2E.md`。
+- 真實非空歷史／單筆 GET order／下單成交仍 NOT RUN。
+
+本次離線輸出：`docs/order-query-verification.txt`。
+
+## 非空／部分成交／單筆訂單 mock 驗證 — 2026-10-30
+
+- 新增 `/order SYMBOL <原 Client ID>`，使用可取消的 Testnet GET order；
+  既有 CLI OrderStatus 沿用同一查詢與身分驗證，保留 API 失敗停送保護。
+- 非空列表／部分成交：PASS（mock）。數量保留原始字串，原始數量與已成交
+  數量分別顯示；中文狀態含 NEW／PARTIALLY_FILLED／FILLED／CANCELED／
+  PENDING_CANCEL／REJECTED／EXPIRED／EXPIRED_IN_MATCH／PENDING_NEW。
+- 單筆查詢與重新整理：PASS（mock）。驗證 GET-only、HMAC、原 ID 大小寫、
+  owner／私聊權限、參數拒絕、取消、交易對及 ID 錯配、損毀回應／負數拒絕、
+  未知狀態、-2013 不推論可重送、錯誤脫敏及舊結果不回用。
+- 本機 `kill=true`、`PENDING_UNKNOWN` 原檔位元組不變：PASS（mock）。
+- `bash scripts/verify-local.sh`：49 個頂層 Go 測試、race、vet、offline backtest／
+  paper、CLI dry-run、build 與啟動／送單旗標保護全 PASS。
+  原始輸出：`docs/single-order-verification.txt`。
+- 外部非空／部分成交／單筆 GET order：NOT RUN。先前 BTCUSDT／ETHUSDT
+  沒有返回既有訂單；本次未猜測訂單 ID，也未建立任何訂單來製造測試資料。
+- 17:34 新版重啟後，Telegram `/order` 缺參數引導 PASS；BTCUSDT／ETHUSDT 仍未返回既有訂單，單筆 GET order 外部測試仍 NOT RUN。詳見 `TELEGRAM_LOCAL_E2E.md`。
+
+## 風控／本機模擬補充 — 2026-10-30
+
+修正停機後 Observe 仍改寫原日期／資產基準／峰值／停機原因的問題：已鎖定
+時立即拒絕觀測更新；跨日與資產回升均保留原現場。LoadState 拒絕 null、
+非物件、非法日期與負資產值，不重建或清除原檔。
+
+Telegram 風控頁明示停機鎖、過期 UTC 基準、未解訂單數、非即時本機來源；
+沒有基準的 API 前置失敗顯示尚未建立，避免顯示假 0。Paper 與 Testnet
+快照分開標示，不宣稱風控鎖控制原有 Paper 迴圈。
+
+| 項目 | 結果及範圍 |
+| --- | --- |
+| D2／D3 | PASS，本機每日虧損／峰值回撤觸發停機 |
+| D4 同日／跨日回升 | PASS，日期／基準／峰值／原因／未解訂單不變 |
+| D4 真正新程序重新載入 | PASS，每個停機情境啟動兩次獨立測試程序；重新讀檔、換日仍鎖定，guard 在任何 API 呼叫前拒絕；原檔位元組不變 |
+| 未停機跨日 | PASS，更新日基準、保留歷史峰值與訂單 |
+| B7 損毀／語意無效快照 | PASS，本機拒絕，保留原檔 |
+| Telegram callback／refresh／新 bot instance | PASS（mock），停機及過期基準可見；不修改風控檔；不提供解鎖 |
+| A1 回測 | PASS，300 根離線樣本，1 筆模擬交易；非真實績效 |
+| A2 Paper | PASS，原 5 輪啟動測試及新增 300 輪離線測試；300 輪有 2 次模擬 BUY、2 次 take_profit SELL；網路 transport 一旦被呼叫即測試失敗 |
+| 真實 Telegram `/risk` | 10:38:22Z（本地 17:38:22）PASS：目前運行舊版仍明示尚無可靠快照，不能代表交易安全；未注入假 state |
+| 新風控頁的真實停機／跨日 UI | NOT RUN，只有 mock；本機實際 Bot 尚未重啟載入本次修改，沒有真實風控快照 |
+| Testnet 真實跨日淨值／成交 | NOT RUN，沒有交易請求 |
+| Paper 重啟持倉恢復 | NOT IMPLEMENTED，現有 Paper 每次啟動從設定資金開始；上方重啟證據只適用 Testnet 風控帳本 |
+| Railway 持久化／多主機鎖／斷電恢復 | BLOCKED／NOT RUN，未購買或部署 |
+
+完整 `scripts/verify-local.sh` PASS：55 個頂層測試通過，另有 1 個 helper
+在主程序 SKIP（由重啟測試以獨立子程序實際執行）；race、vet、offline
+backtest／paper、dry-run、build、缺憑證與送單保護皆通過。
+原始輸出：`docs/risk-verification.txt`；300 輪 CLI 輸出：`docs/paper-300-verification.txt`。
+所有風控測試檔案在臨時目錄，未寫入使用者的 `state-testnet.json`。
+
+### 17:59 風控頁後續驗證
+
+使用者重啟配對後，真實 Telegram `/risk`、風控按鈕、重新整理的缺快照分支
+PASS（10:59:19Z／35Z／44Z）。快照仍不存在，真實停機鎖／跨日及非空資料
+顯示仍 NOT RUN；未寫假 state，未送單。詳見 `TELEGRAM_LOCAL_E2E.md`。
+
+## Paper 持久化／恢復 — 2026-10-30
+
+本節更新先前「Paper 重啟持倉恢復未實作」：現在已有獨立 `.paper.json`、
+原子快照、設定／來源比對、writer lock 與逐根行情去重。Testnet 帳本未改寫。
+
+- PASS（離線獨立程序）：第 103 輪模擬 BUY 後退出，保存持倉與現金 0；
+  新程序載入 `completed=103, position=true`，再跑 12 輪，停利後現金
+  1027.9420579420582、持倉空、進度 115。與連續 115 輪的完整快照相同。
+- PASS（真實 CLI／離線資料）：兩次獨立 `go run main.go paper` 重複上述流程；
+  證據見 `paper-cli-restart.json`，只在臨時目錄產生快照，沒有交易所請求。
+- PASS：禁止網路的模擬測試；無效 schema／缺欄位／null／負數拒絕且原檔不變；
+  設定／來源不符拒絕、鎖互斥、0600 權限及 Testnet 檔案隔離。
+- 完整本機驗證：59 個頂層測試 PASS，2 個 subprocess helper 在主程序 SKIP、
+  由父測試實際啟動執行；race、vet、離線 backtest／paper、dry-run、build PASS。
+- NOT RUN：真實行情恢復／斷電／磁碟故障注入／多主機鎖。即時模式不回補
+  停機期間行情；不宣稱完整停機期間損益重建或 Testnet 實盤風控通過。
+
+輸出：`paper-resume-verification.txt`。未傳送交易訂單，未讀取或寫入憑證。
+
+## Telegram Paper 接入 — 2026-10-30
+
+- B9 PASS（mock）：`/paper`／獨立按鈕／refresh，模擬資金、非空及空持倉、
+  保存輪數、行情時間、來源與非即時標示；刷新讀取更新後的快照。
+- PASS：非 owner／群組拒絕；沒有 Binance API 呼叫；Paper／Testnet 檔案
+  位元組不變；讀者不建立 writer lock；缺檔不初始化。
+- PASS：損毀／超大檔案／Testnet schema／不合法來源拒絕；不回傳原始錯誤
+  或路徑、不回用舊資金、不把快照存在宣稱為已恢復或在線。
+- 共 61 個頂層測試 PASS；2 個 helper 由父測試以子程序執行。完整 race、vet、
+  離線回測／Paper、CLI dry-run、建置與保護檢查 PASS；先前 Paper 獨立程序
+  恢復測試也隨此次完整測試再次通過。
+- 真實 Telegram Paper 新頁／有持倉畫面／實際程序恢復顯示：NOT RUN；沒有
+  重啟使用者 Bot 或向其快照寫入測試資料。沒有傳送交易訂單。
+
+原始輸出：`paper-telegram-verification.txt`。恢復狀態僅為可恢復進度，
+目前沒有模擬程序心跳、恢復事件紀錄、即時總淨值或 PnL 面板。
+
+### Paper 真實 Telegram 缺快照驗證更新
+
+18:21 重啟後 `/paper`、Paper 按鈕與刷新均 PASS，明確區分 Paper／Testnet，
+且無快照時標示未驗證。資金、非空持倉與恢復進度的真實 UI 仍 NOT RUN；
+詳見 `TELEGRAM_LOCAL_E2E.md`，沒有為實測注入資料或送單。
+
+### Paper 真實模擬流程與 Telegram 資料顯示更新
+
+2026-10-30 18:27 已由離線 CLI 實際產生第 103 輪持倉，Telegram 正確顯示；
+新 CLI 程序恢復並再跑 12 輪後，Telegram 刷新顯示 115 輪／空倉／現金
+1027.94205794。這些項目由 NOT RUN 更新為 PASS，見 `TELEGRAM_LOCAL_E2E.md`。
+沒有手寫快照或送出交易所訂單；Testnet state 仍不存在。程序心跳與異常
+崩潰等其他限制不變。
+
+## Paper 異常中斷與恢復 — 2026-10-30
+
+- A3 PASS（實際本機子程序，離線）：先跑 103 輪產生持倉；子程序保存
+  104 輪後強制 Kill 並 Wait。確認鎖 PID 為已停止子程序，帶殘留鎖的
+  啟動拒絕且鎖／快照位元組不變。僅封存臨時目錄中的測試鎖後，新程序
+  完成剩餘 11 輪；完整 State 與連續 115 輪一致。
+- A4 PASS（隔離損壞樣本）：截斷 JSON、null、缺欄位及錯誤 schema
+  均拒絕啟動，原檔不變且正常錯誤退出不留鎖。
+- A5 PASS（HTTP transport mock，無外部行情請求）：重複／較舊行情即使
+  帶有可觸發停損的價格也不重複改動持倉或現金；重啟同樣不重新保存。
+  修正已處理輪數原先包含跳過輪詢的錯誤，現在只計入已處理行情。
+- A6 PASS（檔案故障模型）：有效快照旁放置未完成暫存檔，恢復結果仍與
+  完整流程一致，且保留暫存檔作為診斷證據。
+- 完整 `scripts/verify-local.sh` PASS：65 個頂層測試通過，2 個 helper
+  在父測試以子程序執行；race、vet、離線回測／Paper、CLI dry-run、
+  Telegram 建置與憑證／送單防護均通過。原始輸出見
+  `paper-crash-verification.txt`。
+- 現有 `.local/session.paper.json` 前後 SHA-256 均為
+  `85a0a66d487492e5568a53fa4d1697790bf1ddef6d07ddca4a0699c2590bced3`，
+  保留第 115 輪；沒有操作現有 Bot、Testnet 快照或發送交易所訂單。
+- NOT RUN：主機斷電、磁碟／檔案系統故障、精準中斷 rename/fsync 的時點、
+  多主機共享磁碟、真實行情停機期間回補、Telegram 異常恢復實機畫面。
+  本次 Kill 發生在成功 checkpoint 後；不宣稱已證明所有寫入中斷時點。
+  殘留鎖仍需先確認原程序已停止再人工處理，不自動刪鎖／重設損壞快照。
+
+## Paper 保存失敗與本機持續開發 — 2026-10-30
+
+- Render 部署依使用者要求取消；沒有建立服務、設定付款或雲端 secrets。
+- A7 PASS：在臨時目錄以實際 chmod 移除寫入權限，mock 新行情觸發模擬
+  停損後保存失敗，立即停止且不處理後續行情。原有效持倉／現金快照
+  位元組不變；同步呼叫已結束後封存測試鎖，恢復權限並重播該行情，
+  完整 State 與不中斷流程一致。
+- A8 PASS：實際檔案系統 rename 失敗時移除暫存檔；鎖清理失敗會回報，
+  並以 errors.Join 保留原始錯誤。殘留鎖繼續拒絕啟動。另修正寫入鎖
+  擁有者 PID／關閉鎖檔時忽略錯誤的處理，失敗不執行模擬回呼。
+- `scripts/verify-local.sh` PASS：68 個頂層測試、race、vet、離線回測／
+  Paper、CLI dry-run、建置與送單防護。2 個 helper 由父測試執行。
+  權限故障測試於本次 macOS 非 root 使用者下實際執行；root 執行時會
+  明確 skip，不能以 root 的測試通過數宣稱權限案例已驗證。
+- 原始輸出：`paper-write-failure-verification.txt`。
+- 現有 Paper 快照 SHA-256 維持
+  `85a0a66d487492e5568a53fa4d1697790bf1ddef6d07ddca4a0699c2590bced3`。
+  沒有改動使用者快照、Bot 或送出交易所訂單。
+- NOT RUN：實際磁碟滿／硬體 I/O 錯誤／fsync 失敗／斷電；本次是檔案系統
+  權限與 rename 故障，不代表所有儲存故障已覆蓋。鎖 PID 寫入／close
+  失敗分支未做系統呼叫注入；Telegram 實機畫面未重測。
+
+## 公開歷史回測／即時 Paper／Telegram 績效 — 2026-10-30
+
+- F1–F6 PASS（mock／本機）：共用原 SMA 計算、下一根開盤成交、雙邊成本、
+  跳空停損／同根雙觸及先停損、分頁、缺漏／亂序／未收盤拒絕、HTTP
+  429 與 redirect 阻擋、暖機、重啟去重／補算、設定與帳務損壞拒絕、
+  保存失敗停止、Telegram owner／群組限制及刷新／缺檔／損壞／帳本隔離。
+- 完整 `scripts/verify-local.sh`：79 個頂層測試 PASS，race／vet／舊離線
+  回測及 Paper／dry-run／Telegram 與研究 CLI 建置／送單防護 PASS。
+  原始輸出 `research-verification.txt`。既有 CLI／快照相容性測試也通過。
+- 真實公開 API PASS：只對 `data-api.binance.vision` 發出 GET time/klines。
+  BTCUSDT，2026-09-01 至 2026-10-01 UTC（右界不含），1h，720 根，
+  SMA20/50，每邊費率 0.1%、滑價 5 bps。最終 973.77813071 USDT，
+  報酬 -2.6222%，已實現 -26.22186929，費用 22.14574312，滑價成本
+  11.07287331（已反映在成交價），11 次平倉／3 次獲利，收盤回撤 6.0576%。
+  此次樣本虧損；不是獲利驗證或未來收益預測。
+- 真實即時 Paper PASS（有限觀察）：新增獨立
+  `.local/live.performance.paper.json`，1m 初次暖機 0 根；獨立程序 6 次
+  輪詢、間隔 15 秒後為 1 根；最終新版程序再啟動一次為 2 根。現金／
+  淨估值皆 1000、空倉，未出現交易訊號。沒有人工寫入快照。
+  測試結束後程序已退出，沒有留下無人值守 daemon。
+- 真實 API 與 CLI 摘要：`research-real-market.txt`。舊
+  `.local/session.paper.json` SHA-256 仍為
+  `85a0a66d487492e5568a53fa4d1697790bf1ddef6d07ddca4a0699c2590bced3`。
+  未修改舊快照／Testnet 資料、未讀取金鑰、未送出任何交易所訂單。
+- NOT RUN：新版 Telegram 實機頁（未重啟現有 Bot）、即時行情觸發非空
+  持倉／平倉（僅 mock 覆蓋）、24 小時運行、樣本外／多市場策略評估、
+  真實撮合滑價／部分成交／容量驗證、斷電／硬體儲存故障。
+  OHLC 模擬與停機補算不代表實時可成交。Render 保持取消。
+
+## 2026-10-30 — 即時 Paper 重試／恢復／健康狀態
+
+- F7–F9 mock PASS：網路／429／5xx 分類、Retry-After、退避上限、成功重設、
+  多次失敗後帳務等同連續處理、checkpoint 重啟去重、取消退出、長等待心跳、
+  壞快照保留、sidecar 保存失敗與殘留鎖 fail-closed；Telegram 中文健康狀態
+  與資料過期獨立判斷、缺檔／損壞未知及唯讀不改檔。
+- `bash scripts/verify-local.sh` PASS：85 個頂層測試（含 race）、vet、離線
+  backtest／paper、dry-run、建置 Telegram／research、缺憑證及送單保護。
+  原始紀錄：`paper-runtime-verification.txt`。`git diff --check` PASS。
+- F10 PASS：測試只用 TempDir；舊 session 快照與啟動前績效備份 SHA-256
+  仍分別為 `85a0a66d487492e5568a53fa4d1697790bf1ddef6d07ddca4a0699c2590bced3`
+  與 `233dc0a518c682487323c82ed2787b1d2ba654f347be1f676afbba995dec78da`。
+  現有即時 Paper 由原背景程序持續自然更新，未改寫或替換其 binary。
+- NOT RUN：真實斷網後恢復、新版 Telegram 健康頁平台驗證、新版 SIGKILL
+  程序復原、24 小時運行；mock 不代表上述實測。現有 Paper／Bot 尚未重啟
+  載入此次改動，使用原命令正常重啟後才生效。沒有發送交易所訂單。
+
+## 2026-10-30 — Paper 子程序監督與長序列恢復
+
+- F11 @process PASS：真正隔離子程序在保存 checkpoint 後 SIGKILL；父程序
+  Wait 確認退出、封存該 PID 殘留鎖、自動重啟，重複行情不多計，最終帳務
+  與連續處理逐欄相同；新 child 成功後才記錄恢復時間。
+- F12 PASS：安全 exit 1 不重啟、第六次 crash 觸發預算停止、未知鎖拒絕，
+  退避可取消，監督取消後 child 確實退出、正常釋放鎖。
+- F13 PASS：2,000 次加速輪詢、每根重複兩次，只保存 1,000 根進度；
+  不等於 1,000 分鐘真實在線，更不等於 24/7 驗證。
+- F14 @mock PASS：Telegram 監督中／重啟等待／停止／故障／已恢復時間、
+  缺失／過期／損壞狀態與唯讀檔案不變。
+- 完整 `bash scripts/verify-local.sh` PASS：93 個頂層測試（race）、vet、
+  離線回測與 Paper、dry-run、安全旗標、兩個 CLI 建置。原始紀錄
+  `paper-supervisor-verification.txt`；新腳本 bash 語法及 --help 啟動測試 PASS。
+- 舊離線快照 SHA-256 仍為
+  `85a0a66d487492e5568a53fa4d1697790bf1ddef6d07ddca4a0699c2590bced3`；
+  網路實測前備份仍為
+  `78daa2be57d12a0cad9103b2c703b043ff08001faaabd2f855049eef0303bbca`。
+  原即時 Paper／Bot 保持運行，本次沒有替換快照、切換監督或送出交易所訂單。
+- NOT RUN：實際連續 24 小時／多天、斷電／主機重啟、監督自身崩潰恢復、
+  新版 Telegram 監督頁平台驗證。需正常停止原 Paper 後改用監督啟動腳本，
+  並重啟 Bot 才會生效。沒有新增自動開機服務或購買雲端方案。
+
+
+## 2026-10-30 自動出場擴充
+
+完整 `bash scripts/verify-local.sh` 通過：97 個頂層測試（含 race）、go vet、
+離線回測／Paper smoke、CLI dry-run 與缺失金鑰／送單防護。
+紀錄：`docs/auto-exit-verification.txt`。
+新增覆蓋移動停損無前視、跨重啟一致、行情重放去重、時間出場與同根禁重入、
+淨成本門檻、無效參數及 Telegram 唯讀呈現。
+未切換現有程序與快照；新策略即時自然成交、Telegram 平台、樣本外績效與
+盈利能力未實測。沒有送出交易所訂單；完整腳本的 order 命令只有 dry-run。

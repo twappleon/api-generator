@@ -1,0 +1,862 @@
+# Telegram 本機唯讀實測 — 2026-10-30
+
+Bot：`@crytotradebot`（量化唯讀助手）。
+程式版本：`8e750e1`，沿用現有分支與 Draft PR #6。
+測試時間：Asia/Phnom_Penh 16:48–16:50；Bot 回覆使用 UTC。
+
+使用者在本機隱藏提示輸入 Token 並完成 owner 配對確認；實際操作 macOS
+Telegram 私聊與 inline keyboard，觀察 Bot 回覆。沒有讀取／提交 Token
+值、使用交易金鑰、送出交易訂單或修改風控快照。
+
+| 操作 | 實際觀察 | 結果 |
+| --- | --- | --- |
+| 配對後 `/start` | 09:48:13Z 回傳中文首頁、唯讀、Spot Testnet、真實資金關閉及六按鈕 | PASS |
+| 測試資產 | 09:48:38Z 明確提示未設定 Testnet 金鑰，不顯示零餘額或偽造即時資產 | PASS（缺憑證分支） |
+| 使用說明 | 09:49:05Z 回覆中文查詢說明，標示不買入／賣出 | PASS |
+| 重新整理 | 09:49:20Z 保留使用說明頁，更新畫面產生時間 | PASS |
+| 訂單紀錄 | 09:49:36Z 提示尚無可靠本機委託快照，不推論交易所沒有委託 | PASS |
+| 風控狀態 | 09:49:45Z 提示尚無可靠風控快照，不能代表交易安全 | PASS |
+| 總覽按鈕 | 09:49:57Z 正常返回中文首頁；策略狀態仍明示尚未驗證 | PASS |
+| 本機運行 | 私有 runtime log 有啟動紀錄、無 polling error、無停止紀錄；專用實例鎖存在 | PASS（本次觀察時） |
+
+## 首輪測試邊界（後續更新見下方）
+
+- B1／B3 的實際 Telegram 私聊與 callback 回覆已驗證；資產只驗證缺 key 的提示。
+- B6 無本機快照的畫面已在 Telegram 實際驗證。
+- B2 非 owner／群組拒絕、429／timeout、重啟與損毀快照仍以既有本機 mock
+  證據為準；本次未用其他真人帳戶／群組或故障注入重測，不冒稱外部 E2E。
+- C9／C10 Binance Testnet 真實資產／訂單／成交仍 NOT RUN，Railway BLOCKED。
+- 配對訊息在啟動後重送，可能收到一次「不認識這個操作」；隨後 `/start`
+  與按鈕均正常。此為唯讀回覆，不會送單。
+- Token／owner 僅由環境傳入。runtime log／binary 在 Git 忽略的 `.local/`；
+  此報告不包含憑證、配對碼或私人聊天截圖。
+- 這是終端前景程序：保持原終端開啟；關閉終端或 Ctrl-C 會停止，並非背景
+  常駐服務。此次驗證完成後未主動停止程序。
+
+## Testnet 金鑰接入實測 — 2026-10-30 17:09–17:12
+
+程式版本：`896115f`。使用者透過 `--testnet` 的本機隱藏提示輸入 Token、
+Testnet API Key 與 Secret，完成配對後啟動。憑證只傳入程序環境，未寫入此報告。
+直接操作同一個 macOS Telegram Bot 私聊，取得以下外部服務實際回覆：
+
+| 操作 | 查詢完成時間（UTC）及觀察 | 結果 |
+| --- | --- | --- |
+| `/balance` | 10:09:49Z，顯示 Binance Spot Testnet 資產與可用／凍結餘額 | PASS |
+| 資產頁「重新整理」 | 10:11:49Z，重新取得資產，保留資產頁並更新查詢時間 | PASS |
+| 「測試資產」按鈕 | 10:12:06Z，callback 正常回傳最新帳戶查詢結果 | PASS |
+| 中文來源標示 | 三次均顯示 Testnet GET account、UTC 查詢時間、僅測試資金及非實盤資產 | PASS |
+
+畫面列出前 20 項；其中 USDT 可用 10000、BTC／ETH／BNB 各可用 1，
+這四項凍結餘額皆為 0。這是 Testnet 回覆的虛擬資產，不是實盤資產或投資績效。
+本機日誌存在啟動紀錄、無 polling error／停止紀錄，專用控制台鎖存在；
+`state-testnet.json` 交易快照仍不存在。此次只執行帳戶唯讀查詢，未送出任何訂單。
+
+本節更新先前「資產只驗證缺 key」狀態：C9 的 GET account 子項已有外部
+Testnet 實測證據，但 openOrders／單筆訂單查詢仍 NOT RUN，不能將 C9 整項
+標為 PASS。C10 下單／成交仍 NOT RUN；Railway 仍 BLOCKED。本次無程式修改，
+未重跑 Go 單元測試；先前 42 個測試的結果與本次外部查詢證據分開記錄。
+
+## Testnet 訂單唯讀實測 — 2026-10-30 17:22（Asia/Phnom_Penh）
+
+執行版本：`9222613`。使用者重新隱藏輸入憑證、配對並啟動後，直接操作
+macOS Telegram 私聊，觀察以下外部 Testnet 回覆；未建立測試訂單以製造資料。
+
+| 操作 | 查詢完成 UTC | 實際結果 |
+| --- | --- | --- |
+| `/openorders BTCUSDT` | 10:22:09Z | PASS：GET openOrders，0 筆；沒有歷史查詢區塊 |
+| `/orders ETHUSDT` | 10:22:21Z | PASS：GET openOrders 0 筆；GET allOrders 未返回紀錄 |
+| ETHUSDT 頁「重新整理」 | 10:22:32Z | PASS：保留 ETHUSDT，兩個查詢時間更新；仍為空結果 |
+| 「訂單紀錄」按鈕 | 10:22:43Z | PASS：回到預設 BTCUSDT；未成交 0 筆、歷史未返回紀錄 |
+
+所有回覆明示單一交易對／非全帳戶、Testnet、唯讀、資料來源及各查詢時間；
+不將空結果推論成完整歷史不存在。查詢時本機日誌有啟動紀錄、0 次 request
+failed、無停止紀錄；交易 state 檔仍不存在。本次未建立、取消或修改任何訂單。
+
+C9：Account 與 OpenOrders 已有真實 Testnet 查詢證據；本次亦驗證 allOrders
+空結果。單筆 GET order、真實非空訂單／部分成交等仍 NOT RUN；不把 C9 整項
+或 C10 標示 PASS。非空資料與失敗分類仍只有 mock 證據。
+
+程式提交 `9222613` 的 46 個頂層 Go 測試、race／vet／完整離線腳本已通過；
+[push CI](https://github.com/twappleon/api-generator/actions/runs/41039667717)
+與 [PR CI](https://github.com/twappleon/api-generator/actions/runs/41039675733)
+均為 success。本次只補實測紀錄，未重跑 Go 測試。
+
+## 單筆查詢新版啟動確認 — 2026-10-30 17:34–17:35
+
+執行版本 `ad433e2`，使用者重新隱藏輸入憑證並完成配對後，直接操作 Telegram：
+
+- `/order`：10:34:37Z 正確提示 `/order BTCUSDT <原 Client ID>`，標示只查既有訂單；
+  指令路由／缺參數引導 PASS，這不是 GET order API 成功證據。
+- `/orders BTCUSDT`：10:34:56Z，openOrders 0 筆、allOrders 未返回紀錄。
+- `/orders ETHUSDT`：10:35:03Z，openOrders 0 筆、allOrders 未返回紀錄。
+
+已確認新版指令載入，但查詢範圍內沒有可用既有 Client ID；未猜測 ID、未送單、
+未撤單或修改訂單。單筆 GET order／非空／部分成交外部驗證仍 NOT RUN，
+不將這兩個交易對空結果推論為全帳戶／所有歷史沒有訂單。
+
+## 風控頁重啟後唯讀驗證 — 2026-10-30 17:59
+
+使用者重新啟動並配對後，直接操作 Telegram：`/risk`（10:59:19Z）、
+「風控狀態」按鈕（10:59:35Z）與「重新整理」（10:59:44Z）均回覆
+「尚無可靠風控快照；尚未執行 Testnet 訂單前置檢查，不能代表交易安全」。
+重新整理保留風控頁並更新畫面時間；缺快照指令／callback 流程 PASS。
+本機 `state-testnet.json` 在驗證前後均不存在，沒有寫入假資料或發送訂單。
+
+有真實快照的停機鎖／過期基準／未解訂單畫面及真實跨日重啟仍 NOT RUN；
+先前本機 mock／獨立程序測試不代替這些實測。此次只補記錄，未修改程式或重跑測試。
+
+## Paper 頁重啟後唯讀驗證 — 2026-10-30 18:21
+
+使用者重啟配對後，直接操作 Telegram：
+- `/paper`：11:21:14Z，PASS。
+- 「🧪 Paper 模擬」按鈕：11:21:27Z，PASS。
+- 「重新整理」：11:21:36Z，PASS，保留 Paper 頁及更新畫面時間。
+
+三次均明示「非 Testnet、非真實資金」、「尚無 Paper 快照；資金、持倉及
+恢復進度未驗證」，並說明缺檔不代表資金為 0 或沒有持倉。
+預設 `.local/session.paper.json` 與 Testnet state 在驗證前後均不存在；
+沒有建立假快照、啟動模擬或發出交易訂單。
+
+缺快照指令／callback／刷新為實際平台 PASS；有快照時的資金、持倉、恢復
+進度顯示仍 NOT RUN，不能以先前 mock 成功取代。本次只更新實測文件，未重跑測試。
+
+## 離線 Paper 真實流程 → Telegram → 重啟恢復 — 2026-10-30 18:27
+
+沿用程式 `24ec7c7`，沒有修改程式或手動填造快照。起始預設 Paper 快照
+不存在；依使用者授權執行既有離線 CLI，輸出至本機 `.local/`。
+
+```sh
+cd quant_bot
+go run main.go paper --config config.example.json --exchange binance --iterations 103 --sleep-seconds 0 --offline-sample --state .local/session.paper.json
+go run main.go paper --config config.example.json --exchange binance --iterations 12 --sleep-seconds 0 --offline-sample --state .local/session.paper.json
+```
+
+兩次命令分開執行，第一次正常退出後先操作 Telegram，再啟動第二個程序。
+
+| 驗證階段 | 實際結果 |
+| --- | --- |
+| 第一次模擬 | 第 103 輪產生模擬 BUY，保存持倉 0.029639242508098566、現金 0、入場價 33705.348533385564 |
+| Telegram `/paper` 11:27:23Z | PASS：顯示持倉 0.02963924、現金 0.00000000、進度 103、入場手續費與停損停利；離線樣本／非 Testnet 標示正確 |
+| 新程序恢復 | stdout 明示 `completed=103, cash=0.00000000, position=true`，接續 12 輪後模擬 take_profit SELL |
+| Telegram 重新整理 11:27:44Z | PASS：保留 Paper 頁，更新現金為 1027.94205794 USDT、空倉、進度 115、最後行情 2024-01-09T22:00:00Z |
+| 隔離 | Testnet state 驗證前後均不存在；Paper 程序退出後 writer lock 釋放；Bot 持續運行 |
+
+快照來自真正執行的離線模擬，非手動測試 fixture。模擬行情時間為 2024 年
+生成樣本，檔案寫入／畫面時間為本次 2026 年操作，不是即時價格或真實績效。
+CLI 原始輸出存於 `paper-telegram-flow-first.txt`、`paper-telegram-flow-resume.txt`。
+
+本節將有快照的 Telegram 持倉／資金／保存進度／刷新，以及正常退出後的
+Paper 新程序恢復標為 PASS。Telegram 本身沒有程序心跳／恢復事件來源，
+仍正確顯示「目前程序是否運行／已恢復：未驗證」；本次恢復證據由 CLI
+啟動輸出及前後快照對照取得，不冒稱畫面可自行證明恢復。
+
+未手動寫入快照、未送出任何交易所訂單。最終快照保留於原路徑，下一次
+同設定模擬會從第 115 輪接續。斷電／異常崩潰、真實行情停機補算與跨主機
+恢復仍 NOT RUN。本次沒有程式修改，未重跑單元測試。
+
+## 公開行情 Paper 績效頁 — 2026-10-30 19:02
+
+使用者重新啟動新版 Bot 並完成配對後，直接操作本機 Telegram：
+
+| 入口 | 畫面產生時間 UTC | 結果 |
+| --- | --- | --- |
+| `/performance` | 2026-10-30T11:59:46Z | PASS |
+| 「📈 Paper 績效」按鈕 | 2026-10-30T12:01:43Z | PASS |
+| 「重新整理」 | 2026-10-30T12:02:05Z | PASS，保留績效頁並更新畫面時間 |
+
+三次均與 `.local/live.performance.paper.json` 的保存內容一致：
+BTCUSDT／1m，初始資金、現金與預估淨清算資產皆為 1000 USDT；
+淨損益、已實現、未實現、累計手續費、滑價成本及最大回撤皆為 0；
+已平倉 0、獲利 0、空倉、已處理 2 根，每邊手續費 0.1000%、滑價 5 bps。
+最後已收盤行情開盤時間為 2026-10-30T11:50:00Z；快照更新時間顯示
+2026-10-30T11:51:53Z，與原始毫秒時間 1793361113491 一致。
+
+頁面明示唯讀模擬、非 Testnet／非真實資金、保存時估值非即時報價，
+快照不是程序心跳。此次確認的是公開行情 Paper 已保存快照的顯示一致性；
+沒有啟動或重啟 Paper runner，不以頁面成功代表 Paper 正持續執行。
+
+查詢前後 SHA-256 完全相同：
+- 舊 `.local/session.paper.json`：`85a0a66d487492e5568a53fa4d1697790bf1ddef6d07ddca4a0699c2590bced3`
+- 績效 `.local/live.performance.paper.json`：`233dc0a518c682487323c82ed2787b1d2ba654f347be1f676afbba995dec78da`
+
+未寫入或修改快照，未送出任何交易所訂單。非空持倉、非零成本／損益、
+行情持續推進時的動態刷新與長時間運行仍 NOT RUN；不建立假資料補足。
+本次只補實際 UI 驗證紀錄，沒有程式修改，未重跑單元測試。
+
+## 持續公開行情 Paper → Telegram 動態查詢 — 2026-10-30 19:05
+
+本次實際啟動 `cmd/research` 的無限輪詢模式（`--polls 0 --poll-every 15s`），
+BTCUSDT／1m，從現有績效 checkpoint 接續。先編譯至 `.local/research-live`，
+使用獨立背景程序（本次 PID 32328，PPID 1），不依賴開著的 Terminal。
+啟動參數為 `--mode paper --config config.paper-live.json --state
+.local/live.performance.paper.json --polls 0 --poll-every 15s`。
+只呼叫公開行情 GET，不載入交易金鑰或送出交易所訂單。
+
+啟動前逐位元備份績效快照至
+`.local/live-before-20261030T120444Z.performance.paper.json`；SHA-256
+`233dc0a518c682487323c82ed2787b1d2ba654f347be1f676afbba995dec78da`。
+舊離線 `.local/session.paper.json` 保留，驗證後 SHA-256 仍為
+`85a0a66d487492e5568a53fa4d1697790bf1ddef6d07ddca4a0699c2590bced3`。
+只有運行中的績效檔由真實 Paper 流程自然更新，沒有手動寫入模擬帳務。
+
+直接操作 Telegram 私聊兩次 `/performance`：
+
+| 階段 | 已處理 | 最後行情開盤 UTC | 快照更新 UTC | 結果 |
+| --- | --- | --- | --- | --- |
+| 補算停機行情後 | 15 | 12:03:00 | 12:04:46 | Telegram 實際顯示 PASS |
+| 下一根新收盤行情 | 16 | 12:04:00 | 12:05:01 | Telegram 與本機快照逐項一致 PASS |
+
+兩次資金都是初始／現金／淨清算資產 1000 USDT，空倉；已平倉／獲利筆數、
+淨損益、已實現／未實現、手續費與滑價累計及最大回撤全部為 0。
+每邊費率 0.1000%、滑價 5 bps 與快照設定一致。
+第二次原始快照 `Last=1793361840000`、`Updated=1793361901677`、
+`Mark=77478.01`、`Position=null`、`Pending=0`、`Steps=16`。
+這證明在持續運行時，重新查詢可取得新行情快照，不代表既有 Telegram
+訊息會自行推播更新。驗證時程序存活，日誌無錯誤。
+
+未自然產生交易，因此非空持倉、非零手續費／滑價、成交後資金與損益的
+Telegram 動態核對仍 NOT RUN；不調參、不插入假資料、不強制成交補案例。
+24 小時穩定性、睡眠／網路中斷恢復亦 NOT RUN。主機睡眠時不會執行，
+遇行情 API 錯誤會停止；沒有安裝開機常駐或自動重啟服務。
+
+程序依使用者要求保留運行；日誌 `.local/paper-live-20261030T120444Z.log`。
+停止時先核對目前 PID／程序路徑，再發送 SIGTERM（本次啟動 PID 32328），
+避免之後 PID 重用誤停其他程序。此次無程式修改；編譯通過、實際行情與
+Telegram 流程通過、`git diff --check` 通過，未重跑 mock／單元測試。
+
+## 新版心跳／網路重試／資料自然過期 — 2026-10-30 19:18
+
+沿用程式 `17dc40a`；使用者在本機隱藏輸入 Token 並配對後，直接操作
+Telegram `/performance` 與重新整理，沒有手動編輯快照、時鐘或帳務。
+
+| 實際平台查詢 UTC | 畫面與結果 |
+| --- | --- |
+| 12:13:51 | PASS：運行中、連續失敗 0、近期已收盤行情；24 根、最後行情 12:12、現金／資產 1000、空倉、成本 0 |
+| 12:14:30 | PASS：網路重試中、失敗 1 次、下次重試 12:14:31；25 根與既有資金維持，資料尚新鮮 |
+| 12:16:47 | PASS：網路重試中、失敗 6 次、下次重試 12:17:41，同時顯示資料過期／未知，僅供查看保存值 |
+| 12:18:22 | PASS：運行中、失敗歸零、近期已收盤行情；29 根、最後行情 12:17、快照更新 12:18:12 |
+
+受控故障方法：正常停止原 Paper，備份當前績效快照後，僅給新的 Paper
+子程序設定 HTTPS_PROXY，指向本機 loopback 測試代理。代理先關閉 CONNECT
+連線以產生真實 transport error；等待行情自然過期後放行。放行時只轉送
+`data-api.binance.vision:443` TLS 通道，不解密、不造行情、不改系統代理；
+Telegram 及其他應用網路不受影響。這是本機受控網路故障實測，不是實際
+ISP／交易所中斷，也未觸發真實 429／5xx。
+
+放行後同一 PID 35143 在 12:17:42 自動成功，Failures=0、NextRetry=0；
+Last 從 12:13 前進到 12:16、Steps 從 25 到 28，步數差正好等於行情間隔數。
+隨後自然前進到 29 根；未重啟該故障程序來偽裝自動恢復。
+
+故障期間績效快照 SHA-256 與備份完全相同：
+`78daa2be57d12a0cad9103b2c703b043ff08001faaabd2f855049eef0303bbca`。
+備份 `.local/pre-network-health-20261030.performance.paper.json` 保留；
+舊 `.local/session.paper.json` 雜湊仍為
+`85a0a66d487492e5568a53fa4d1697790bf1ddef6d07ddca4a0699c2590bced3`。
+
+完成後正常停止故障測試 Paper 與代理，另存恢復後快照至
+`.local/post-network-health-20261030.performance.paper.json`，以無代理的正常
+環境重啟 Paper（PID 35814），保留 Bot（PID 34875）。未改快照 schema，
+未重新輸入或讀取任何金鑰，未送出交易所訂單。
+
+NOT RUN：真實 ISP 斷線、真實限頻／5xx、SIGKILL／斷電、24 小時穩定性。
+沒有自然成交，非空持倉及非零成本／損益仍 NOT RUN。本次只補實測記錄，
+沒有修改程式，未重跑單元測試；原版本的 mock 與 CI 結果保持分開列示。
+
+## 監督模式／真實子程序 SIGKILL／自然持倉恢復 — 2026-10-30 19:31
+
+程式版本 `edc46d8`。使用者已在本機隱藏輸入 Token 並完成配對。
+監督 PID 40999、原 child 41001、Bot 41637；先從程序父子關係及 writer
+鎖內容確認 child 身分，再只對該 Paper child 發一次 SIGKILL。
+未停止監督或 Bot，沒有手動改寫帳務、狀態檔或刪鎖。
+
+| Telegram 實際畫面 UTC | 結果 |
+| --- | --- |
+| 12:30:31 `/performance` | PASS：監督中，重啟 0 次；運行中、行情近期；41 根，最後行情 12:29 |
+| 12:31:01 重新整理 | PASS：顯示正在查詢／恢復補算、監督已重啟 1 次；尚未冒稱成功查詢 |
+| 12:31:21 重新整理 | PASS：運行中、監督已重啟 1 次、重啟後成功查詢 12:31:01；42 根，最後行情 12:30 |
+
+恢復由父程序自動完成：新 child PID 41886，仍為監督 40999 的子程序。
+原鎖自動封存為 `.local/live.performance.paper.json.lock.reaped-41001-1793363455938332000`。
+監督 sidecar `Restarts=1`、`RecoveredAt=1793363461540`，runtime
+`Restored=true`、`Failures=0`。未再手動啟動 child。
+
+自然策略模擬持倉與非零成本實際核對：
+- 持倉數量 `0.012879903247096425` BTC，Telegram `0.01287990`；
+  入場價 `77562.77200499999`，顯示 `77562.77200500`。
+- 現金 0，累計手續費 `0.999000999000999` USDT，顯示 `0.99900100`；
+  以數量 × 入場價 × 0.001 獨立核對一致。
+- 累計滑價 `0.4992508740634129` USDT，顯示 `0.49925087`；
+  以數量 ×（入場價 − 入場價 / 1.0005）核對至浮點容差一致。
+- 第 41 根資產 `996.2584519394547`，未實現 `-3.74154806`；
+  第 42 根資產 `995.7184357724016`，未實現 `-4.28156423`。
+  資產包含按收盤價立即賣出的預估費用與滑價，非可用現金。
+- 重啟前後 Position、Cash、Fees、Slippage、Trades、Realized 逐欄完全相同；
+  Steps 增加 1、Last 增加 60000ms，恰為新行情一根，沒有重複入場或扣費。
+  已平倉仍為 0，不以未實現變動當作已獲利。
+
+前置備份 `.local/pre-crash-e2e-20261030.performance.paper.json`，SHA-256
+`5dc8dc5aa9bedf8122a3b23d13e0a700d4fa96b62b368e5f60807b9c42a957ea`；
+舊離線快照及之前的備份保留。本次只由 Paper 正常處理新行情更新活動快照，
+沒有交易所訂單。測試後監督、新 child 與 Bot 保留運行。
+
+NOT RUN：短暫「等待重啟」文案未及在 Telegram 捕捉（本次捕捉到恢復補算
+與恢復成功）；自然平倉及出場成本、實際多天運行、主機斷電、監督自身崩潰。
+本次只補實測紀錄，無程式修改，未重跑單元測試。
+
+## 自然平倉持續觀察開始 — 2026-10-30 19:33
+
+目前尚未自然平倉：Trades=0，原模擬 BTC 持倉仍在，監督 Restarts=1，
+child 正常運行。不能提前宣稱出場成本或已實現損益驗證通過。
+
+啟動獨立唯讀觀察程序（PID 42667），每 5 秒讀取績效檔，只在觀察目錄
+保存變更副本，每分鐘記錄 runtime／supervisor；Trades 增加後自行停止。
+不載入策略、不修改原快照、不送網路訂單。基準與副本保留於
+`.local/close-observation-20261030T123303Z/`，首筆 12:33:32Z：44 根，
+最後行情 12:32，Trades=0，runtime running、supervisor watching。
+
+本聊天已設定每 5 分鐘唯讀追蹤（自動化 paper），自然平倉後再操作 Telegram
+核對出場費用、滑價增量、已實現損益及資金；無變化時保持安靜，故障或需要
+使用者處理時通知。若觀察間隔內多次交易或資料缺漏，必須標示逐筆未驗證。
+完成後暫停追蹤。主機睡眠／離線不能算連續在線，尚未完成 24 小時驗證。
+
+目前 NOT RUN：自然平倉、出場成本、平倉後已實現損益 Telegram 核對、長時間
+穩定性。只記錄觀察啟動，不將排程成功等同交易驗證完成。
+
+## 24 小時觀察與本機防休眠啟動 — 2026-10-30 19:38
+
+使用者授權後啟用限時 `caffeinate -i -s -t 86400`（PID 45020），
+`pmset -g assertions` 確認 PreventUserIdleSystemSleep 與 PreventSystemSleep
+皆為 1，電源為 AC Power。未修改永久電源設定；螢幕可關閉，闔蓋／關機
+不在保證範圍，請維持接電、上蓋開啟及 Codex／Bot 正常運行。
+
+觀察期 UTC 2026-10-30T12:38:31Z 至 2026-10-31T12:38:31Z。
+獨立唯讀收集器 PID 45021 每 5 秒檢查，保存快照變更副本、每分鐘健康紀錄，
+不因自然平倉停止，24 小時到期留下完成標記；完成標記仍須審核缺口才可驗收。
+目錄 `.local/soak24-20261030T123831Z/`。首筆：49 根、Trades=0、runtime
+running、supervisor watching／Restarts=1、Bot 存在。所有原快照保持不受
+觀察器寫入；只有原 Paper 正常處理行情更新活動帳本。
+
+既有每 5 分鐘自動追蹤 paper 已更新，平倉後仍繼續本觀察期；只在自然平倉、
+故障或需使用者處理時通知。到期審核紀錄並提交，不以排程啟用冒稱通過。
+目前 24 小時驗證、自然出場與出場成本均 PENDING／未實測。
+
+
+## 2026-10-30 12:54 UTC：第一筆自然平倉與 Telegram 核對
+
+24h observer 於 12:45:16.749907Z 捕捉第一筆自然平倉，沒有人工觸發。
+實際仍運行 edc46d8 Paper，未切換後續移動停損版本。12:43 K 線快照
+Pending=-1、Trades=0；12:44 K 線處理後 Trades=1、Position=null，
+符合前一根均線反向訊號下一根開盤模擬出場。這是 Paper 模型，不是交易所成交。
+
+逐筆核對來源為 soak24-20261030T123831Z 中相鄰副本：
+- snapshot-1793364180000-4ce1494b0e84.json（Steps 55，持倉）
+- snapshot-1793364240000-2cba87487084.json（Steps 56，已平倉）
+
+| 核對項目 | 實際值 |
+|---|---:|
+| 出場數量 | 0.012879903247096425 BTC |
+| 由費用與滑價反推參考價 | 77300.01 USDT |
+| 模擬出場價（5 bps 不利滑價） | 77261.359995 USDT |
+| 本筆出場手續費增量 | 0.9951188414746864 USDT |
+| 本筆出場滑價增量 | 0.4978083248997382 USDT |
+| 含進出雙邊費用已實現損益 | -5.8762773667883215 USDT |
+| 平倉後現金／淨資產 | 994.1237226332117 USDT |
+| 累計實付手續費 | 1.9941198404756855 USDT |
+| 累計滑價成本 | 0.9970591989631511 USDT |
+
+以 qty*exitPrice - exitFee - qty*entryPrice - entryFee 獨立計算 PnL，
+與快照差額相符（誤差 <1e-8）。滑價已含成交價，不重複扣除。
+參考價由快照成本反推，未另下載該根原始 OHLC 核對，故行情來源逐筆比對未實測。
+
+已直接在 Telegram 量化唯讀助手私聊傳 /performance，Bot 於
+12:54:05Z 回覆：現金／淨資產 994.12372263、已實現 -5.87627737、
+未實現 0、累計費 1.99411984、累計滑價 0.99705920、平倉 1／盈利 0、
+空倉、Steps 65；與實際快照及副本一致。舊版頁面只顯示累計成本，
+本筆出場增量由相鄰副本核算，不聲稱舊頁面已顯示新版單筆出場明細。
+
+截至 12:54:07Z，24h 觀察已累積約 15 分 36 秒，最大已記錄間隔
+60.110533 秒；觀察紀錄只有 running/polling，Bot presence 沒有 false。
+監督重啟數始終為 1（先前受控測試），本觀察期沒有新增重啟。
+已核對 supervisor PID40999、其 child PID41886、Bot PID41637、
+caffeinate PID45020 與 observer PID45021 的實際程序身分與父子關係。
+原自然平倉觀察已達事件目標；24h observer 持續至 2026-10-31T12:38:31Z，
+目前不能標示 24h 通過。保留所有既有快照、未調參、未送任何交易所訂單。
+
+
+## 2026-10-30 14:12 UTC：闔蓋休眠與觀察缺口（24h 連續運行未通過）
+
+此輪排程標示 13:39:53Z，但實際檢查時間為 14:12:21Z，不以觸發時間
+當成實際執行時間。觀察起點 12:38:31Z 至此牆鐘約 1 小時 34 分，
+不能視為同長度的連續運行。
+
+observations.jsonl 出現三段 >90 秒的紀錄間隔：
+- 13:22:15.020963Z → 13:39:53.467550Z：1058.446587 秒。
+- 13:39:53.467550Z → 13:55:49.913176Z：956.445626 秒。
+- 13:55:49.913176Z → 14:11:56.640598Z：966.727422 秒。
+
+上述後三個觀察點仍為 Steps93／Last13:21Z，runtime 最近成功與心跳
+停於約13:22:58Z；supervisor 偶爾更新不代表 Paper 行情正常。
+`pmset -g log` 證實本地時間20:22:56（UTC13:22:56）進入
+Clamshell Sleep，使用電池；20:39:52、20:55:49 的 DarkWake 後再睡眠，
+21:11:58 再睡、21:12:09 DarkWake。不得以 caffeinate PID 存在宣稱沒有休眠。
+`pmset -g batt` 本輪為 Battery Power；caffeinate -i -s -t 86400 仍在，
+但 system-wide PreventSystemSleep=0。應接上電源並保持開蓋；未修改電源設定。
+
+14:12:21Z 讀到 Steps143／Last14:11Z，行情已補算至當前，runtime 近期心跳，
+現金994.1237226332117、Trades1、空倉，無新增平倉。補算是歷史重播，
+不代表睡眠期間有實時執行。監督 Restarts 仍1，原 child41886 仍為
+supervisor40999 子程序；Bot41637、防休眠45020、observer45021 身分皆確認。
+觀察紀錄恢復寫入、observer.log 無錯誤；本輪沒有強制成交或交易所訂單。
+
+保留所有原快照及缺口證據，24h 觀察繼續原到期時間，不重置起點、不延長
+防休眠、不提前宣稱通過。此次已證實連續性中斷，到期報告必須揭露。
+
+
+## 2026-10-30T20:23:11.291177+00:00：休眠補算後新增平倉；Telegram 被鎖屏阻擋
+
+實際檢查晚於排程觸發時間。Paper 自然策略補算產生新增平倉，沒有人工強制成交。
+目前 Trades=4，累計已實現 -11.50750459355618 USDT。
+以下使用觀察器真實副本差額；同一間隔進出場皆發生時，不能將累計成本增量
+當成單筆出場費。缺失中間快照的逐筆成交及原始 OHLC 比對明確列未實測。
+
+```json
+[
+  {
+    "before": "snapshot-1793373420000-91961b1712d1.json",
+    "after": "snapshot-1793375460000-47c3fda3cd5f.json",
+    "observed_utc": "2026-10-30T15:52:22.443624+00:00",
+    "trades": 2,
+    "fee_delta": 0.9971760138859835,
+    "slippage_delta": 0.49883742565576483,
+    "realized_delta": 2.055115238885716,
+    "exit_cost_check": "single exit delta matches engine formula; reference price not independently verified"
+  },
+  {
+    "before": "snapshot-1793376420000-47b3d0eb8bed.json",
+    "after": "snapshot-1793377080000-8a90aebfb621.json",
+    "observed_utc": "2026-10-30T16:19:08.869812+00:00",
+    "trades": 3,
+    "fee_delta": 1.9888194408500959,
+    "slippage_delta": 0.9944095820604373,
+    "realized_delta": -3.536687026514301,
+    "exit_cost_check": "entry/exit not individually observed; deltas are aggregate costs, NOT exit-only"
+  },
+  {
+    "before": "snapshot-1793377080000-8a90aebfb621.json",
+    "after": "snapshot-1793380080000-ceeaca812a84.json",
+    "observed_utc": "2026-10-30T17:09:49.056751+00:00",
+    "trades": 4,
+    "fee_delta": 1.9811324777290658,
+    "slippage_delta": 0.9905659443751698,
+    "realized_delta": -4.149655439139273,
+    "exit_cost_check": "entry/exit not individually observed; deltas are aggregate costs, NOT exit-only"
+  }
+]
+```
+
+本輪嘗試直接操作 Telegram，電腦使用工具回報 Mac 已鎖定且無法自動解鎖；
+未繞過鎖屏，新增成交的 Telegram 顯示核對尚未實測，需要使用者解鎖後補驗。
+24h 觀察仍持續原期限，已知休眠缺口保留，沒有調參、修改原快照、重啟或送出訂單。
+
+
+## 2026-10-30 21:09 UTC: fifth Paper exit, incomplete per-fill evidence
+
+Cumulative closed trades 5, wins 2, realized PnL -9.949418073152135 USDT.
+Fifth trade realized increment +1.558086520404045 USDT. Snapshot changes:
+
+```json
+[
+  {
+    "before": "snapshot-1793391780000-b9ed89f75548.json",
+    "after": "snapshot-1793392680000-e3513a0be04d.json",
+    "observed": "2026-10-30T20:39:57.023517+00:00",
+    "trades": 5,
+    "realized_delta": 1.5580865204040446,
+    "aggregate_fee_delta": 0.991041623550398,
+    "aggregate_slippage_delta": 0.4957686961232062,
+    "position_after": null
+  },
+  {
+    "before": "snapshot-1793393760000-07c1790b00e6.json",
+    "after": "snapshot-1793394480000-a3e4c96b28a8.json",
+    "observed": "2026-10-30T21:09:39.484614+00:00",
+    "trades": 6,
+    "realized_delta": -3.301706119716153,
+    "aggregate_fee_delta": 0.9877366124195515,
+    "aggregate_slippage_delta": 0.49411536389166777,
+    "position_after": null
+  }
+]
+```
+
+Cost deltas include possible entry costs; they are NOT verified exit-only costs.
+Missing intermediate snapshots prevent complete per-fill verification. Telegram
+verification remains NOT TESTED due to the previously confirmed locked Mac; no
+unlock confirmation received and no lock bypass attempted.
+At actual check 21:09:32Z, runtime heartbeat was stale at 20:57:20Z; supervisor
+restart count remained 1. Latest observation gap 726.692540 seconds, 36 total
+gaps above 90 seconds. Original process identities confirmed. Original 24h
+deadline remains; continuous operation cannot pass. No state/config writes,
+forced fills, or exchange orders.
+
+Follow-up within this check: replay reached closed trade 6, cumulative realized
+PnL -13.251124192868288 USDT, cash 986.7488758071314 USDT, flat.
+For trades 5 and 6 specifically, saved before-state has a position and after-state
+is flat with exactly one additional close. Their exit cost deltas reconcile
+with the engine PnL formula within 1e-8 (results below). Thus snapshot-level
+exit accounting is verified; original OHLC/per-bar execution and Telegram
+remain unverified due to observation gaps and locked Mac.
+```json
+[
+  {
+    "trade": 5,
+    "exit_fee_delta": 0.991041623550398,
+    "exit_slippage_delta": 0.4957686961232062,
+    "realized_delta": 1.5580865204040446
+  },
+  {
+    "trade": 6,
+    "exit_fee_delta": 0.9877366124195515,
+    "exit_slippage_delta": 0.49411536389166777,
+    "realized_delta": -3.301706119716153
+  }
+]
+```
+
+
+## 2026-10-30 22:01 UTC: seventh Paper close
+
+Observed cumulative closed trades 7, wins 2, flat, cash/equity
+981.4246380107174 USDT, realized -18.575361989283394 USDT.
+Trade 7 realized change -5.324237796415106 USDT. Saved evidence:
+```json
+[
+  {
+    "before": "snapshot-1793397360000-f1516ccbf32f.json",
+    "after": "snapshot-1793397420000-9d9e2ce09994.json",
+    "observed": "2026-10-30T21:58:12.950458+00:00",
+    "trades": 7,
+    "realized_delta": -5.324237796415106,
+    "aggregate_fee_delta": 0.9824070450557727,
+    "aggregate_slippage_delta": 0.49144924715140803,
+    "position_before": {
+      "EntryPrice": 76941.601575,
+      "Qty": 0.012811835112810208,
+      "StopLoss": 75787.47755137499,
+      "TakeProfit": 79249.84962225,
+      "EntryTime": 1793396280000,
+      "EntryFee": 0.9857631126944381
+    },
+    "position_after": null
+  }
+]
+```
+Cost changes above are aggregate across observed checkpoints, not automatically
+exit-only costs. Gaps prevent full per-bar execution verification. Telegram
+remains NOT TESTED for this event: last direct attempt confirmed locked Mac,
+and no manual unlock confirmation has arrived. No bypass attempted.
+At 22:01:25Z runtime and supervisor heartbeats were recent; restart count still
+1. Original supervisor/child/Bot/caffeinate/observer process identities confirmed.
+138 observation records, 39 gaps above 90s, latest completed gap 933.572793s.
+Observer log empty; no completion marker. Original deadline retained, no
+continuous-24h pass claimed. No changes to snapshots, strategy, locks or processes;
+no exchange orders or forced trades.
+
+Trade 7 accounting follow-up: these two snapshots are consecutive bars and
+exactly one close, with no position afterwards. Exit fee 0.9824070450557727
+and exit slippage 0.49144924715140803 USDT reconcile with the engine formula
+within 1e-8; net realized change -5.324237796415106 USDT verified.
+Independent original OHLC and Telegram display remain unverified.
+
+
+## 2026-10-31 01:06 UTC: eighth Paper close
+
+Cumulative closed trades 8, wins 3, realized -15.315454848735563 USDT.
+Trade 8 net increment +3.259907140547831 USDT; a subsequent position is open.
+Actual snapshot evidence and arithmetic status:
+```json
+[
+  {
+    "before": "snapshot-1793406300000-57c31881f4a7.json",
+    "after": "snapshot-1793407440000-9eb7b49720e6.json",
+    "observed": "2026-10-31T00:45:17.509082+00:00",
+    "trades": 8,
+    "realized_delta": 3.2599071405478313,
+    "fee_delta": 0.9856702153666319,
+    "slippage_delta": 0.49308164850751535,
+    "verification": "single exit snapshot arithmetic PASS; original OHLC not independently verified"
+  }
+]
+```
+Telegram remains unverified: the last direct UI attempt reported locked Mac,
+with no subsequent user unlock confirmation. No lock bypass or claim of UI pass.
+At 01:06:02Z heartbeats were recent, supervisor restarts remained 1, original
+process identities matched. 181 observation records with 51 gaps above 90s;
+latest gap 913.908614 seconds. Observer log empty, completion marker absent.
+Continue to original deadline; preserve sleep gaps and do not claim continuous
+24h success. No strategy/state/lock changes, forced fills, or exchange orders.
+
+
+## 2026-10-31 01:33 UTC: ninth Paper close
+
+Cumulative closed trades 9, wins 3, realized -18.74803806419904 USDT;
+flat, cash/equity 981.2519619358021 USDT. Evidence:
+```json
+[
+  {
+    "before": "snapshot-1793410200000-df93effff3bc.json",
+    "after": "snapshot-1793410260000-ac767e2be393.json",
+    "observed": "2026-10-31T01:32:14.370676+00:00",
+    "trades": 9,
+    "realized_delta": -3.4325832154634774,
+    "fee_delta": 0.9822341961319339,
+    "slippage_delta": 0.4913627794556401,
+    "verification": "single exit snapshot arithmetic PASS; original OHLC not independently verified"
+  }
+]
+```
+Telegram display remains NOT TESTED due to the previously confirmed locked Mac;
+no user unlock confirmation or lock bypass. Original OHLC execution unverified.
+Runtime/supervisor heartbeats recent at 01:33:29Z, restarts unchanged at 1.
+Original process identities confirmed; 193 observations, 53 gaps above 90s,
+latest gap 251.370438s. Observer log empty, completion marker absent.
+Continue original 24h deadline, preserving gaps; no continuous pass claimed.
+No state/strategy/lock changes, forced fills or exchange orders.
+
+
+## 2026-10-31 03:32 UTC: Paper closes 10 and 11
+
+Actual check later than scheduled trigger. Cumulative closed trades 11, wins 3,
+realized -26.079235500049457 USDT, flat, cash/equity 973.9207644999517.
+New realized loss since trade 9: -7.331197435850417 USDT. Saved evidence:
+```json
+[
+  {
+    "before": "snapshot-1793413620000-ba2c5dc6feac.json",
+    "after": "snapshot-1793415720000-d8b8902c9d3c.json",
+    "observed": "2026-10-31T03:19:24.495022+00:00",
+    "trades_before": 9,
+    "trades_after": 10,
+    "realized_delta": -2.5857886956319014,
+    "fee_delta": 2.937605994060199,
+    "slippage_delta": 1.4685587855806492,
+    "verification": "aggregate only; per-exit cost verification NOT TESTED"
+  },
+  {
+    "before": "snapshot-1793415720000-d8b8902c9d3c.json",
+    "after": "snapshot-1793417220000-f2bfdf41ab94.json",
+    "observed": "2026-10-31T03:28:56.139954+00:00",
+    "trades_before": 10,
+    "trades_after": 11,
+    "realized_delta": -4.745408740218515,
+    "fee_delta": 0.9748956601601115,
+    "slippage_delta": 0.4876916759179615,
+    "verification": "single exit snapshot arithmetic PASS; original OHLC not independently verified"
+  }
+]
+```
+Per-exit costs are verified only where explicitly marked PASS above; aggregate
+changes may include entries and are not exit-only costs. Telegram display
+remains NOT TESTED: previously confirmed locked Mac, no user unlock confirmation.
+No lock bypass. Original OHLC/per-bar execution not independently verified.
+Runtime/supervisor heartbeats recent at 03:32:30Z, restarts unchanged at 1;
+original process identities confirmed. 234 observations, 62 gaps above 90s,
+latest 561.631051s; observer log empty and completion marker absent. Continue
+original deadline without claiming continuous 24h success. No original state,
+strategy, locks or processes modified, no forced fills or exchange orders.
+
+
+## 2026-10-31 03:43 UTC: Telegram Bot process disappeared
+
+Observer last reported Bot present at 03:41:11.481314Z, then absent at
+03:42:11.539093Z and 03:43:11.633952Z. Actual process inspection confirms
+PID41637 no longer exists; process-name scan finds the Telegram desktop app
+but no telegram Bot executable. Cause and exit status are unknown; do not
+infer crash versus deliberate user stop. No token/environment was inspected.
+Paper supervisor40999 and child41886 remain alive with fresh heartbeats,
+restart count1, closed trades11, flat, realized -26.079235500049457 USDT.
+Caffeinate45020 and observer45021 identities confirmed, observer log empty.
+246 observation records, 62 historical gaps above90s, no completion marker.
+Telegram queries cannot currently be validated. User intervention is needed
+to restart the Bot with hidden local token input. No automatic secret recovery,
+lock removal, process stop/restart, snapshot changes or exchange orders.
+Continue Paper observation to the original deadline and record Bot downtime.
+
+
+## 2026-10-31 04:48 UTC: twelfth natural Paper close
+
+Observer captured trade 11 -> 12 at 04:46:06.386906Z. Preserved evidence in
+.local/soak24-20261030T123831Z/: before
+snapshot-1793421840000-1d78a2aabe09.json (04:44 bar), after
+snapshot-1793421900000-308f05b62d4e.json (04:45 bar). Position changed from
+0.01258165735229713 BTC to flat across one bar; no forced fill.
+
+Using the running edc46d8 research/engine.go sell formula and snapshot fee
+rate 0.001/slippage 5 bps, single-exit arithmetic PASS (tolerance 1e-8):
+- Exit fee delta: 0.9703655824286912 USDT.
+- Exit slippage delta: 0.48542550396627426 USDT.
+- Inferred reference: 77164.00; simulated fill: 77125.418 USDT.
+- Entry fee: 0.9729478166832685 USDT; entry price: 77330.656005.
+- Net realized PnL delta: -4.525547653690872 USDT, including both fees.
+- Cash/equity after close: 969.3952168462608 USDT; cumulative realized
+  -30.60478315374033, fees 23.665757772479328, slippage 11.832880109702042.
+
+PnL residual 1.58e-12 and slippage residual -1.08e-14. Original OHLC and
+execution reference were not independently verified; inferred prices are
+accounting reconciliation, not an exchange fill. Telegram display NOT TESTED:
+Bot PID41637 remains absent and process-name scan finds only Telegram desktop.
+Previously reported user restart requirement remains; no secrets accessed.
+
+At 04:48:36Z runtime running with recent heartbeat, supervisor watching,
+restarts unchanged at 1; supervisor40999/child41886/caffeinate45020/observer45021
+identities confirmed. 322 records, 62 historical gaps above90s (unchanged),
+empty observer log, no completion marker. The elapsed 16h10m is not continuous
+validated uptime. Continue to original 12:38:31Z deadline. No snapshots,
+strategy, locks or processes changed; no exchange orders submitted.
+
+
+## 2026-10-31 05:54 UTC: thirteenth natural Paper close
+
+Observer captured trade 12 -> 13 at 05:51:06.385284Z. Evidence in
+.local/soak24-20261030T123831Z/: snapshot-1793425740000-dabe1a8331ce.json
+(05:49 bar) -> snapshot-1793425800000-489a515ab588.json (05:50 bar).
+Position 0.01252272068358017 BTC became flat across one bar.
+
+Single-exit snapshot arithmetic PASS using running edc46d8 sell formula,
+fee rate 0.001 and slippage 5 bps (tolerance 1e-8):
+- Exit fee: 0.9671968777439233 USDT; exit slippage: 0.48384035905143286 USDT.
+- Inferred reference 77274.00, simulated fill 77235.363 USDT.
+- Entry price 77333.577465; entry fee 0.9684267900562047 USDT.
+- Net realized delta -3.165535980082339 USDT includes both fees;
+  cumulative realized -33.77031913382267 USDT.
+- Cash/equity immediately after exit 966.2296808661786 USDT.
+- PnL residual 6.77e-13; slippage residual 8.48e-14.
+
+A subsequent natural entry at the 05:51 bar is separate from the verified
+exit: latest position 0.01248617669119485 BTC, entry 77306.644005, entry fee
+0.9652644164497289 USDT. At inspection cash0, equity963.3601450226697,
+total fees26.566645856729185 and slippage13.283082890795315 USDT.
+Original OHLC/reference not independently verified. Telegram display NOT
+TESTED: Bot41637 absent, process-name scan finds only desktop Telegram.
+No secrets accessed or automatic Bot restart attempted.
+
+At 05:54:39Z runtime/supervisor heartbeats recent, restarts unchanged at1;
+original supervisor40999/child41886/caffeinate45020/observer45021 confirmed.
+399 observations, 62 historical gaps above90s (unchanged), observer log empty,
+no completion marker. Continue original deadline; no continuous24h claim.
+No original snapshots, strategy, locks or processes modified; no forced
+fills or exchange orders.
+
+
+## 2026-10-31 06:29 UTC: fourteenth natural Paper close
+
+Observer captured trade 13 -> 14 at 06:28:14.065599Z. Evidence in
+.local/soak24-20261030T123831Z/: snapshot-1793427960000-8986e11c6ba9.json
+(06:26 bar) -> snapshot-1793428020000-ba91dea19815.json (06:27 bar).
+Position 0.01248617669119485 BTC became flat across one bar.
+
+Single-exit snapshot arithmetic PASS using running edc46d8 sell formula,
+fee rate0.001/slippage5bps, tolerance1e-8:
+- Exit fee0.9647738719012011 and slippage0.4826282500755852 USDT.
+- Inferred reference77306.01, simulated fill77267.356995 USDT.
+- Entry77306.644005, entry fee0.9652644164497289 USDT.
+- Net realized delta -2.4205828368797313 USDT includes both fees.
+- Flat cash/equity963.809098029299; cumulative realized -36.1909019707024,
+  total fees27.531419728630386 and slippage13.7657111408709 USDT.
+- PnL residual9.22e-13; slippage residual5.43e-14.
+
+Original OHLC/reference not independently verified. Telegram display NOT
+TESTED: Bot41637 remains absent; process-name scan finds only Telegram desktop.
+No secrets accessed or automatic restart attempted. At 06:29:42Z fresh
+runtime/supervisor heartbeats, restarts unchanged at1; original supervisor40999,
+child41886, caffeinate45020 and observer45021 identities confirmed.
+442 records, 62 historical gaps above90s (unchanged), observer log empty,
+no completion marker. Continue original deadline without continuous24h claim.
+No original snapshots, strategy, locks or processes modified; no forced
+fills or exchange orders.
+
+
+## 2026-10-31 07:40 UTC: fifteenth natural Paper close
+
+Observer captured trade14 -> 15 at 07:39:09.823106Z. Evidence in
+.local/soak24-20261030T123831Z/: snapshot-1793432220000-d6523013638b.json
+(07:37 bar) -> snapshot-1793432280000-82977812c9d2.json (07:38 bar).
+Position0.01244652184742499 BTC became flat across one bar.
+
+Single-exit snapshot arithmetic PASS using running edc46d8 sell formula,
+fee rate0.001/slippage5bps, tolerance1e-8:
+- Exit fee0.9625059016376056; exit slippage0.48149369766758277 USDT.
+- Inferred reference77370.00, simulated fill77331.315 USDT.
+- Entry77358.65999999999; entry fee0.9628462517775215 USDT.
+- Net realized delta -2.2657022933328363 USDT includes both fees.
+- Flat cash/equity961.5433957359662; cumulative realized -38.456604264035235,
+  fees29.456771882045512 and slippage14.72838737315988 USDT.
+- PnL residual1.85e-12; slippage residual2.40e-14.
+
+Original OHLC/reference not independently verified. Telegram display NOT
+TESTED: Bot41637 remains absent; process-name scan finds only Telegram desktop.
+At 07:40:11Z runtime/supervisor heartbeats recent, restarts unchanged at1;
+original supervisor40999/child41886/caffeinate45020/observer45021 confirmed.
+527 records, 62 historical gaps above90s (unchanged), empty observer log, no
+completion marker. Continue original deadline without continuous24h claim.
+No original snapshots, strategy, locks or processes modified; no secret
+access, forced fills or exchange orders.
+
+
+## 2026-10-31 08:45 UTC: sixteenth natural Paper close
+
+Observer captured trade15 -> 16 at 08:41:13.953734Z. Evidence in
+.local/soak24-20261030T123831Z/: snapshot-1793435940000-6f78b631898f.json
+(08:39 bar) -> snapshot-1793436000000-eb7468815725.json (08:40 bar).
+Position0.012397113506052337 BTC became flat across one bar.
+
+Single-exit snapshot arithmetic PASS using running edc46d8 sell formula,
+fee rate0.001/slippage5bps, tolerance1e-8:
+- Exit fee0.9577634533733601; slippage0.47912128733029213 USDT.
+- Inferred reference77295.62, simulated fill77256.97219 USDT.
+- Entry77484.39283499999; entry fee0.9605828129230434 USDT.
+- Net realized delta -4.737705815980931 USDT includes both fees.
+- Flat cash/equity956.8056899199854; cumulative realized -43.194310080016166,
+  fees31.375118148341915 and slippage15.687560041261255 USDT.
+- PnL residual1.46e-12; slippage residual -1.04e-14.
+
+Original OHLC/reference not independently verified. Telegram display NOT
+TESTED: Bot41637 absent; process-name scan finds only Telegram desktop.
+At 08:45:14Z runtime polling with recent successful heartbeat, supervisor
+watching, restarts unchanged at1; original supervisor40999/child41886,
+caffeinate45020 and observer45021 identities confirmed. 604 records,
+62 historical gaps above90s (unchanged), observer log empty, no completion
+marker. Continue original deadline without continuous24h claim. No original
+snapshots, strategy, locks or processes modified; no secret access, forced
+fills or exchange orders.
+
+
+## 2026-10-31 11:13 UTC: natural Paper closes 17 and 18 after observation gaps
+
+Actual inspection 11:13:29Z (heartbeat trigger09:45:10Z); do not treat trigger
+time as execution time or continuous monitoring. Preserved evidence under
+.local/soak24-20261030T123831Z/:
+
+| Close | Before snapshot | After snapshot | Observed UTC | Exit fee USDT | Exit slippage USDT | Net realized delta USDT |
+| --- | --- | --- | --- | --- | --- | --- |
+| 17 | snapshot-1793438760000-ae4250a43463.json | snapshot-1793440740000-781526b4e65c.json | 10:17:36.442130 | 0.955341763469221 | 0.4779098366528842 | -2.4192682142358066 |
+| 18 | snapshot-1793443740000-6d0d587fce5c.json | snapshot-1793444160000-57faf3f51ff4.json | 10:57:48.664779 | 0.9516826929330122 | 0.47607938615953316 | -3.6554114656729695 |
+
+Both transitions have one additional closed trade and held-to-flat position.
+Single-exit accounting reconciliation PASS at tolerance1e-8 using running
+edc46d8 sell formula, fee0.001 and slippage5bps. Inferred fills are
+77427.376945 and77376.442425. PnL residuals1.90e-12/2.31e-12 and slippage
+residuals -7.56e-14/-3.35e-14. However snapshots span33 and7 bars; original
+OHLC, exact exit bar and uninterrupted real-time execution NOT independently
+verified. Observation times above are not asserted execution times.
+
+Latest flat cash/equity950.7310102400769, cumulative realized -49.26898975992494,
+fees35.191425433541085 and slippage17.59571359630592 USDT; trades18, wins3.
+Telegram display NOT TESTED: Bot41637 absent, only desktop Telegram found.
+Runtime/supervisor heartbeats fresh, restarts unchanged at1; original
+supervisor40999/child41886/caffeinate45020/observer45021 identities confirmed.
+643 observations,72 gaps above90s (up from64); latest gap11:00:11.325953 to
+11:12:54.828747Z is763.502794s. Observer log empty, completion marker absent.
+Continue original12:38:31Z deadline; elapsed time is not continuous24h PASS.
+No original snapshots, strategy, locks or processes changed; no secrets read,
+forced fills or exchange orders.

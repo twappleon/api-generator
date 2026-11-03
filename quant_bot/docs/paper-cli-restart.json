@@ -1,0 +1,25 @@
+[
+  {
+    "additional_iterations": 103,
+    "completed": 103,
+    "cash": 0,
+    "position": {
+      "EntryPrice": 33705.348533385564,
+      "Qty": 0.029639242508098566,
+      "StopLoss": 33199.76830538478,
+      "TakeProfit": 34716.50898938713,
+      "EntryTime": 1704794400000,
+      "EntryFee": 0.999000999000999
+    },
+    "last_candle": 1704794400000,
+    "restored_line": "Paper-only snapshot loaded: completed=0, cash=1000.00000000, position=false"
+  },
+  {
+    "additional_iterations": 12,
+    "completed": 115,
+    "cash": 1027.9420579420582,
+    "position": null,
+    "last_candle": 1704837600000,
+    "restored_line": "Paper-only snapshot loaded: completed=103, cash=0.00000000, position=true"
+  }
+]

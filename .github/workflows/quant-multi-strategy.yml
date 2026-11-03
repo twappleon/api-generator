@@ -1,0 +1,62 @@
+name: Binance multi-strategy 4h research (read-only)
+on:
+  push:
+    branches: [cursor/quant-bot-usdt-c6b3]
+    paths:
+      - "quant_bot/cmd/strategy-compare/**"
+      - "quant_bot/research/engine.go"
+      - ".github/workflows/quant-multi-strategy.yml"
+  pull_request:
+    paths:
+      - "quant_bot/cmd/strategy-compare/**"
+      - "quant_bot/research/engine.go"
+      - ".github/workflows/quant-multi-strategy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: quant_bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: false
+      - name: Compile comparator and run unit tests
+        run: |
+          go test ./research ./strategy
+          go vet ./cmd/strategy-compare
+          go build -o /tmp/strategy-compare ./cmd/strategy-compare
+      - name: Diagnose Binance 4h candle timestamps
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request
+          for t in [1604188800000, 1609459200000, 1767225600000]:
+              url=f"https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=4h&startTime={t}&limit=2"
+              arr=json.load(urllib.request.urlopen(url, timeout=20))
+              for r in arr:
+                  print("CHECK",t,"open",r[0],"close",r[6],"duration",int(r[6])-int(r[0])+1)
+          PY
+      - name: Compare BTC and ETH on real Binance 4h data 2021-2026
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/strategy-compare -output /tmp/strategy-comparison.json | tee /tmp/strategy-comparison.log
+      - name: Upload reproducible numeric results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: binance-4h-strategy-comparison
+          if-no-files-found: warn
+          path: |
+            /tmp/strategy-comparison.json
+            /tmp/strategy-comparison.log
+          retention-days: 14

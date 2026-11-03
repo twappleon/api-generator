@@ -1,0 +1,48 @@
+name: Binance 24-Pair Strategy Stability Comparison (research only)
+on:
+  push:
+    branches: [cursor/quant-bot-usdt-c6b3]
+    paths:
+      - "quant_bot/cmd/stability-compare/**"
+      - ".github/workflows/stability-compare.yml"
+  pull_request:
+    paths:
+      - "quant_bot/cmd/stability-compare/**"
+      - ".github/workflows/stability-compare.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: quant_bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: false
+      - name: Build, vet and test
+        run: |
+          set -euo pipefail
+          go test ./research ./strategy
+          go vet ./cmd/stability-compare
+          go build -o /tmp/stability-compare ./cmd/stability-compare
+      - name: Compare seven strategies on Binance 4h real historical data
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/stability-compare -output /tmp/stability-compare.json | tee /tmp/stability-compare.log
+      - name: Archive full results and auditable logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stability-comparison-24-pairs
+          if-no-files-found: warn
+          path: |
+            /tmp/stability-compare.json
+            /tmp/stability-compare.log
+          retention-days: 30
