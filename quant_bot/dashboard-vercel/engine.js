@@ -63,6 +63,16 @@ async function paperStatus(){
  for(const symbol of ["BTCUSDT","ETHUSDT","SOLUSDT"]){
   const market=await window.getMarket(symbol,now);
   const bars=market.prices,ix=calcIndicators(bars),i=bars.length-1;
+  let signals30=0, signalsSinceStart=0, lastSignalUTC=null;
+  const thirtyDaysAgo=now-30*86400000;
+  for(let j=201;j<bars.length;j++){
+    const prev=bars[j-1];
+    const eligible=prev.close>maxHigh(bars,j-1,20)&&prev.close>ix.ema[j-1];
+    if(!eligible)continue;
+    if(bars[j].time>=thirtyDaysAgo)signals30++;
+    if(bars[j].time>=START_FORWARD)signalsSinceStart++;
+    lastSignalUTC=new Date(bars[j].time).toISOString();
+  }
   const lastClose=bars[i].close;
   const breakoutPrice=maxHigh(bars,i,20);
   const ema200=ix.ema[i];
@@ -71,6 +81,7 @@ async function paperStatus(){
   const reason=lastClose<=ema200?"未站上 EMA200 趨勢線":lastClose<=breakoutPrice?"尚未突破 Donchian 20 根高點":atrPct>=3.5?"A 符合條件，但 B 被波動過濾":"符合進場條件（等待新收盤 K 線模擬）";
   pairs[symbol]={last_open:bars[i].time,quote:market.quote,quote_utc:new Date(now).toISOString(),atr_pct:atrPct,
    last_close:lastClose,donchian_20_high:breakoutPrice,ema_200:ema200,
+   signals_last_30d:signals30,signals_since_start:signalsSinceStart,last_signal_utc:lastSignalUTC,
    distance_to_breakout_pct:100*(breakoutPrice/lastClose-1),
    next_close_utc:new Date(bars[i].time+2*TIMEFRAME).toISOString(),reason_no_trade:reason,
    signal_a:signalA,signal_b:signalA&&atrPct<3.5,
