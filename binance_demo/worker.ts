@@ -42,7 +42,7 @@ if(!PATH.startsWith("/data/")&&!LOCAL_BDD_ONLY) throw Error("Demo must use its o
 if(!Number.isFinite(INITIAL_NOTIONAL)) throw Error("Invalid demo notional");
 const blank=()=>({schema:4,baseline:false,lastSeen:0,lastChannelPoll:null,lastDemoPoll:null,
   channelError:null,demoError:null,lastDonchianPoll:null,donchianError:null,halted:false,haltReason:null,
-  candidate:[],orders:[],events:[],outbox:[],lastQuote:{},lastGoodAccount:null,
+  candidate:[],orders:[],events:[],outbox:[],lastQuote:{},donchianMarks:{},lastGoodAccount:null,
   demoBackoffUntil:0,donchian:{},donchianPaper:[]});
 mkdirSync(dirname(PATH),{recursive:true});
 let ledger=blank();
@@ -257,7 +257,7 @@ function paperClose(symbol,event){
 }
 function paperReport(){
  const rows=ledger.donchianPaper,open=rows.filter(x=>x.status==="OPEN"),closed=rows.filter(x=>x.status==="CLOSED");
- const unrealized=open.reduce((n,x)=>{const mark=Number(ledger.donchian[x.symbol]?.lastObservedClose||x.entryPrice),exit=mark*(x.side==="LONG"?1-SLIP:1+SLIP);return n+(x.side==="LONG"?exit-x.entryPrice:x.entryPrice-exit)*x.qty-x.feeEntry-exit*x.qty*FEE_FALLBACK},0);
+ const unrealized=open.reduce((n,x)=>{const mark=Number(ledger.donchianMarks[x.symbol]?.price||ledger.donchian[x.symbol]?.lastObservedClose||x.entryPrice),exit=mark*(x.side==="LONG"?1-SLIP:1+SLIP);return n+(x.side==="LONG"?exit-x.entryPrice:x.entryPrice-exit)*x.qty-x.feeEntry-exit*x.qty*FEE_FALLBACK},0);
  const realized=closed.reduce((n,x)=>n+x.netPnl,0),wins=closed.filter(x=>x.netPnl>0).length;
  return {initialBalance:10000,equity:10000+realized+unrealized,openPositions:open.length,closedTrades:closed.length,wins,winRatePct:closed.length?wins/closed.length*100:0,realizedPnl:realized,unrealizedPnl:unrealized};
 }
@@ -348,14 +348,21 @@ function applyDonchian(symbol,candles){
 }
 async function pollDonchian(){
  const observed=Date.now()+serverOffset;
- const rows=await Promise.all(DONCHIAN_SYMBOLS.map(async symbol=>{
+ const [rows,markRows]=await Promise.all([Promise.all(DONCHIAN_SYMBOLS.map(async symbol=>{
   const raw=await publicGet("/fapi/v1/klines",{symbol,interval:DONCHIAN_INTERVAL,limit:DONCHIAN_ENTRY_PERIOD+12});
   if(!Array.isArray(raw))throw Error("Invalid Donchian kline response for "+symbol);
   const candles=raw.map(k=>({openTime:Number(k[0]),high:Number(k[2]),low:Number(k[3]),close:Number(k[4]),closeTime:Number(k[6])}))
     .filter(k=>[k.openTime,k.high,k.low,k.close,k.closeTime].every(Number.isFinite)&&k.closeTime<observed);
   if(candles.length<DONCHIAN_ENTRY_PERIOD+1)throw Error("Insufficient closed Donchian candles for "+symbol);
   return {symbol,candles};
- }));
+ })),publicGet("/fapi/v1/premiumIndex",{})]);
+ if(!Array.isArray(markRows))throw Error("Invalid Donchian mark-price response");
+ const markAt=now();
+ for(const symbol of DONCHIAN_SYMBOLS){
+  const row=markRows.find(x=>x.symbol===symbol),price=Number(row?.markPrice);
+  if(!Number.isFinite(price)||price<=0)throw Error("Invalid Donchian mark price for "+symbol);
+  ledger.donchianMarks[symbol]={price,observedAt:markAt,source:"BINANCE_DEMO_MARK_PRICE"};
+ }
  for(const row of rows)applyDonchian(row.symbol,row.candles);
  ledger.lastDonchianPoll=now();ledger.donchianError=null;save();
  if(Date.now()-lastDonchianLogAt>600000){
@@ -472,9 +479,10 @@ function donchianStats(){
  const wins=trades.filter(x=>Number(x.netPnlUsdt)>0).length;
  const open=orders.filter(x=>!x.actualSettlement&&!['CLOSED','CANCELED','REJECTED','EXPIRED'].includes(String(x.status))).length;
  const last=events.at(-1)||null;
- const advisoryPositions=Object.entries(ledger.donchian).filter(([,s])=>s?.position&&s.position!=="FLAT").map(([symbol,s])=>{paperOpen(symbol,s);const t=ledger.donchianPaper.findLast(x=>x.symbol===symbol&&x.status==="OPEN"),mark=Number(s.lastObservedClose||s.entryPrice),exit=mark*(s.position==="LONG"?1-SLIP:1+SLIP),paperPnl=t?((t.side==="LONG"?exit-t.entryPrice:t.entryPrice-exit)*t.qty-t.feeEntry-exit*t.qty*FEE_FALLBACK):null;return {
+ const advisoryPositions=Object.entries(ledger.donchian).filter(([,s])=>s?.position&&s.position!=="FLAT").map(([symbol,s])=>{paperOpen(symbol,s);const t=ledger.donchianPaper.findLast(x=>x.symbol===symbol&&x.status==="OPEN"),quote=ledger.donchianMarks[symbol],mark=Number(quote?.price||s.lastObservedClose||s.entryPrice),exit=mark*(s.position==="LONG"?1-SLIP:1+SLIP),paperPnl=t?((t.side==="LONG"?exit-t.entryPrice:t.entryPrice-exit)*t.qty-t.feeEntry-exit*t.qty*FEE_FALLBACK):null;return {
   symbol,side:s.position,entryPrice:s.entryPrice,stopLoss:s.stopLoss,takeProfit:s.takeProfit,
-  entryTime:s.entryTime,lastPrice:s.lastObservedClose,chartUrl:donchianChartUrl(symbol),status:"PAPER_OPEN",paperPnl};});
+  entryTime:s.entryTime,lastPrice:mark,lastPriceAt:quote?.observedAt||null,lastPriceSource:quote?.source||"LAST_CLOSED_15M_CANDLE",
+  signalClosePrice:s.lastObservedClose,chartUrl:donchianChartUrl(symbol),status:"PAPER_OPEN",paperPnl};});
  return {schemaVersion:1,ledger:"BINANCE_DEMO_DONCHIAN",mode:"DEMO_ONLY",strategy:"DONCHIAN_20_10_2R",
   updatedAt:now(),executionEnabled:DONCHIAN_EXECUTE,credentialsConfigured:!!KEY&&!!SECRET,
   signals:{total:events.length,entries:events.filter(x=>String(x.detail?.action).startsWith("ENTER")).length,
@@ -1103,6 +1111,7 @@ function bdd(){
  check(115,"Donchian Paper closes and records fee-adjusted PnL",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:100};ledger.donchian.BTCUSDT=s;paperOpen("BTCUSDT",s);paperClose("BTCUSDT",{price:110,closeTime:Date.now(),reason:"TAKE_PROFIT_2R"});const x=ledger.donchianPaper[0];if(x.status!=="CLOSED"||x.netPnl>=x.grossPnl||paperReport().closedTrades!==1)throw Error("paper close");});
  check(116,"Donchian notifications are Paper-labelled and never claim Demo execution",()=>{const x=evaluateDonchian(donchianCandles(111)),m=donchianNotification("SOLUSDT",x,{},"FLAT");if(!m.startsWith("DONCHIAN PAPER")||!m.includes("已建立 Paper 模擬持倉")||m.includes("BINANCE DEMO\n"))throw Error("paper label");});
  check(117,"Donchian Paper closed records remain available after the position leaves the open table",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:100};ledger.donchian.ETHUSDT=s;paperOpen("ETHUSDT",s);paperClose("ETHUSDT",{price:110,closeTime:Date.now(),reason:"TAKE_PROFIT_2R"});const x=donchianStats().closedPaperPositions[0];if(x.symbol!=="ETHUSDT"||x.status!=="PAPER_CLOSED"||x.netPnl<=0||!x.exitTime||!x.chartUrl||"id" in x||"orderId" in x||"clientOrderId" in x)throw Error("closed Paper record");});
+ check(118,"Donchian Paper unrealized PnL uses public mark price without changing closed-candle strategy state",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:101};ledger.donchian.SOLUSDT=s;ledger.donchianMarks.SOLUSDT={price:105,observedAt:now(),source:"BINANCE_DEMO_MARK_PRICE"};paperOpen("SOLUSDT",s);const x=donchianStats().advisoryPositions[0];if(x.lastPrice!==105||x.signalClosePrice!==101||x.lastPriceSource!=="BINANCE_DEMO_MARK_PRICE"||x.paperPnl<4)throw Error("mark price reporting");});
  return {mode:"SYNTHETIC_BDD",total:results.length,passed:results.filter(t=>t.pass).length,
   failed:results.filter(t=>!t.pass).length,results,at:now()};
 }
