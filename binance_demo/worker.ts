@@ -23,6 +23,10 @@ const SLIP=0.0002;
 const LIMIT_TTL=24*60*60*1000;
 const RECONCILE_NOT_FOUND_LIMIT=3;
 const ALLOWED = new Set(["BTCUSDT","ETHUSDT","SOLUSDT","ZECUSDT"]);
+const DONCHIAN_INTERVAL="15m";
+const DONCHIAN_ENTRY_PERIOD=20;
+const DONCHIAN_EXIT_PERIOD=10;
+const DONCHIAN_SYMBOLS=[...ALLOWED];
 const SIGNED_PATHS = new Set(["/fapi/v1/order","/fapi/v1/order/test","/fapi/v1/account",
   "/fapi/v2/balance","/fapi/v3/positionRisk","/fapi/v1/positionSide/dual",
   "/fapi/v1/leverage","/fapi/v1/marginType","/fapi/v1/userTrades","/fapi/v1/income",
@@ -31,13 +35,17 @@ const now = () => new Date().toISOString();
 if(APP_PASSWORD.length<16) throw Error("APP_PASSWORD >=16 required");
 if(!PATH.startsWith("/data/")&&!LOCAL_BDD_ONLY) throw Error("Demo must use its own /data mounted volume");
 if(!Number.isFinite(INITIAL_NOTIONAL)) throw Error("Invalid demo notional");
-const blank=()=>({schema:2,baseline:false,lastSeen:0,lastChannelPoll:null,lastDemoPoll:null,
-  channelError:null,demoError:null,halted:false,haltReason:null,
+const blank=()=>({schema:3,baseline:false,lastSeen:0,lastChannelPoll:null,lastDemoPoll:null,
+  channelError:null,demoError:null,lastDonchianPoll:null,donchianError:null,halted:false,haltReason:null,
   candidate:[],orders:[],events:[],outbox:[],lastQuote:{},lastGoodAccount:null,
-  demoBackoffUntil:0});
+  demoBackoffUntil:0,donchian:{}});
 mkdirSync(dirname(PATH),{recursive:true});
 let ledger=blank();
-if(existsSync(PATH)){ledger={...blank(),...JSON.parse(readFileSync(PATH,"utf8"))};}
+if(existsSync(PATH)){
+ const loaded=JSON.parse(readFileSync(PATH,"utf8"));
+ ledger={...blank(),...loaded,schema:3,
+   donchian:loaded.donchian&&typeof loaded.donchian==="object"?loaded.donchian:{}};
+}
 let storageSafe=true, synthetic=false;
 function markPersistenceFailure(error){
  storageSafe=false;ledger.halted=true;ledger.haltReason="PERSISTENCE_FAILURE";
@@ -133,7 +141,7 @@ async function publicGet(path,params={}){
   Object.assign(err,failureFlags("GET",r.status,0));throw err;}
  return JSON.parse(raw);
 }
-let serverOffset=0,exchangeInfoCache=null,lastExchangeInfoAt=0,lastPublicLogAt=0;
+let serverOffset=0,exchangeInfoCache=null,lastExchangeInfoAt=0,lastPublicLogAt=0,lastDonchianLogAt=0;
 async function serverTime(){const d=await publicGet("/fapi/v1/time");
  if(!Number.isFinite(d.serverTime))throw Error("Invalid DEMO server time");
  serverOffset=d.serverTime-Date.now();return d.serverTime;}
@@ -185,6 +193,70 @@ function shouldCancelEntry(o,at=Date.now()){
 function hasUnmanagedPosition(positions,orders){
  return positions.filter(x=>Math.abs(Number(x.positionAmt||0))>1e-10).some(row=>
    row.positionSide!=="BOTH"||!orders.some(o=>!["CLOSED","CLOSED_UNFILLED"].includes(o.status)&&o.symbol===row.symbol));
+}
+function evaluateDonchian(candles,position="FLAT"){
+ const current=candles.at(-1);
+ if(!current)return null;
+ const period=position==="FLAT"?DONCHIAN_ENTRY_PERIOD:DONCHIAN_EXIT_PERIOD;
+ if(candles.length<period+1)return null;
+ const prior=candles.slice(-(period+1),-1);
+ const upper=Math.max(...prior.map(x=>x.high)),lower=Math.min(...prior.map(x=>x.low));
+ if(!Number.isFinite(upper)||!Number.isFinite(lower)||!Number.isFinite(current.close))return null;
+ if(position==="FLAT"&&current.close>upper)return {action:"ENTER_LONG",upper,lower,price:current.close,closeTime:current.closeTime};
+ if(position==="FLAT"&&current.close<lower)return {action:"ENTER_SHORT",upper,lower,price:current.close,closeTime:current.closeTime};
+ if(position==="LONG"&&current.close<lower)return {action:"EXIT_LONG",upper,lower,price:current.close,closeTime:current.closeTime};
+ if(position==="SHORT"&&current.close>upper)return {action:"EXIT_SHORT",upper,lower,price:current.close,closeTime:current.closeTime};
+ return null;
+}
+function applyDonchian(symbol,candles){
+ if(!ALLOWED.has(symbol)||!candles.length)return null;
+ const latest=candles.at(-1),state=ledger.donchian[symbol]||{position:"FLAT",lastCandleCloseTime:null,
+   entryPrice:null,entryTime:null,lastAction:null};
+ if(state.lastCandleCloseTime===null){
+  state.lastCandleCloseTime=latest.closeTime;state.lastObservedClose=latest.close;
+  ledger.donchian[symbol]=state;save();return null; // baseline only; never alert stale history
+ }
+ if(latest.closeTime<=state.lastCandleCloseTime)return null;
+ const event=evaluateDonchian(candles,state.position);
+ state.lastCandleCloseTime=latest.closeTime;state.lastObservedClose=latest.close;
+ if(event){
+  const previousPosition=state.position;
+  if(event.action==="ENTER_LONG"||event.action==="ENTER_SHORT"){
+   state.position=event.action==="ENTER_LONG"?"LONG":"SHORT";
+   state.entryPrice=event.price;state.entryTime=new Date(event.closeTime).toISOString();
+  }else{state.position="FLAT";state.exitPrice=event.price;state.exitTime=new Date(event.closeTime).toISOString();}
+  state.lastAction={...event,at:now(),previousPosition};
+  log("DONCHIAN_SIGNAL",{symbol,action:event.action,price:event.price,closeTime:event.closeTime});
+  const label={ENTER_LONG:"多方建倉時機",ENTER_SHORT:"空方建倉時機",EXIT_LONG:"多方平倉時機",EXIT_SHORT:"空方平倉時機"}[event.action];
+  const pnl=(event.action.startsWith("EXIT")&&state.entryPrice)?
+    ((previousPosition==="LONG"?event.price-state.entryPrice:state.entryPrice-event.price)/state.entryPrice*100):null;
+  enqueue("donchian:"+symbol+":"+event.closeTime+":"+event.action,
+    "📊 DONCHIAN ALERT · 獨立策略\n"+symbol+" · "+DONCHIAN_INTERVAL+"\n"+label+
+    "\n收盤價："+event.price+"\n通道上緣："+event.upper+"\n通道下緣："+event.lower+
+    (pnl===null?"":"\n提示區間報酬："+(pnl>=0?"+":"")+pnl.toFixed(3)+"%")+
+    "\nK 線收盤："+new Date(event.closeTime).toISOString()+
+    "\n只提供策略時機提示，不會自動下單，與 Telegram 頻道訊號無關。");
+  if(event.action.startsWith("EXIT")){state.entryPrice=null;state.entryTime=null;}
+ }
+ ledger.donchian[symbol]=state;save();return event;
+}
+async function pollDonchian(){
+ const observed=Date.now()+serverOffset;
+ const rows=await Promise.all(DONCHIAN_SYMBOLS.map(async symbol=>{
+  const raw=await publicGet("/fapi/v1/klines",{symbol,interval:DONCHIAN_INTERVAL,limit:DONCHIAN_ENTRY_PERIOD+12});
+  if(!Array.isArray(raw))throw Error("Invalid Donchian kline response for "+symbol);
+  const candles=raw.map(k=>({openTime:Number(k[0]),high:Number(k[2]),low:Number(k[3]),close:Number(k[4]),closeTime:Number(k[6])}))
+    .filter(k=>[k.openTime,k.high,k.low,k.close,k.closeTime].every(Number.isFinite)&&k.closeTime<observed);
+  if(candles.length<DONCHIAN_ENTRY_PERIOD+1)throw Error("Insufficient closed Donchian candles for "+symbol);
+  return {symbol,candles};
+ }));
+ for(const row of rows)applyDonchian(row.symbol,row.candles);
+ ledger.lastDonchianPoll=now();ledger.donchianError=null;save();
+ if(Date.now()-lastDonchianLogAt>600000){
+  console.info("DONCHIAN_PUBLIC_CONNECTED",JSON.stringify({host:DEMO_HOST,interval:DONCHIAN_INTERVAL,
+    symbols:rows.map(row=>row.symbol),lastClosed:Object.fromEntries(rows.map(row=>[row.symbol,row.candles.at(-1).closeTime]))}));
+  lastDonchianLogAt=Date.now();
+ }
 }
 function riskParams(c,price,sym,acc,spec){
  if(!ALLOWED.has(sym))throw Error("Unsupported instrument");
@@ -326,6 +398,9 @@ function safeStatus(){
   exchangeConnected:!!ledger.lastGoodAccount,
   backoffUntil:ledger.demoBackoffUntil?new Date(ledger.demoBackoffUntil).toISOString():null,
   managedOpen:ledger.orders.filter(o=>!["CLOSED","CLOSED_UNFILLED"].includes(o.status)).length,
+  donchian:{independentFromTelegramChannel:true,interval:DONCHIAN_INTERVAL,
+   entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,symbols:DONCHIAN_SYMBOLS,
+   lastPoll:ledger.lastDonchianPoll,error:ledger.donchianError},
   limit:{notionalUsdt:INITIAL_NOTIONAL,maxOpen:MAX_OPEN,maxAccountRiskFraction:MAX_LOSS,netTpFraction:TP_NET}};
 }
 function captureCandidates(posts){
@@ -639,6 +714,9 @@ async function tick(){
  }catch(err){noteBackoff(err);ledger.demoError=String(err).slice(0,200);
    if(EXECUTE&&err?.auth)halt("DEMO_AUTHENTICATION_REJECTED");
    console.error("DEMO_API_ERROR",ledger.demoError);}
+ try{await pollDonchian();}
+ catch(err){ledger.donchianError=String(err).slice(0,200);
+   console.error("DONCHIAN_ERROR",ledger.donchianError);}
  try{save();}catch{} finally{busy=false;}
 }
 async function flushNotifications(){
@@ -762,7 +840,7 @@ function bdd(){
   catch(e){if(String(e).includes("accepted"))throw e;}});
  check(74,"Positive funding increases projected net",()=>{let a=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0);
   let b=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0.1);if(b.net<=a.net)throw Error("funding");});
- check(75,"Schema v2 contains durable backoff and reconciliation fields",()=>{const x=blank();if(x.schema!==2||x.demoBackoffUntil!==0||!Array.isArray(x.orders))throw Error("schema");});
+ check(75,"Schema v3 contains durable reconciliation and Donchian fields",()=>{const x=blank();if(x.schema!==3||x.demoBackoffUntil!==0||!Array.isArray(x.orders)||!x.donchian)throw Error("schema");});
  check(76,"Test-order diagnostic pins One-Way position side",()=>{if(DIAGNOSTIC_POSITION_SIDE!=="BOTH")throw Error("position side");});
  check(77,"Execution stays false unless exact lowercase true",()=>{if(Bun.env.DEMO_ORDER_ENABLED!=="true"&&EXECUTE)throw Error("unsafe env parsing");});
  check(78,"Local BDD path override can never coexist with execution",()=>{if(LOCAL_BDD_ONLY&&EXECUTE)throw Error("unsafe local mode");});
@@ -781,6 +859,26 @@ function bdd(){
   catch(e){if(String(e).includes("accepted"))throw e;}});
  check(85,"Non-USDT commission cannot be mislabeled as USDT net PnL",()=>{try{actualSettlement({orderId:1,tpOrderId:2},[{orderId:1,commission:"0.1",commissionAsset:"BNB"}],[]);throw Error("accepted")}
   catch(e){if(String(e).includes("accepted"))throw e;}});
+ const donchianCandles=(lastClose,count=21,offset=0)=>Array.from({length:count},(_,i)=>({
+  high:i===count-1?Math.max(110,lastClose):110,low:i===count-1?Math.min(90,lastClose):90,
+  close:i===count-1?lastClose:100,closeTime:(offset+i+1)*900000
+ }));
+ check(86,"Donchian 20-period upper breakout signals long entry",()=>{if(evaluateDonchian(donchianCandles(111))?.action!=="ENTER_LONG")throw Error("long");});
+ check(87,"Donchian 20-period lower breakout signals short entry",()=>{if(evaluateDonchian(donchianCandles(89))?.action!=="ENTER_SHORT")throw Error("short");});
+ check(88,"Donchian inside-channel close emits no entry",()=>{if(evaluateDonchian(donchianCandles(100)))throw Error("false entry");});
+ check(89,"Donchian long uses 10-period lower channel exit",()=>{if(evaluateDonchian(donchianCandles(89),"LONG")?.action!=="EXIT_LONG")throw Error("long exit");});
+ check(90,"Donchian short uses 10-period upper channel exit",()=>{if(evaluateDonchian(donchianCandles(111),"SHORT")?.action!=="EXIT_SHORT")throw Error("short exit");});
+ check(91,"Donchian boundary touch is not a breakout",()=>{if(evaluateDonchian(donchianCandles(110))||evaluateDonchian(donchianCandles(90)))throw Error("boundary");});
+ check(92,"Donchian refuses insufficient closed candles",()=>{if(evaluateDonchian(donchianCandles(111,20)))throw Error("short history");});
+ check(93,"First Donchian poll only creates a baseline",()=>{const x=applyDonchian("BTCUSDT",donchianCandles(111));if(x||ledger.donchian.BTCUSDT.position!=="FLAT"||ledger.orders.length)throw Error("stale alert");});
+ check(94,"Donchian entry state is independent of exchange orders",()=>{applyDonchian("BTCUSDT",donchianCandles(100));
+  const x=applyDonchian("BTCUSDT",donchianCandles(111,21,1));if(x?.action!=="ENTER_LONG"||ledger.donchian.BTCUSDT.position!=="LONG"||ledger.orders.length)throw Error("coupled");});
+ check(95,"Duplicate closed Donchian candle is idempotent",()=>{applyDonchian("BTCUSDT",donchianCandles(100));
+  const candles=donchianCandles(111,21,1);applyDonchian("BTCUSDT",candles);if(applyDonchian("BTCUSDT",candles))throw Error("duplicate");});
+ check(96,"Donchian exit returns advisory state to flat",()=>{applyDonchian("BTCUSDT",donchianCandles(100));
+  applyDonchian("BTCUSDT",donchianCandles(111,21,1));const x=applyDonchian("BTCUSDT",donchianCandles(89,21,2));
+  if(x?.action!=="EXIT_LONG"||ledger.donchian.BTCUSDT.position!=="FLAT"||ledger.donchian.BTCUSDT.entryPrice!==null)throw Error("exit state");});
+ check(97,"Status declares Donchian independent from Telegram channel",()=>{const x=safeStatus().donchian;if(!x.independentFromTelegramChannel||x.interval!=="15m"||x.entryPeriod!==20||x.exitPeriod!==10)throw Error("status");});
  return {mode:"SYNTHETIC_BDD",total:results.length,passed:results.filter(t=>t.pass).length,
   failed:results.filter(t=>!t.pass).length,results,at:now()};
 }
@@ -795,11 +893,12 @@ const page='<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name
 '<main><h1>K Signal — Binance Demo Trading</h1><p class="tag">DEMO ONLY · 不連正式 Binance · 不使用真實資金</p>'+
 '<section><h2>環境與風控</h2><pre id="status">載入中</pre></section>'+
 '<section><h2>候選交易訊號</h2><pre id="candidates">載入中</pre></section>'+
+'<section><h2>Donchian 獨立策略提示</h2><p>15 分鐘已收盤 K 線；20 期突破提示建倉，10 期反向突破提示平倉。不讀取 Telegram 頻道，也不會自動下單。</p><pre id="donchian">載入中</pre></section>'+
 '<section><h2>Demo 交易與對帳</h2><pre id="orders">載入中</pre></section>'+
-'<section><a href="/api/bdd">執行 BDD 測試</a> · <a href="/api/audit">審計事件</a> · <a href="https://t.me/KCryptoBTC168">原始頻道</a></section>'+
+'<section><a href="/api/bdd">執行 BDD 測試</a> · <a href="/api/donchian">Donchian 狀態</a> · <a href="/api/audit">審計事件</a> · <a href="https://t.me/KCryptoBTC168">原始頻道</a></section>'+
 '<p>所有交易必須使用 Demo API 專用金鑰，並在 Railway 環境變數手動設定 DEMO_ORDER_ENABLED=true。單筆名目上限 100 USDT、僅允許一個持倉。'+
 '首次同步歷史貼文只建立基線。正式 Paper Lab 的交易資料完全獨立。</p></main>'+
-'<script>async function f(){for(let [p,id] of [["/api/status","status"],["/api/candidates","candidates"],["/api/orders","orders"]]){try{const r=await fetch(p);document.getElementById(id).textContent=JSON.stringify(await r.json(),null,2)}catch(e){document.getElementById(id).textContent=String(e)}}}f();setInterval(f,15000)</script></html>';
+'<script>async function f(){for(let [p,id] of [["/api/status","status"],["/api/candidates","candidates"],["/api/donchian","donchian"],["/api/orders","orders"]]){try{const r=await fetch(p);document.getElementById(id).textContent=JSON.stringify(await r.json(),null,2)}catch(e){document.getElementById(id).textContent=String(e)}}}f();setInterval(f,15000)</script></html>';
 const app=Bun.serve({hostname:"0.0.0.0",port:Number(Bun.env.PORT||8080),async fetch(req){
  const u=new URL(req.url);
  if(u.pathname==="/healthz")return response({ok:true,mode:"DEMO_ONLY",ready:!ledger.halted&&storageSafe});
@@ -819,6 +918,9 @@ const app=Bun.serve({hostname:"0.0.0.0",port:Number(Bun.env.PORT||8080),async fe
  if(u.pathname==="/")return new Response(page,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"}});
  if(u.pathname==="/api/status")return response(safeStatus());
  if(u.pathname==="/api/candidates")return response(ledger.candidate);
+ if(u.pathname==="/api/donchian")return response({strategy:{independentFromTelegramChannel:true,
+   interval:DONCHIAN_INTERVAL,entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,
+   symbols:DONCHIAN_SYMBOLS,lastPoll:ledger.lastDonchianPoll,error:ledger.donchianError},states:ledger.donchian});
  if(u.pathname==="/api/orders")return response(ledger.orders);
  if(u.pathname==="/api/audit")return response(ledger.events.slice(-300));
  if(u.pathname==="/api/bdd")return response(bdd());

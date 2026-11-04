@@ -1,7 +1,7 @@
 # BDD — Binance Demo Safety and Integration
 
 ## Executed
-85 isolated in-memory synthetic checks (local Bun 1.4.4; Railway startup fails on regression). The original 47 scenarios remain, plus deterministic coverage for:
+97 isolated in-memory synthetic checks (local Bun 1.4.4; Railway startup fails on regression). The original 85 scenarios remain, plus 12 deterministic Donchian cases for:
 
 - partial-fill remainder and canceled-partial state transitions;
 - active/terminal order classifiers, identity and overfill rejection;
@@ -14,18 +14,23 @@
 - fail-closed persistence transition and mandatory `BINANCE DEMO` Telegram prefix;
 - LIMIT `LOT_SIZE`, tick rounding and price-filter checks;
 - non-USDT commission refusal and local-test safety isolation.
+- strict 20-bar long/short entry breakouts and boundary/no-signal behavior;
+- strict 10-bar long/short exits and return to flat advisory state;
+- insufficient history refusal, first-observation baseline, closed-candle deduplication;
+- independence from channel candidates, exchange orders and the Telegram channel poller;
+- status metadata for interval, periods and explicit channel independence.
 
 Local execution on 2026-11-04:
 ```
-BINANCE_DEMO_BDD {"passed":85,"failed":0,"total":85,"errors":[]}
+BINANCE_DEMO_BDD {"passed":97,"failed":0,"total":97,"errors":[]}
 ```
 
 Local HTTP route checks on 2026-11-04:
 ```
 health=200
-unauthenticated /api/status=401
-authenticated /api/status=200
-POST /api/demo/order-test=428 (expected: Demo credentials missing)
+unauthenticated /api/donchian=401
+authenticated /api/donchian=200
+dashboard contains independent/non-ordering Donchian disclosure
 ```
 
 The local host could read the Telegram public channel but timed out reaching `demo-fapi.binance.com`; this remains a failed local public-endpoint check, not a pass. Railway public endpoint verification was repeated separately below.
@@ -70,7 +75,25 @@ Feature: Safe activation
    When projected net PnL after entry fees, funding, exit fees and slippage reaches 1%
    Then submit one reduceOnly Demo exit order with a unique client ID
    And reconcile actual fills before claiming realized PnL
+
+Feature: Independent Donchian timing alerts
+ Scenario: Closed candle breaks the 20-bar upper channel
+   Given the Donchian advisory state is flat
+   And a new 15-minute candle has closed above the prior 20 highs
+   When the independent Donchian poll runs
+   Then record a long-entry timing alert without creating a candidate or order
+
+ Scenario: Long advisory exits through the 10-bar lower channel
+   Given the Donchian advisory state is long
+   And a new 15-minute candle has closed below the prior 10 lows
+   When the independent Donchian poll runs
+   Then record a long-exit timing alert and return the advisory state to flat
+
+ Scenario: Telegram channel polling fails
+   Given the public Telegram channel cannot be read
+   When the service tick continues
+   Then the Donchian public-kline poll still runs in its separate error boundary
 ```
 
 ## Integration pending (not passed)
-Demo API key signed auth, non-matching test-order POST, matched MARKET/partial LIMIT fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and net-1% realized PnL, Telegram delivery, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. Actual virtual-fund Demo orders require separate explicit user approval and `DEMO_ORDER_ENABLED=true`.
+Demo API key signed auth, non-matching test-order POST, matched MARKET/partial LIMIT fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and net-1% realized PnL, real outbound Donchian alert delivery, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. Actual virtual-fund Demo orders require separate explicit user approval and `DEMO_ORDER_ENABLED=true`.
