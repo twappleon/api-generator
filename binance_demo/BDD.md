@@ -223,7 +223,9 @@ Feature: Donchian statistics in Paper Monitor
    Given a valid Donchian Demo aggregate
    When Paper Monitor refreshes its report
    Then show Donchian signals, closed Demo trades, win rate and actual net PnL
-   And show a clearly labelled cross-ledger realized-PnL and trade-count total
+   And show `Telegram 訊號 Paper 帳本` and `Donchian 策略 Paper 帳本` as separate visual blocks
+   And show each account's own starting balance and net asset value
+   And do not show a combined net asset value or cross-ledger total
    But do not alter Paper equity, Paper return or the Paper equity curve
 
  Scenario: Demo statistics are unavailable
@@ -254,6 +256,8 @@ Feature: Donchian statistics in Paper Monitor
 ```
 
 Railway evidence (2026-11-04): Demo BDD 116/116 and Paper BDD 155/155 passed. The Paper-first dashboard and notification wording were verified; the live Donchian Paper ledger held 3 positions, equity 9,995.44 USDT and unrealized PnL -4.56 USDT. No Demo order was created.
+
+Ledger-separation evidence (2026-11-04): Paper deployment `2e7b9c94-895b-4263-896d-3af5e65bca9a` succeeded with 156/156 BDD. The live page rendered `Telegram 訊號 Paper 帳本` as independent account A and `Donchian 策略 Paper 帳本` as independent account B, each with its own starting balance and net asset value. No combined net asset value was rendered; health was HTTP 200 and deployed source matched git exactly.
 
 ## Integration pending (not passed)
 Demo API key signed auth, non-matching test-order POST, matched Donchian MARKET entry/exit, partial fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and realized net PnL, natural breakout-triggered execution, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. User approval for virtual-fund Donchian execution was granted on 2026-11-04, but credentials and signed dry-run evidence are still missing; keep `DEMO_DONCHIAN_ORDER_ENABLED=false` until those checks pass.
