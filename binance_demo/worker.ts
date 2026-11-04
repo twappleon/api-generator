@@ -1,4 +1,4 @@
-import {createHmac,timingSafeEqual,randomBytes} from "node:crypto";
+import {createHmac,timingSafeEqual} from "node:crypto";
 import {existsSync,mkdirSync,readFileSync,writeFileSync,renameSync} from "node:fs";
 import {dirname} from "node:path";
 
@@ -9,6 +9,7 @@ const APP_PASSWORD = Bun.env.APP_PASSWORD || "";
 const KEY = Bun.env.BINANCE_DEMO_API_KEY || "";
 const SECRET = Bun.env.BINANCE_DEMO_API_SECRET || "";
 const EXECUTE = Bun.env.DEMO_ORDER_ENABLED === "true";
+const LOCAL_BDD_ONLY = Bun.env.LOCAL_BDD_ONLY === "true" && !EXECUTE;
 const TELEGRAM_TOKEN = Bun.env.TELEGRAM_BOT_TOKEN || "";
 const TELEGRAM_CHAT_ID = Bun.env.DEMO_TELEGRAM_CHAT_ID || "";
 const PATH = Bun.env.DATA_FILE || "/data/demo-state.json";
@@ -16,28 +17,39 @@ const INITIAL_NOTIONAL = Math.min(100,Math.max(10,Number(Bun.env.DEMO_TRADE_NOTI
 const MAX_OPEN = 1;
 const MAX_LOSS = 0.005;
 const TP_NET = 0.01;
+const DIAGNOSTIC_POSITION_SIDE="BOTH";
 const FEE_FALLBACK=0.0004;
 const SLIP=0.0002;
+const LIMIT_TTL=24*60*60*1000;
+const RECONCILE_NOT_FOUND_LIMIT=3;
 const ALLOWED = new Set(["BTCUSDT","ETHUSDT","SOLUSDT","ZECUSDT"]);
+const SIGNED_PATHS = new Set(["/fapi/v1/order","/fapi/v1/order/test","/fapi/v1/account",
+  "/fapi/v2/balance","/fapi/v3/positionRisk","/fapi/v1/positionSide/dual",
+  "/fapi/v1/leverage","/fapi/v1/marginType","/fapi/v1/userTrades","/fapi/v1/income",
+  "/fapi/v1/algoOrder","/fapi/v1/openAlgoOrders"]);
 const now = () => new Date().toISOString();
 if(APP_PASSWORD.length<16) throw Error("APP_PASSWORD >=16 required");
-if(!PATH.startsWith("/data/")) throw Error("Demo must use its own /data mounted volume");
+if(!PATH.startsWith("/data/")&&!LOCAL_BDD_ONLY) throw Error("Demo must use its own /data mounted volume");
 if(!Number.isFinite(INITIAL_NOTIONAL)) throw Error("Invalid demo notional");
-const blank=()=>({schema:1,baseline:false,lastSeen:0,lastChannelPoll:null,lastDemoPoll:null,
+const blank=()=>({schema:2,baseline:false,lastSeen:0,lastChannelPoll:null,lastDemoPoll:null,
   channelError:null,demoError:null,halted:false,haltReason:null,
-  candidate:[],orders:[],events:[],outbox:[],lastQuote:{},lastGoodAccount:null});
+  candidate:[],orders:[],events:[],outbox:[],lastQuote:{},lastGoodAccount:null,
+  demoBackoffUntil:0});
 mkdirSync(dirname(PATH),{recursive:true});
 let ledger=blank();
 if(existsSync(PATH)){ledger={...blank(),...JSON.parse(readFileSync(PATH,"utf8"))};}
 let storageSafe=true, synthetic=false;
+function markPersistenceFailure(error){
+ storageSafe=false;ledger.halted=true;ledger.haltReason="PERSISTENCE_FAILURE";
+ if(!synthetic)console.error("DEMO_STORAGE_FATAL",String(error));
+}
 function save(){
   if(synthetic)return;
   try{
     let tmp=PATH+".writing";
     writeFileSync(tmp,JSON.stringify(ledger),{mode:0o600});
     renameSync(tmp,PATH);
-  }catch(e){storageSafe=false;ledger.halted=true;ledger.haltReason="PERSISTENCE_FAILURE";
-    console.error("DEMO_STORAGE_FATAL",String(e));throw e;}
+  }catch(e){markPersistenceFailure(e);throw e;}
 }
 function log(type,detail){
   if(synthetic)return;
@@ -54,10 +66,14 @@ function auth(req){
   return val.length===expected.length&&timingSafeEqual(val,expected);}catch{return false;}
 }
 function response(obj,code=200){return Response.json(obj,{status:code,headers:{"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});}
+function tagDemoNotice(text){
+ const body=String(text);
+ return body.toUpperCase().includes("BINANCE DEMO")?body:"BINANCE DEMO\n"+body;
+}
 function enqueue(id,text){
   if(synthetic||!TELEGRAM_TOKEN||!TELEGRAM_CHAT_ID)return;
   if(ledger.outbox.some(x=>x.id===id))return;
-  ledger.outbox.push({id,text:String(text).slice(0,3500),at:now(),sentAt:null,
+ ledger.outbox.push({id,text:tagDemoNotice(text).slice(0,3500),at:now(),sentAt:null,
     status:"PENDING",attempts:0,retryAt:0});save();
 }
 async function telegramDeliver(){
@@ -110,8 +126,11 @@ function parseSignal(x){
 async function publicGet(path,params={}){
  const u=new URL(DEMO_HOST+path);
  for(const [k,v] of Object.entries(params))u.searchParams.set(k,String(v));
- const r=await fetch(u,{redirect:"error",signal:AbortSignal.timeout(10000)});
- const raw=await r.text();if(!r.ok)throw Error("Demo public "+path+" HTTP "+r.status);
+ let r;
+ try{r=await fetch(u,{redirect:"error",signal:AbortSignal.timeout(10000)});}
+ catch(cause){const err=new Error("Demo public "+path+" network failure");err.cause=cause;err.transient=true;throw err;}
+ const raw=await r.text();if(!r.ok){const err=new Error("Demo public "+path+" HTTP "+r.status);
+  Object.assign(err,failureFlags("GET",r.status,0));throw err;}
  return JSON.parse(raw);
 }
 let serverOffset=0,exchangeInfoCache=null,lastExchangeInfoAt=0,lastPublicLogAt=0;
@@ -120,35 +139,63 @@ async function serverTime(){const d=await publicGet("/fapi/v1/time");
  serverOffset=d.serverTime-Date.now();return d.serverTime;}
 async function signed(method,path,args={}){
  if(!KEY||!SECRET)throw Error("DEMO credentials missing");
- const whitelist=new Set(["/fapi/v1/order","/fapi/v1/order/test","/fapi/v1/account",
-   "/fapi/v2/balance","/fapi/v3/positionRisk","/fapi/v1/positionSide/dual",
-   "/fapi/v1/leverage","/fapi/v1/marginType","/fapi/v1/userTrades","/fapi/v1/income",
-   "/fapi/v1/algoOrder","/fapi/v1/openAlgoOrders"]);
- if(!whitelist.has(path))throw Error("Signed path not allowed");
+ if(!SIGNED_PATHS.has(path))throw Error("Signed path not allowed");
  const query=new URLSearchParams();
  for(const [k,v] of Object.entries(args))if(v!==null&&v!==undefined)query.set(k,String(v));
  query.set("timestamp",String(Date.now()+serverOffset));query.set("recvWindow","5000");
  const qs=query.toString(), signature=createHmac("sha256",SECRET).update(qs).digest("hex");
  const body=qs+"&signature="+signature;
  const target=DEMO_HOST+path;
- const r=await fetch(method==="GET"?target+"?"+body:target,{
-  method,headers:{"X-MBX-APIKEY":KEY,...(method==="GET"?{}:{"Content-Type":"application/x-www-form-urlencoded"})},
-  ...(method==="GET"?{}:{body}),redirect:"error",signal:AbortSignal.timeout(12000)});
+ let r;
+ try{
+  r=await fetch(method==="GET"?target+"?"+body:target,{
+   method,headers:{"X-MBX-APIKEY":KEY,...(method==="GET"?{}:{"Content-Type":"application/x-www-form-urlencoded"})},
+   ...(method==="GET"?{}:{body}),redirect:"error",signal:AbortSignal.timeout(12000)});
+ }catch(cause){
+  const err=new Error("DEMO "+method+" "+path+" network failure");
+  err.cause=cause;err.transient=true;err.unknown=method!=="GET";throw err;
+ }
  const raw=await r.text();let data;try{data=JSON.parse(raw)}catch{data={msg:raw.slice(0,120)}}
  if(!r.ok){const err=new Error("DEMO "+method+" "+path+" HTTP "+r.status+
     " code "+(data.code??"") +" "+String(data.msg||"").slice(0,120));
-   err.status=r.status;err.code=data.code;err.unknown=r.status>=500||r.status===408;throw err;}
+   err.status=r.status;err.code=data.code;
+   Object.assign(err,failureFlags(method,r.status,data.code));
+   const retryAfter=Number(r.headers.get("retry-after")||0);
+   if(retryAfter>0)err.retryAfterMs=retryAfter*1000;
+   throw err;}
  return data;
 }
 const signedQuery=async(path,args)=>signed("GET",path,args);
+function failureFlags(method,status,code){return {
+ auth:[401,403].includes(Number(status))||[-2014,-2015].includes(Number(code)),
+ transient:[408,418,429].includes(Number(status))||Number(status)>=500,
+ unknown:method!=="GET"&&(Number(status)===408||Number(status)>=500)
+};}
+function noteBackoff(err){
+ if(!err?.transient)return;
+ const wait=Math.max(Number(err.retryAfterMs)||0,err?.status===429?60000:10000);
+ ledger.demoBackoffUntil=Math.max(Number(ledger.demoBackoffUntil)||0,Date.now()+wait);
+}
+function isOrderActive(status){return ["NEW","PARTIALLY_FILLED","PENDING_CANCEL"].includes(String(status));}
+function isOrderTerminal(status){return ["FILLED","CANCELED","EXPIRED","EXPIRED_IN_MATCH","REJECTED"].includes(String(status));}
+function isAlgoActive(status){return ["NEW","PENDING_NEW","TRIGGERING"].includes(String(status));}
+function shouldCancelEntry(o,at=Date.now()){
+ return o.mode==="LIMIT"&&isOrderActive(o.exchangeStatus)&&at-Date.parse(o.submittedAt)>=LIMIT_TTL;
+}
+function hasUnmanagedPosition(positions,orders){
+ return positions.filter(x=>Math.abs(Number(x.positionAmt||0))>1e-10).some(row=>
+   row.positionSide!=="BOTH"||!orders.some(o=>!["CLOSED","CLOSED_UNFILLED"].includes(o.status)&&o.symbol===row.symbol));
+}
 function riskParams(c,price,sym,acc,spec){
  if(!ALLOWED.has(sym))throw Error("Unsupported instrument");
  const f=spec.filters||[];
- const lot=f.find(x=>x.filterType==="MARKET_LOT_SIZE")||f.find(x=>x.filterType==="LOT_SIZE");
+ const lot=c.mode==="LIMIT"?f.find(x=>x.filterType==="LOT_SIZE"):
+   f.find(x=>x.filterType==="MARKET_LOT_SIZE")||f.find(x=>x.filterType==="LOT_SIZE");
  const minNotional=f.find(x=>x.filterType==="MIN_NOTIONAL");
  const tick=f.find(x=>x.filterType==="PRICE_FILTER");
  const step=Number(lot?.stepSize||0),minQty=Number(lot?.minQty||0);
  const minValue=Number(minNotional?.notional||5), tickValue=Number(tick?.tickSize||0);
+ const minPrice=Number(tick?.minPrice||0),maxPrice=Number(tick?.maxPrice||Number.MAX_VALUE);
  if(!Number.isFinite(price)||price<=0||step<=0||tickValue<=0||c.stop<=0)throw Error("Invalid price or filters");
  if((c.side==="long"&&c.stop>=price)||(c.side==="short"&&c.stop<=price))
    throw Error("Stop beyond entry");
@@ -162,23 +209,67 @@ function riskParams(c,price,sym,acc,spec){
  if(q<minQty||q*price<minValue)throw Error("Demo quantity below exchange minimum");
  let sl=c.side==="long"?Math.floor(c.stop/tickValue)*tickValue:Math.ceil(c.stop/tickValue)*tickValue;
  sl=Number(sl.toFixed(8));
- return {quantity:q,stopPrice:sl,notional:q*price,risk:Math.abs(price-sl)*q};
+ if(sl<minPrice||sl>maxPrice)throw Error("Stop outside exchange price filter");
+ let limitPrice=null;
+ if(c.mode==="LIMIT"){
+  const raw=c.side==="long"?c.entryLow:c.entryHigh;
+  limitPrice=c.side==="long"?Math.floor(raw/tickValue)*tickValue:Math.ceil(raw/tickValue)*tickValue;
+  limitPrice=Number(limitPrice.toFixed(8));
+  if(limitPrice<minPrice||limitPrice>maxPrice||q*limitPrice<minValue)throw Error("Limit outside exchange filters");
+ }
+ return {quantity:q,stopPrice:sl,limitPrice,notional:q*price,risk:Math.abs(price-sl)*q};
 }
 const idFor=(c,suffix)=>("KSD"+c.id+"_"+suffix).slice(0,36);
 function recordOrderStatus(local,remote){
  if(!remote)return;
  const qty=Number(remote.executedQty||0),avg=Number(remote.avgPrice||0);
- if(qty<0||!Number.isFinite(qty)||!Number.isFinite(avg))throw Error("Invalid remote order");
+ const origQty=Number(remote.origQty??local.qty??remote.executedQty??0);
+ if(qty<0||!Number.isFinite(qty)||!Number.isFinite(avg)||!Number.isFinite(origQty)||origQty<qty)
+   throw Error("Invalid remote order");
+ if(remote.clientOrderId && remote.clientOrderId!==local.clientOrderId)
+   throw Error("Remote client order ID mismatch");
+ if(remote.symbol && remote.symbol!==local.symbol)throw Error("Remote order symbol mismatch");
  local.orderId=remote.orderId??local.orderId;
  local.exchangeStatus=String(remote.status||"UNKNOWN");
+ local.origQty=origQty;
  local.filledQty=qty;
+ local.remainingQty=Math.max(0,origQty-qty);
  if(avg>0)local.avgPrice=avg;
- if(qty>0 && ["NEW","PARTIALLY_FILLED","FILLED"].includes(local.exchangeStatus))
+ else if(qty>0&&Number(remote.cumQuote)>0)local.avgPrice=Number(remote.cumQuote)/qty;
+ local.entryTerminal=isOrderTerminal(local.exchangeStatus);
+ if(qty>0)
     local.status=local.stopConfirmed?"PROTECTED":"NEEDS_STOP";
- else if(local.exchangeStatus==="FILLED"&&qty>0)local.status="NEEDS_STOP";
- else if(["CANCELED","EXPIRED","REJECTED"].includes(local.exchangeStatus)&&qty===0)local.status="CLOSED_UNFILLED";
+ else if(isOrderTerminal(local.exchangeStatus))local.status="CLOSED_UNFILLED";
  else if(local.exchangeStatus==="NEW")local.status="ORDER_PENDING";
  local.lastReconcile=now();
+}
+function recordAlgoStatus(o,remote){
+ if(!remote||String(remote.clientAlgoId||"")!==o.stopClientId||remote.symbol!==o.symbol)
+   throw Error("Invalid DEMO stop response identity");
+ if(remote.orderType!=="STOP_MARKET"||remote.algoType!=="CONDITIONAL"||remote.closePosition!==true)
+   throw Error("Invalid DEMO stop response protection fields");
+ o.stopAlgoId=remote.algoId??o.stopAlgoId??null;
+ o.stopStatus=String(remote.algoStatus||"UNKNOWN");
+ o.stopActualOrderId=remote.actualOrderId||o.stopActualOrderId||null;
+ o.stopConfirmed=isAlgoActive(o.stopStatus);
+ o.stopLastCheckedAt=now();
+ if(o.stopConfirmed)o.status="PROTECTED";
+ return o.stopConfirmed;
+}
+function actualSettlement(o,trades,fundingRows){
+ const entryId=String(o.orderId);
+ const exitIds=new Set([o.tpOrderId,o.stopActualOrderId].filter(v=>v!==null&&v!==undefined&&v!=="").map(String));
+ const ids=new Set([entryId,...exitIds]);
+ const owned=trades.filter(t=>ids.has(String(t.orderId)));
+ if(owned.some(t=>t.commissionAsset&&t.commissionAsset!=="USDT"))
+   throw Error("Non-USDT commission requires asset conversion before settlement");
+ if(fundingRows.some(t=>t.asset&&t.asset!=="USDT"))throw Error("Non-USDT funding row");
+ const commission=owned.reduce((n,t)=>n+Number(t.commission||0),0);
+ const gross=owned.reduce((n,t)=>n+Number(t.realizedPnl||0),0);
+ const funding=fundingRows.reduce((n,t)=>n+Number(t.income||0),0);
+ return {tradeCount:owned.length,entryTradeCount:owned.filter(t=>String(t.orderId)===entryId).length,
+   exitTradeCount:owned.filter(t=>exitIds.has(String(t.orderId))).length,grossRealized:gross,commission,funding,
+   net:gross-commission+funding,settledAt:now()};
 }
 function projectedNet(o,bid,ask,entryFee=0,funding=0){
  if(!o.avgPrice||!o.filledQty)return null;
@@ -213,7 +304,8 @@ async function demoSignedDiagnostics(placeTestOrder=false){
  const candidate={side:"long",stop:price*0.95};
  const risk=riskParams(candidate,price,"SOLUSDT",balance,specs);
  const testResponse=await signed("POST","/fapi/v1/order/test",{
-  symbol:"SOLUSDT",side:"BUY",type:"MARKET",quantity:risk.quantity
+  symbol:"SOLUSDT",side:"BUY",positionSide:DIAGNOSTIC_POSITION_SIDE,type:"MARKET",quantity:risk.quantity,
+  newClientOrderId:"KSD_DIAGNOSTIC_TEST"
  });
  log("DEMO_TEST_ORDER_VALIDATED",{symbol:"SOLUSDT",qty:risk.quantity,api:"/fapi/v1/order/test"});
  save();
@@ -232,6 +324,8 @@ function safeStatus(){
   candidateCount:ledger.candidate.length,orders:ledger.orders.length,
   pendingNotifications:ledger.outbox.filter(x=>x.status==="PENDING").length,
   exchangeConnected:!!ledger.lastGoodAccount,
+  backoffUntil:ledger.demoBackoffUntil?new Date(ledger.demoBackoffUntil).toISOString():null,
+  managedOpen:ledger.orders.filter(o=>!["CLOSED","CLOSED_UNFILLED"].includes(o.status)).length,
   limit:{notionalUsdt:INITIAL_NOTIONAL,maxOpen:MAX_OPEN,maxAccountRiskFraction:MAX_LOSS,netTpFraction:TP_NET}};
 }
 function captureCandidates(posts){
@@ -268,9 +362,9 @@ async function submitEntry(c){
  if(!info)throw Error("Exchange symbol unavailable in DEMO");
  const mode=await signedQuery("/fapi/v1/positionSide/dual");
  if(mode.dualSidePosition!==false)throw Error("DEMO account must be One-Way mode");
- const positions=await signedQuery("/fapi/v3/positionRisk",{symbol:c.symbol});
+ const positions=await signedQuery("/fapi/v3/positionRisk",{});
  if(!Array.isArray(positions)||positions.some(x=>Math.abs(Number(x.positionAmt||0))>1e-8))
-   throw Error("Demo pre-existing position detected; fail closed");
+   throw Error("Demo account has a pre-existing/unmanaged position; fail closed");
  const balances=await signedQuery("/fapi/v2/balance");
  const usdt=balances.find(x=>x.asset==="USDT");
  if(!usdt)throw Error("No USDT demo balance");
@@ -284,100 +378,221 @@ async function submitEntry(c){
   clientOrderId:cid,stopClientId:idFor(c,"STOP"),tpClientId:idFor(c,"TP"),
   qty:orderInfo.quantity,stop:orderInfo.stopPrice,signalTime:c.sourceTime,
   orderId:null,exchangeStatus:null,filledQty:0,avgPrice:0,stopConfirmed:false,
-  startedAt:now(),lastReconcile:null,lastError:null,entryFee:0,funding:0,mode:c.mode,submittedAt:now()};
+  stopStatus:null,stopAlgoId:null,stopActualOrderId:null,entryTerminal:false,
+  startedAt:now(),lastReconcile:null,lastError:null,entryFee:0,funding:0,
+  mode:c.mode,submittedAt:now(),cancelIntentAt:null,tpIntentAt:null,actualSettlement:null};
  ledger.orders.push(o);c.status="SUBMITTING";save(); // write-ahead, prevents duplicate on timeout
  try{
    const remote=await signed("POST","/fapi/v1/order",
     {symbol:c.symbol,side:c.side==="long"?"BUY":"SELL",
      type:c.mode==="LIMIT"?"LIMIT":"MARKET",
-     ...(c.mode==="LIMIT"?{price:c.side==="long"?c.entryLow:c.entryHigh,timeInForce:"GTC"}:{}),
+     ...(c.mode==="LIMIT"?{price:orderInfo.limitPrice,timeInForce:"GTC"}:{}),
      quantity:orderInfo.quantity,newClientOrderId:cid,newOrderRespType:"RESULT"});
    recordOrderStatus(o,remote);c.status="SUBMITTED";save();
    enqueue("entry:"+cid,"🟡 Binance DEMO 開倉下單\n"+c.symbol+
-     "\nClient ID: "+cid+"\n狀態："+o.status+"\n僅測試資金");
+     "\nClient ID: "+cid+"\nOrder ID: "+String(o.orderId??"待對帳")+
+     "\n交易所狀態："+o.exchangeStatus+"\n僅 Demo 測試資金");
  }catch(err){
-   o.status="SUBMIT_UNKNOWN";o.lastError=String(err);save();
-   enqueue("unknown:"+cid,"⚠️ Binance DEMO 下單結果不明，暫停重送並先對帳\n"+cid);
+   noteBackoff(err);o.status=err?.unknown?"SUBMIT_UNKNOWN":"SUBMIT_REJECTED";
+   c.status=o.status;
+   o.lastError=String(err);if(err?.auth)halt("DEMO_AUTHENTICATION_REJECTED");else save();
+   enqueue("entry-error:"+cid,(err?.unknown?"⚠️ Binance DEMO 下單結果不明，暫停重送並先對帳":"⛔ Binance DEMO 開倉遭交易所拒絕")+
+     "\nClient ID: "+cid+"\n狀態："+o.status);
  }
 }
 async function queryOrder(o){
  try{
   const r=await signedQuery("/fapi/v1/order",{symbol:o.symbol,origClientOrderId:o.clientOrderId});
-  recordOrderStatus(o,r);o.lastError=null;save();return r;
- }catch(err){o.lastError=String(err).slice(0,200);save();throw err;}
+  recordOrderStatus(o,r);o.notFoundCount=0;o.lastError=null;save();return r;
+ }catch(err){
+  noteBackoff(err);o.lastError=String(err).slice(0,200);
+  if(Number(err?.code)===-2013)o.notFoundCount=(o.notFoundCount||0)+1;
+  save();throw err;
+ }
+}
+async function queryStop(o){
+ const r=await signedQuery("/fapi/v1/algoOrder",{clientAlgoId:o.stopClientId});
+ recordAlgoStatus(o,r);o.lastError=null;save();return r;
 }
 async function stopProtection(o){
- if(o.stopConfirmed||!o.filledQty)return;
+ if(!o.filledQty)return false;
+ if(o.stopAttemptedAt){
+  try{
+   await queryStop(o);
+   if(o.stopConfirmed)return true;
+   halt("DEMO_STOP_NOT_ACTIVE:"+o.clientOrderId);return false;
+  }
+  catch(err){if(Number(err?.code)!==-2013){noteBackoff(err);throw err;}}
+  if(o.stopState==="SUBMIT_UNKNOWN")return false;
+ }
+ o.stopAttemptedAt=now();o.stopState="SUBMITTING";save();
  try{
   const r=await signed("POST","/fapi/v1/algoOrder",{
    algoType:"CONDITIONAL",symbol:o.symbol,
    side:o.side==="long"?"SELL":"BUY",type:"STOP_MARKET",
-   triggerPrice:o.stop,workingType:"MARK_PRICE",closePosition:"true",
+   positionSide:"BOTH",triggerPrice:o.stop,workingType:"MARK_PRICE",closePosition:"true",
    clientAlgoId:o.stopClientId
   });
-  o.stopConfirmed=true;o.stopAlgoId=r.algoId||null;o.status="PROTECTED";
+  recordAlgoStatus(o,r);o.stopState="CONFIRMED";
   log("DEMO_STOP_CONFIRMED",{id:o.clientOrderId,algoId:o.stopAlgoId});
   save();
   enqueue("stop:"+o.clientOrderId,"🛡 Binance DEMO 止損保護已提交\n"+o.symbol+
-    "\n觸發價 "+o.stop+"\n模擬帳戶下單，非真實資金");
+    "\nClient ID: "+o.clientOrderId+"\nAlgo ID: "+String(o.stopAlgoId??"待對帳")+
+    "\n交易所狀態："+o.stopStatus+"\n觸發價 "+o.stop+"\n僅 Demo 測試資金");
+  return true;
  }catch(err){
-   o.lastError=String(err);
-   o.status="UNPROTECTED";save();halt("DEMO STOP PROTECTION FAILED "+o.clientOrderId);
+   noteBackoff(err);o.lastError=String(err);
+   if(err?.unknown){
+    o.stopState="SUBMIT_UNKNOWN";o.status="STOP_UNKNOWN";save();
+    try{if(await queryStop(o))return true;}catch(queryErr){o.lastError=String(queryErr).slice(0,200);save();}
+   }else{o.stopState="REJECTED";o.status="UNPROTECTED";save();}
+   halt("DEMO STOP PROTECTION UNCONFIRMED "+o.clientOrderId);
    enqueue("stop-failed:"+o.clientOrderId,"🚨 DEMO 止損保護未確認："+o.clientOrderId+
       "\n請在 Demo 介面檢查持倉，禁止繼續開倉");
+   return false;
  }
 }
+async function cancelEntryRemainder(o,reason){
+ if(!isOrderActive(o.exchangeStatus))return true;
+ const newIntent=!o.cancelIntentAt;
+ if(newIntent){o.cancelIntentAt=now();o.cancelReason=reason;o.status="CANCELING_ENTRY";save();}
+ if(!newIntent){
+  if(Date.now()-Date.parse(o.cancelIntentAt)>5*60*1000)halt("DEMO_ENTRY_CANCEL_STILL_ACTIVE:"+o.clientOrderId);
+  return false;
+ }
+ try{
+  const r=await signed("DELETE","/fapi/v1/order",{symbol:o.symbol,origClientOrderId:o.clientOrderId});
+  recordOrderStatus(o,r);
+  if(!isOrderActive(o.exchangeStatus))o.cancelConfirmedAt=now();save();
+  enqueue("entry-cancel:"+o.clientOrderId,"⌛ Binance DEMO 掛單剩餘量已取消\n原因："+reason+"\nClient ID: "+
+    o.clientOrderId+"\nOrder ID: "+String(o.orderId??"待對帳")+"\n交易所狀態："+o.exchangeStatus+
+    (o.filledQty>0?"\n已部分成交數量仍由交易所止損保護。":""));
+  return !isOrderActive(o.exchangeStatus);
+ }catch(err){
+  noteBackoff(err);o.status=err?.unknown?"CANCEL_UNKNOWN":"CANCEL_FAILED";o.lastError=String(err);save();
+  try{await queryOrder(o);}catch{}
+  if(o.status==="CANCEL_UNKNOWN"||isOrderActive(o.exchangeStatus))halt("DEMO_STALE_CANCEL_UNCONFIRMED:"+o.clientOrderId);
+  return !isOrderActive(o.exchangeStatus);
+ }
+}
+async function cancelStaleEntry(o){if(shouldCancelEntry(o))return cancelEntryRemainder(o,"LIMIT_TTL_24H");return true;}
+async function queryTp(o){
+ try{
+  const r=await signedQuery("/fapi/v1/order",{symbol:o.symbol,origClientOrderId:o.tpClientId});
+  if(r.clientOrderId!==o.tpClientId||r.symbol!==o.symbol||r.reduceOnly!==true)
+    throw Error("Invalid DEMO TP response identity");
+  o.tpOrderId=r.orderId??o.tpOrderId;o.tpStatus=String(r.status||"UNKNOWN");
+  o.tpFilledQty=Number(r.executedQty||0);o.tpLastCheckedAt=now();o.lastError=null;save();return r;
+ }catch(err){noteBackoff(err);o.lastError=String(err).slice(0,200);save();throw err;}
+}
+async function submitTp(o,qty,quote){
+ if(o.tpIntentAt)return;
+ o.tpIntentAt=now();o.status="TP_SUBMITTING";save();
+ try{
+  const remote=await signed("POST","/fapi/v1/order",{
+   symbol:o.symbol,side:o.side==="long"?"SELL":"BUY",type:"MARKET",
+   positionSide:"BOTH",quantity:qty,reduceOnly:"true",newClientOrderId:o.tpClientId,newOrderRespType:"RESULT"
+  });
+  if(remote.clientOrderId!==o.tpClientId||remote.symbol!==o.symbol||remote.reduceOnly!==true)
+    throw Error("Invalid DEMO TP submission response");
+  o.tpOrderId=remote.orderId||null;o.tpStatus=remote.status;o.tpFilledQty=Number(remote.executedQty||0);
+  o.status="TP_SENT";save();
+  enqueue("tp:"+o.clientOrderId,"🎯 Binance DEMO 預估扣費淨利達 1%\n"+o.symbol+
+   "\nClient ID: "+o.tpClientId+"\nOrder ID: "+String(o.tpOrderId??"待對帳")+
+   "\n交易所狀態："+o.tpStatus+"\n預估比例 "+(quote.rate*100).toFixed(3)+
+   "%\n已提交 reduceOnly 平倉，等待實際成交對帳。");
+ }catch(err){
+  noteBackoff(err);o.status=err?.unknown?"TP_UNKNOWN":"TP_REJECTED";o.lastError=String(err);save();
+  if(err?.unknown){try{await queryTp(o);}catch{}}
+  halt("DEMO_TP_ORDER_UNCONFIRMED:"+o.symbol);
+ }
+}
+async function cancelStopAfterClose(o){
+ if(!o.stopAttemptedAt||["CANCELED","EXPIRED","FINISHED","TRIGGERED"].includes(o.stopStatus))return true;
+ try{
+  await signed("DELETE","/fapi/v1/algoOrder",{clientAlgoId:o.stopClientId});
+  o.stopStatus="CANCELED";o.stopConfirmed=false;o.stopCanceledAt=now();save();return true;
+ }catch(err){
+  noteBackoff(err);o.lastError=String(err).slice(0,200);save();
+  try{await queryStop(o);if(!isAlgoActive(o.stopStatus))return true;}catch(queryErr){o.lastError=String(queryErr).slice(0,200);save();}
+  halt("DEMO_STOP_CANCEL_UNCONFIRMED:"+o.symbol);return false;
+ }
+}
+async function settleClosed(o){
+ const since=Date.parse(o.startedAt)-60000;
+ const trades=await signedQuery("/fapi/v1/userTrades",{symbol:o.symbol,limit:1000,startTime:since});
+ const income=await signedQuery("/fapi/v1/income",{symbol:o.symbol,incomeType:"FUNDING_FEE",startTime:since,limit:1000});
+ const settlement=actualSettlement(o,trades,income);
+ if(!settlement.entryTradeCount||!settlement.exitTradeCount)
+   throw Error("Incomplete owned DEMO entry/exit fills for settlement");
+ o.actualSettlement=settlement;o.status="CLOSED";o.exitObservedAt=now();save();
+ enqueue("closed:"+o.clientOrderId,"✅ Binance DEMO 持倉已完成交易所對帳\n"+o.symbol+
+   "\nEntry Client ID: "+o.clientOrderId+"\nExit Order ID: "+String(o.tpOrderId||o.stopActualOrderId||"交易所紀錄")+
+   "\n實際淨損益（成交損益－手續費＋Funding）："+settlement.net.toFixed(6)+" USDT"+
+   "\n成交筆數："+settlement.tradeCount+"\n僅 Demo 測試資金");
+}
 async function reconcile(){
- if(!EXECUTE||!KEY||!SECRET||!storageSafe)return;
+ if(!KEY||!SECRET||!storageSafe)return;
+ if(Date.now()<(ledger.demoBackoffUntil||0))return;
  await serverTime();
+ const accountPositions=await signedQuery("/fapi/v3/positionRisk",{});
+ if(!Array.isArray(accountPositions))throw Error("invalid account position risk shape");
+ if(hasUnmanagedPosition(accountPositions,ledger.orders))halt("DEMO_UNMANAGED_ACCOUNT_POSITION");
  // All existing orders always reconciled even if halted.
  for(const o of ledger.orders){
   if(["CLOSED","CLOSED_UNFILLED"].includes(o.status))continue;
   try{
-   if(o.status==="SUBMIT_UNKNOWN"||o.status==="ORDER_PENDING"||o.status==="NEEDS_STOP")await queryOrder(o);
-   if(o.filledQty>0&&!o.stopConfirmed)await stopProtection(o);
-   if(o.status==="UNPROTECTED" || !o.stopConfirmed)continue;
+   if(o.status==="SUBMIT_REJECTED"&&o.filledQty===0){o.status="CLOSED_UNFILLED";save();continue;}
+   if(!o.entryTerminal||["SUBMIT_UNKNOWN","CANCEL_UNKNOWN","ORDER_PENDING","NEEDS_STOP","PROTECTED"].includes(o.status)){
+    try{await queryOrder(o);}catch(err){
+     if(Number(err?.code)===-2013&&o.filledQty===0&&o.notFoundCount>=RECONCILE_NOT_FOUND_LIMIT&&
+       Date.now()-Date.parse(o.submittedAt)>60000){o.status="CLOSED_UNFILLED";o.exchangeStatus="NOT_FOUND_CONFIRMED";save();continue;}
+     throw err;
+    }
+   }
+   await cancelStaleEntry(o);
    const position=await signedQuery("/fapi/v3/positionRisk",{symbol:o.symbol});
    if(!Array.isArray(position))throw Error("invalid position risk shape");
    const row=position.find(x=>x.positionSide==="BOTH"&&x.symbol===o.symbol);
    const qty=Math.abs(Number(row?.positionAmt||0));
    if(qty<1e-10){
-    o.status="CLOSED";o.exitObservedAt=now();save();
-    enqueue("closed:"+o.clientOrderId,"✅ Binance DEMO 持倉歸零\n"+o.symbol+
-       "\n原因：交易所帳戶對帳結果\n實際損益請以 Demo 成交紀錄為準。");
+    if(o.filledQty<=0){if(o.entryTerminal){o.status="CLOSED_UNFILLED";save();}continue;}
+    if(isOrderActive(o.exchangeStatus)&&!await cancelEntryRemainder(o,"POSITION_FLAT_CLEANUP"))continue;
+    if(o.tpIntentAt){try{await queryTp(o);}catch{}}
+    if(o.stopAttemptedAt){try{await queryStop(o);}catch{}}
+    if(!await cancelStopAfterClose(o))continue;
+    await settleClosed(o);
     continue;
    }
-   if(Math.abs(qty-o.filledQty)>Math.max(0.0000001,qty*0.001)){
+   if(o.filledQty<=0||qty-o.filledQty>Math.max(0.0000001,qty*0.001)||
+      (o.filledQty-qty>Math.max(0.0000001,qty*0.001)&&!o.tpIntentAt&&!o.stopActualOrderId)){
      halt("DEMO_POSITION_MISMATCH:"+o.symbol);
      continue;
    }
+   if(!o.stopConfirmed){if(!await stopProtection(o))continue;}
+   else {await queryStop(o);if(!o.stopConfirmed){halt("DEMO_STOP_NOT_ACTIVE:"+o.symbol);continue;}}
+   if(o.exchangeStatus==="PARTIALLY_FILLED"&&!await cancelEntryRemainder(o,"PARTIAL_FILL_PROTECTED"))continue;
    const trades=await signedQuery("/fapi/v1/userTrades",{symbol:o.symbol,limit:100,startTime:Date.parse(o.startedAt)-60000});
    const entryTrades=trades.filter(t=>String(t.orderId)===String(o.orderId));
-   if(!entryTrades.length)throw Error("Missing DEMO entry fee fills");
+   if(!entryTrades.length){o.tradeDataPending=(o.tradeDataPending||0)+1;o.lastError="Waiting for DEMO entry fills";save();
+    if(o.tradeDataPending>=5)halt("DEMO_ENTRY_FILLS_MISSING:"+o.symbol);continue;}
+   o.tradeDataPending=0;
    o.entryFee=entryTrades.reduce((n,t)=>n+Number(t.commission||0),0);
    const income=await signedQuery("/fapi/v1/income",{symbol:o.symbol,incomeType:"FUNDING_FEE",startTime:Date.parse(o.startedAt)-60000,limit:100});
    o.funding=income.reduce((n,t)=>n+Number(t.income||0),0);
    const top=await publicGet("/fapi/v1/ticker/bookTicker",{symbol:o.symbol});
    const quote=projectedNet(o,Number(top.bidPrice),Number(top.askPrice),o.entryFee,o.funding);
    o.projection=quote;ledger.lastQuote[o.symbol]={bid:Number(top.bidPrice),ask:Number(top.askPrice),at:now()};
-   if(quote && quote.rate>=TP_NET&&!o.tpClientIdSubmitted){
-     o.tpClientIdSubmitted=true;save();
-     // Reduce-only closes owned Demo position, no reverse opening.
-     try{
-      const remote=await signed("POST","/fapi/v1/order",{
-       symbol:o.symbol,side:o.side==="long"?"SELL":"BUY",type:"MARKET",
-       quantity:qty,reduceOnly:"true",newClientOrderId:o.tpClientId,newOrderRespType:"RESULT"
-      });
-      o.tpOrderId=remote.orderId||null;o.tpStatus=remote.status;o.status="TP_SENT";
-      save();
-      enqueue("tp:"+o.clientOrderId,"🎯 Binance DEMO 預估扣費淨利達 1%\n"+
-       o.symbol+"\n預估比例 "+(quote.rate*100).toFixed(3)+"%\n已提交 reduceOnly 平倉，等待成交對帳。");
-     }catch(err){o.status="TP_UNKNOWN";o.lastError=String(err);save();halt("DEMO_TP_ORDER_UNKNOWN:"+o.symbol);}
+   if(o.tpIntentAt){try{await queryTp(o);}catch(err){if(Number(err?.code)!==-2013)throw err;}}
+   else if(quote && quote.rate>=TP_NET){
+    if(isOrderActive(o.exchangeStatus)&&!await cancelEntryRemainder(o,"NET_TP_PRE_CLOSE"))continue;
+    await submitTp(o,qty,quote);
    }
    o.lastReconcile=now();save();
-  }catch(err){o.lastError=String(err).slice(0,200);
+  }catch(err){noteBackoff(err);o.lastError=String(err).slice(0,200);
    log("RECONCILE_ERROR",{id:o.clientOrderId,reason:o.lastError});save();
-   if(o.filledQty>0)halt("DEMO_RECONCILIATION_FAILED:"+o.symbol);
+   if(err?.auth)halt("DEMO_AUTHENTICATION_REJECTED");
+   else if(o.filledQty>0)halt("DEMO_RECONCILIATION_FAILED:"+o.symbol);
   }
  }
  ledger.lastDemoPoll=now();save();
@@ -415,13 +630,15 @@ async function tick(){
  }catch(err){ledger.channelError=String(err).slice(0,180);console.error("DEMO_CHANNEL_ERROR",ledger.channelError);}
  try{
    await checkDemoPublic();
-   if(EXECUTE && KEY && SECRET){
+   if(KEY && SECRET){
      await reconcile();
-     if(!ledger.halted && storageSafe){
+     if(EXECUTE&&!ledger.halted && storageSafe){
        const c=pendingCandidates()[0];if(c)await submitEntry(c);
      }
    }
- }catch(err){ledger.demoError=String(err).slice(0,200);console.error("DEMO_API_ERROR",ledger.demoError);}
+ }catch(err){noteBackoff(err);ledger.demoError=String(err).slice(0,200);
+   if(EXECUTE&&err?.auth)halt("DEMO_AUTHENTICATION_REJECTED");
+   console.error("DEMO_API_ERROR",ledger.demoError);}
  try{save();}catch{} finally{busy=false;}
 }
 async function flushNotifications(){
@@ -501,6 +718,69 @@ function bdd(){
  check(45,"Signed Demo test path allowlisted",()=>{const allow=["/fapi/v1/order/test","/fapi/v1/order"];if(allow[0]==="/fapi/v1/order")throw Error("wrong test path");});
  check(46,"Diagnostic must use Demo-only order-test endpoint",()=>{if(!demoSignedDiagnostics.toString().includes("/fapi/v1/order/test"))throw Error("test path absent");});
  check(47,"Demo TEST ORDER endpoint remains separate from actual matching engine",()=>{if(!"/fapi/v1/order/test".endsWith("/order/test")||DEMO_HOST!=="https://demo-fapi.binance.com")throw Error("unsafe");});
+ check(48,"Partial fill preserves exchange remainder",()=>{let x={symbol:"SOLUSDT",clientOrderId:"A",qty:1,stopConfirmed:false};
+  recordOrderStatus(x,{symbol:"SOLUSDT",clientOrderId:"A",status:"PARTIALLY_FILLED",origQty:"1",executedQty:"0.4",avgPrice:"100"});
+  if(x.status!=="NEEDS_STOP"||x.remainingQty!==0.6||x.entryTerminal)throw Error("partial state");});
+ check(49,"Canceled partial fill remains a protected position workflow",()=>{let x={symbol:"SOLUSDT",clientOrderId:"A",qty:1,stopConfirmed:false};
+  recordOrderStatus(x,{symbol:"SOLUSDT",clientOrderId:"A",status:"CANCELED",origQty:"1",executedQty:"0.4",avgPrice:"100"});
+  if(x.status!=="NEEDS_STOP"||!x.entryTerminal)throw Error("partial cancel lost fill");});
+ check(50,"Exchange active order status classifier",()=>{for(const x of ["NEW","PARTIALLY_FILLED","PENDING_CANCEL"])if(!isOrderActive(x))throw Error(x);});
+ check(51,"Exchange terminal order status classifier",()=>{for(const x of ["FILLED","CANCELED","EXPIRED","EXPIRED_IN_MATCH","REJECTED"])if(!isOrderTerminal(x))throw Error(x);});
+ check(52,"POST 503 is unknown execution and transient",()=>{const x=failureFlags("POST",503,0);if(!x.unknown||!x.transient||x.auth)throw Error("flags");});
+ check(53,"GET 503 is transient but never an execution outcome",()=>{const x=failureFlags("GET",503,0);if(x.unknown||!x.transient)throw Error("flags");});
+ check(54,"Binance auth rejection is classified",()=>{if(!failureFlags("GET",400,-2015).auth||!failureFlags("POST",401,0).auth)throw Error("auth");});
+ check(55,"Rate limit is transient with fail-closed backoff",()=>{const x=failureFlags("GET",429,0);if(!x.transient||x.unknown)throw Error("429");
+  noteBackoff({...x,status:429});if(!(ledger.demoBackoffUntil>Date.now()))throw Error("no backoff");});
+ check(56,"Confirmed active stop validates exchange identity",()=>{const x={symbol:"SOLUSDT",stopClientId:"STOP",status:"NEEDS_STOP"};
+  if(!recordAlgoStatus(x,{symbol:"SOLUSDT",clientAlgoId:"STOP",algoId:9,algoType:"CONDITIONAL",orderType:"STOP_MARKET",closePosition:true,algoStatus:"NEW"})||x.stopAlgoId!==9)throw Error("stop");});
+ check(57,"Canceled exchange stop is not considered protection",()=>{const x={symbol:"SOLUSDT",stopClientId:"STOP"};
+  if(recordAlgoStatus(x,{symbol:"SOLUSDT",clientAlgoId:"STOP",algoType:"CONDITIONAL",orderType:"STOP_MARKET",closePosition:true,algoStatus:"CANCELED"}))throw Error("canceled protected");});
+ check(58,"Stop response client ID mismatch fails closed",()=>{try{recordAlgoStatus({symbol:"SOLUSDT",stopClientId:"STOP"},{symbol:"SOLUSDT",clientAlgoId:"OTHER"});throw Error("accepted")}
+  catch(e){if(String(e).includes("accepted"))throw e;}});
+ check(59,"Stop response must be close-all STOP_MARKET",()=>{try{recordAlgoStatus({symbol:"SOLUSDT",stopClientId:"STOP"},{symbol:"SOLUSDT",clientAlgoId:"STOP",algoType:"CONDITIONAL",orderType:"LIMIT",closePosition:false});throw Error("accepted")}
+  catch(e){if(String(e).includes("accepted"))throw e;}});
+ check(60,"Actual settlement includes owned fees and funding",()=>{const x=actualSettlement({orderId:1,tpOrderId:2},[
+   {orderId:1,realizedPnl:"0",commission:"0.04"},{orderId:2,realizedPnl:"1.2",commission:"0.05"}],
+   [{income:"-0.01"}]);if(Math.abs(x.net-1.10)>1e-9||x.tradeCount!==2)throw Error("settlement");});
+ check(61,"Actual settlement excludes unrelated exchange fills",()=>{const x=actualSettlement({orderId:1},[
+   {orderId:1,realizedPnl:"0",commission:"0.04"},{orderId:999,realizedPnl:"50",commission:"2"}],[]);
+   if(x.tradeCount!==1||x.grossRealized!==0||x.commission!==0.04)throw Error("foreign fill");});
+ check(62,"Stale LIMIT is cancelable at exactly 24 hours",()=>{if(!shouldCancelEntry({mode:"LIMIT",exchangeStatus:"NEW",submittedAt:new Date(0).toISOString()},LIMIT_TTL))throw Error("ttl");});
+ check(63,"LIMIT is not canceled before 24 hours",()=>{if(shouldCancelEntry({mode:"LIMIT",exchangeStatus:"NEW",submittedAt:new Date(0).toISOString()},LIMIT_TTL-1))throw Error("early");});
+ check(64,"MARKET order never enters stale LIMIT cancellation",()=>{if(shouldCancelEntry({mode:"MARKET",exchangeStatus:"NEW",submittedAt:new Date(0).toISOString()},LIMIT_TTL*2))throw Error("market cancel");});
+ check(65,"Unmanaged account-wide position is detected",()=>{if(!hasUnmanagedPosition([{symbol:"BTCUSDT",positionSide:"BOTH",positionAmt:"0.01"}],[]))throw Error("external");});
+ check(66,"Managed One-Way position passes ownership check",()=>{if(hasUnmanagedPosition([{symbol:"SOLUSDT",positionSide:"BOTH",positionAmt:"1"}],[{symbol:"SOLUSDT",status:"PROTECTED"}]))throw Error("owned");});
+ check(67,"Hedge-mode position always fails closed",()=>{if(!hasUnmanagedPosition([{symbol:"SOLUSDT",positionSide:"LONG",positionAmt:"1"}],[{symbol:"SOLUSDT",status:"PROTECTED"}]))throw Error("hedge");});
+ check(68,"Algo create/query path is explicitly allowlisted",()=>{if(!SIGNED_PATHS.has("/fapi/v1/algoOrder")||!SIGNED_PATHS.has("/fapi/v1/openAlgoOrders"))throw Error("algo path");});
+ check(69,"Production order host cannot appear in signed path list",()=>{if([...SIGNED_PATHS].some(x=>x.includes("binance.com")))throw Error("host injection");});
+ check(70,"Stop and TP use distinct deterministic IDs",()=>{const c={id:123};if(idFor(c,"STOP")===idFor(c,"TP")||idFor(c,"ENTRY")===idFor(c,"STOP"))throw Error("collision");});
+ check(71,"Remote entry symbol mismatch is rejected",()=>{try{recordOrderStatus({symbol:"SOLUSDT",clientOrderId:"A",qty:1},{symbol:"BTCUSDT",clientOrderId:"A",status:"NEW",origQty:"1",executedQty:"0"});throw Error("accepted")}
+  catch(e){if(String(e).includes("accepted"))throw e;}});
+ check(72,"Remote entry client ID mismatch is rejected",()=>{try{recordOrderStatus({symbol:"SOLUSDT",clientOrderId:"A",qty:1},{symbol:"SOLUSDT",clientOrderId:"B",status:"NEW",origQty:"1",executedQty:"0"});throw Error("accepted")}
+  catch(e){if(String(e).includes("accepted"))throw e;}});
+ check(73,"Exchange cannot report fill above original quantity",()=>{try{recordOrderStatus({symbol:"SOLUSDT",clientOrderId:"A",qty:1},{symbol:"SOLUSDT",clientOrderId:"A",status:"FILLED",origQty:"1",executedQty:"1.1"});throw Error("accepted")}
+  catch(e){if(String(e).includes("accepted"))throw e;}});
+ check(74,"Positive funding increases projected net",()=>{let a=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0);
+  let b=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0.1);if(b.net<=a.net)throw Error("funding");});
+ check(75,"Schema v2 contains durable backoff and reconciliation fields",()=>{const x=blank();if(x.schema!==2||x.demoBackoffUntil!==0||!Array.isArray(x.orders))throw Error("schema");});
+ check(76,"Test-order diagnostic pins One-Way position side",()=>{if(DIAGNOSTIC_POSITION_SIDE!=="BOTH")throw Error("position side");});
+ check(77,"Execution stays false unless exact lowercase true",()=>{if(Bun.env.DEMO_ORDER_ENABLED!=="true"&&EXECUTE)throw Error("unsafe env parsing");});
+ check(78,"Local BDD path override can never coexist with execution",()=>{if(LOCAL_BDD_ONLY&&EXECUTE)throw Error("unsafe local mode");});
+ check(79,"Persistence fault transitions service to durable fail-closed halt",()=>{const previous=storageSafe;
+  try{markPersistenceFailure("synthetic disk readonly");if(storageSafe||!ledger.halted||ledger.haltReason!=="PERSISTENCE_FAILURE")throw Error("not halted");}
+  finally{storageSafe=previous;}});
+ check(80,"Every Telegram trade notification is visibly Demo-prefixed",()=>{if(!tagDemoNotice("order update").startsWith("BINANCE DEMO\n")||tagDemoNotice("Binance DEMO ok").toUpperCase().split("BINANCE DEMO").length!==2)throw Error("prefix");});
+ const limitSpec={filters:[{filterType:"LOT_SIZE",stepSize:"0.01",minQty:"0.01"},
+  {filterType:"MARKET_LOT_SIZE",stepSize:"0.3",minQty:"0.3"},
+  {filterType:"PRICE_FILTER",tickSize:"0.1",minPrice:"1",maxPrice:"1000"},
+  {filterType:"MIN_NOTIONAL",notional:"5"}]};
+ check(81,"Long LIMIT price rounds down to exchange tick",()=>{const x=riskParams({...candidate,mode:"LIMIT",entryLow:100.07,entryHigh:101},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);if(x.limitPrice!==100)throw Error("limit tick");});
+ check(82,"Short LIMIT price rounds up to exchange tick",()=>{const x=riskParams({...candidate,mode:"LIMIT",side:"short",entryLow:99,entryHigh:100.07,stop:105},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);if(x.limitPrice!==100.1)throw Error("limit tick");});
+ check(83,"LIMIT sizing uses LOT_SIZE rather than MARKET_LOT_SIZE",()=>{const x=riskParams({...candidate,mode:"LIMIT",entryLow:100,entryHigh:101},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);if(x.quantity!==0.5||Math.abs(x.quantity/0.3-Math.round(x.quantity/0.3))<1e-9)throw Error("lot step");});
+ check(84,"Stop outside exchange price filter is rejected",()=>{try{riskParams({...candidate,stop:0.5},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);throw Error("accepted")}
+  catch(e){if(String(e).includes("accepted"))throw e;}});
+ check(85,"Non-USDT commission cannot be mislabeled as USDT net PnL",()=>{try{actualSettlement({orderId:1,tpOrderId:2},[{orderId:1,commission:"0.1",commissionAsset:"BNB"}],[]);throw Error("accepted")}
+  catch(e){if(String(e).includes("accepted"))throw e;}});
  return {mode:"SYNTHETIC_BDD",total:results.length,passed:results.filter(t=>t.pass).length,
   failed:results.filter(t=>!t.pass).length,results,at:now()};
 }
