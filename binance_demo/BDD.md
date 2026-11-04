@@ -231,9 +231,16 @@ Feature: Donchian statistics in Paper Monitor
    When Paper Monitor renders its report
    Then mark Donchian statistics unavailable
    And continue serving the independent Paper report
+
+ Scenario: Open advisory detail is visible but not misrepresented
+   Given SOLUSDT has a Donchian long advisory at 93.96 with stop 86.46 and target 108.96
+   And no exchange order was submitted
+   When Paper Monitor renders the Donchian detail table
+   Then show the symbol, direction, entry, stop, target, signal time and 15m chart
+   And label its state `提示持倉／未成交`
 ```
 
-Railway evidence (2026-11-04): Demo BDD 113/113 and Paper BDD 154/154 passed; both health endpoints returned 200; unauthenticated `/api/stats` returned 401; the live dashboard rendered 3 Donchian entries, 0 exits, 0 closed Demo trades and +0.00 USDT Demo net PnL.
+Railway evidence (2026-11-04): Demo BDD 114/114 and Paper BDD 155/155 passed. The live dashboard rendered four open advisory rows and the SOL row exactly as LONG, entry 93.96, stop 86.46, target 108.96, `提示持倉／未成交`; no Demo trade was created.
 
 ## Integration pending (not passed)
 Demo API key signed auth, non-matching test-order POST, matched Donchian MARKET entry/exit, partial fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and realized net PnL, natural breakout-triggered execution, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. User approval for virtual-fund Donchian execution was granted on 2026-11-04, but credentials and signed dry-run evidence are still missing; keep `DEMO_DONCHIAN_ORDER_ENABLED=false` until those checks pass.

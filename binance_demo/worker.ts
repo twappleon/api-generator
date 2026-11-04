@@ -445,6 +445,9 @@ function donchianStats(){
  const wins=trades.filter(x=>Number(x.netPnlUsdt)>0).length;
  const open=orders.filter(x=>!x.actualSettlement&&!['CLOSED','CANCELED','REJECTED','EXPIRED'].includes(String(x.status))).length;
  const last=events.at(-1)||null;
+ const advisoryPositions=Object.entries(ledger.donchian).filter(([,s])=>s?.position&&s.position!=="FLAT").map(([symbol,s])=>({
+  symbol,side:s.position,entryPrice:s.entryPrice,stopLoss:s.stopLoss,takeProfit:s.takeProfit,
+  entryTime:s.entryTime,lastPrice:s.lastObservedClose,chartUrl:donchianChartUrl(symbol),status:"SIGNAL_ONLY_NOT_EXECUTED"}));
  return {schemaVersion:1,ledger:"BINANCE_DEMO_DONCHIAN",mode:"DEMO_ONLY",strategy:"DONCHIAN_20_10_2R",
   updatedAt:now(),executionEnabled:DONCHIAN_EXECUTE,credentialsConfigured:!!KEY&&!!SECRET,
   signals:{total:events.length,entries:events.filter(x=>String(x.detail?.action).startsWith("ENTER")).length,
@@ -455,7 +458,7 @@ function donchianStats(){
   performance:{closedTrades:trades.length,wins,losses:trades.length-wins,
    winRatePct:trades.length?wins/trades.length*100:0,grossRealized:sum("grossRealized"),
    commission:sum("commission"),funding:sum("funding"),netPnlUsdt:sum("netPnlUsdt")},
-  advisoryPositions:Object.values(ledger.donchian).filter(x=>x?.position&&x.position!=="FLAT").length};
+  advisoryPositions};
 }
 function projectedNet(o,bid,ask,entryFee=0,funding=0){
  if(!o.avgPrice||!o.filledQty)return null;
@@ -1068,6 +1071,8 @@ function bdd(){
   ledger.orders=[{sourceType:"DONCHIAN",clientOrderId:"D",symbol:"BTCUSDT",side:"long",status:"CLOSED",actualSettlement:settlement},{sourceType:"TELEGRAM_CHANNEL",clientOrderId:"T",symbol:"SOLUSDT",side:"long",status:"CLOSED",actualSettlement:{...settlement,net:99}}];
   const x=donchianStats();if(x.performance.closedTrades!==1||x.performance.netPnlUsdt!==1.92||x.orders.closed!==1)throw Error("cross-source leak");});
  check(113,"Donchian statistics expose no order identity or credentials",()=>{const raw=JSON.stringify(donchianStats());if(raw.includes("clientOrderId")||raw.includes("orderId")||raw.includes(APP_PASSWORD))throw Error("sensitive stats");});
+ check(114,"Open Donchian advisory exposes report levels but never claims execution",()=>{ledger.donchian.SOLUSDT={position:"LONG",entryPrice:93.96,stopLoss:86.46,takeProfit:108.96,entryTime:now(),lastObservedClose:93.96};
+  const x=donchianStats().advisoryPositions[0];if(x.symbol!=="SOLUSDT"||x.entryPrice!==93.96||x.stopLoss!==86.46||x.takeProfit!==108.96||x.status!=="SIGNAL_ONLY_NOT_EXECUTED")throw Error("advisory detail");});
  return {mode:"SYNTHETIC_BDD",total:results.length,passed:results.filter(t=>t.pass).length,
   failed:results.filter(t=>!t.pass).length,results,at:now()};
 }
