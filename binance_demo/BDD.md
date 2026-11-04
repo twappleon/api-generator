@@ -41,6 +41,19 @@ authenticated /api/donchian=200
 dashboard exposes source-scoped Donchian execution and closed-trade records
 ```
 
+Railway source-scoped Donchian Demo execution deployment on 2026-11-04:
+```
+deployment=8e9e9f94-c36c-4d26-82fa-cb0abeffab17 status=SUCCESS
+BINANCE_DEMO_BDD {"passed":111,"failed":0,"total":111,"errors":[]}
+DEMO_PUBLIC_CONNECTED {"host":"https://demo-fapi.binance.com","btcStatus":"TRADING","credentialsConfigured":false,"channelOrderEnabled":false,"donchianOrderEnabled":false}
+DONCHIAN_PUBLIC_CONNECTED {"host":"https://demo-fapi.binance.com","interval":"15m","symbols":["BTCUSDT","ETHUSDT","SOLUSDT","ZECUSDT"]}
+GET /healthz = 200 {"ok":true,"mode":"DEMO_ONLY","ready":true}
+GET /api/trades without auth = 401
+deployed worker chars=79787; local worker chars=79787; exact match=true
+```
+
+The protected execution path and synthetic entry/exit/PnL record tests passed, but this was **not** a matched-order acceptance: runtime credentials are unconfigured and both entry gates are false. Demo orders created: **0**; closed Demo trade records: **0**.
+
 Railway pair-specific K-line-link deployment on 2026-11-04:
 ```
 deployment=748e2887-942e-40af-8ae0-04c63388abb5 status=SUCCESS
