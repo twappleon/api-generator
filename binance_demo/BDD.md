@@ -211,5 +211,29 @@ Feature: Donchian virtual-fund Demo execution
    And actual gross, commission, funding and net PnL
 ```
 
+## Paper statistics integration (passed)
+```gherkin
+Feature: Donchian statistics in Paper Monitor
+ Scenario: Read-only aggregate is protected
+   Given the Demo statistics endpoint is configured with a service token
+   When a request omits or supplies the wrong token
+   Then return HTTP 401 without exposing any aggregate or order identity
+
+ Scenario: Paper dashboard includes Donchian results
+   Given a valid Donchian Demo aggregate
+   When Paper Monitor refreshes its report
+   Then show Donchian signals, closed Demo trades, win rate and actual net PnL
+   And show a clearly labelled cross-ledger realized-PnL and trade-count total
+   But do not alter Paper equity, Paper return or the Paper equity curve
+
+ Scenario: Demo statistics are unavailable
+   Given the upstream is missing, invalid or temporarily unavailable
+   When Paper Monitor renders its report
+   Then mark Donchian statistics unavailable
+   And continue serving the independent Paper report
+```
+
+Railway evidence (2026-11-04): Demo BDD 113/113 and Paper BDD 154/154 passed; both health endpoints returned 200; unauthenticated `/api/stats` returned 401; the live dashboard rendered 3 Donchian entries, 0 exits, 0 closed Demo trades and +0.00 USDT Demo net PnL.
+
 ## Integration pending (not passed)
 Demo API key signed auth, non-matching test-order POST, matched Donchian MARKET entry/exit, partial fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and realized net PnL, natural breakout-triggered execution, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. User approval for virtual-fund Donchian execution was granted on 2026-11-04, but credentials and signed dry-run evidence are still missing; keep `DEMO_DONCHIAN_ORDER_ENABLED=false` until those checks pass.

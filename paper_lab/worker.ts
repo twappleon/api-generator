@@ -10,6 +10,8 @@ const source = "https://t.me/s/KCryptoBTC168";
 const binance = "https://fapi.binance.com";
 const TG_TARGET = (Bun.env.TELEGRAM_TARGET_USERNAME || "twjavaleon").replace(/^@/,"").trim().toLowerCase();
 const TELEGRAM_BOT_TOKEN = (Bun.env.TELEGRAM_BOT_TOKEN || "").trim();
+const DONCHIAN_STATS_URL = (Bun.env.BINANCE_DEMO_STATS_URL || "").trim();
+const DONCHIAN_STATS_TOKEN = (Bun.env.STATS_SHARED_TOKEN || "").trim();
 const START_BALANCE = 10000;
 const RISK = 0.01;
 const MAX_POSITION = 0.20;
@@ -27,6 +29,7 @@ const fresh = () => ({
 });
 mkdirSync(dirname(path), { recursive: true });
 let state = fresh();
+let donchianStatsCache = {data:null,error:null};
 if (existsSync(path)) {
   const read = JSON.parse(readFileSync(path, "utf8"));
   state = { ...fresh(), ...read };
@@ -608,6 +611,13 @@ async function pollPrices() {
   } catch (err) { state.priceError = String(err.message || err); persist(); }
   finally { pricesBusy = false; }
 }
+function mergeDonchianStats(paper,remote=donchianStatsCache.data,cache=donchianStatsCache) {
+  const valid=remote?.ledger==="BINANCE_DEMO_DONCHIAN"&&remote?.schemaVersion===1;
+  const p=valid?remote.performance||{}:{},dClosed=Number(p.closedTrades||0),dNet=Number(p.netPnlUsdt||0);
+  return {...paper,
+    donchianDemo:{available:valid,error:cache.error,signals:valid?remote.signals:null,performance:valid?p:null},
+    combined:{realizedPnlUsdt:paper.realizedPnl+dNet,closedTrades:paper.closedTrades+dClosed}}
+}
 function report() {
   const closed = state.orders.filter(o => o.status === "closed");
   const open = state.orders.filter(o => o.status === "open");
@@ -633,7 +643,7 @@ function report() {
       v.trades++; if (exit.netPnl > 0) v.wins++; v.pnl += exit.netPnl;
     }
   }
-  return {
+  return mergeDonchianStats({
     mode: "PAPER_ONLY", initialBalance: START_BALANCE, netTakeProfitPct: NET_TAKE_PROFIT*100, equity: equity(),
     netReturnPct: (equity() / START_BALANCE - 1) * 100,
     realizedPnl: realized, unrealizedPnl: unrealized,
@@ -642,7 +652,17 @@ function report() {
     profitFactor: lossGross > 0 ? winGross / lossGross : null, maxDrawdownPct: maxDD,
     feesPaid: state.orders.reduce((v, o) => v + (o.feeEntry || 0) + (o.feeExit || 0), 0),
     daily, monthly, symbols, snapshots: state.snapshots.slice(-1000)
-  };
+  });
+}
+async function refreshDonchianStats(){
+  if(!DONCHIAN_STATS_URL||DONCHIAN_STATS_TOKEN.length<32){donchianStatsCache.error="統計整合未設定";return;}
+  try{
+    const r=await fetch(DONCHIAN_STATS_URL,{headers:{"x-stats-token":DONCHIAN_STATS_TOKEN},signal:AbortSignal.timeout(12000)});
+    if(!r.ok)throw Error("Demo stats HTTP "+r.status);
+    const data=await r.json();
+    if(data?.schemaVersion!==1||data?.ledger!=="BINANCE_DEMO_DONCHIAN")throw Error("Demo stats schema");
+    donchianStatsCache={data,error:null};
+  }catch(err){donchianStatsCache.error=String(err.message||err).slice(0,180);}
 }
 function csv() {
   const fields = ["messageId", "symbol", "side", "kind", "status", "entryLow", "entryHigh",
@@ -685,26 +705,26 @@ function runBDDTests() {
     catch(err) { results.push({ scenario:name, pass:false, detail:String(err.message||err) }); }
     finally { state = savedState; syntheticTestMode = false; }
   };
-  test("BDD01 首次同步只做基線、不開歷史倉", () => {
+  test("BDD01", () => {
     state = fresh();
     ingest([{id:5001,text:"#SOL 市價 99-101附近多 止損 95",publishedAt:current(),replyTo:null}],()=>{});
     assert(state.initialized && state.lastSeenId===5001 && state.orders.length===0,"baseline must not place orders");
   });
-  test("BDD02 多單訊號解析", () => {
+  test("BDD02", () => {
     const x=signal("#ZEC 市價 1225-1200附近小多（20-30x） 止損 1168");
     assert(x.reason==="ok" && x.symbol==="ZECUSDT" && x.side==="long" &&
       x.kind==="market" && x.low===1200 && x.high===1225 && x.stop===1168,"long parse error");
   });
-  test("BDD03 空單訊號解析", () => {
+  test("BDD03", () => {
     const x=signal("#ZEC 掛單 1250-1265附近空 止損 1288");
     assert(x.reason==="ok" && x.side==="short" && x.kind==="limit" &&
       x.low===1250 && x.high===1265,"short parse error");
   });
-  test("BDD04 缺少止損的訊號不下單", () => {
+  test("BDD04", () => {
     const x=signal("#SOL 市價 99-101附近多");
     assert(x.reason==="stop_missing","missing SL accepted");
   });
-  test("BDD05 新訊號僅生成指令，不偽造成交", () => {
+  test("BDD05", () => {
     state.lastSeenId=5000;
     const msg={id:5001,text:"#SOL 市價 99-101附近多 止損 95",
       publishedAt:current(),replyTo:null};
@@ -713,64 +733,64 @@ function runBDDTests() {
     ingest([msg],()=>{});
     assert(state.orders.length===1,"duplicate message created duplicate order");
   });
-  test("BDD06 市價在區間內才模擬開倉", () => {
+  test("BDD06", () => {
     const o=mock({status:"waiting_price"});state.orders=[o];
     handlePrice("SOLUSDT",100);
     assert(o.status==="open" && o.qty>0 && o.entryPrice>100, "market entry failed");
   });
-  test("BDD07 市價超出區間不得偽造成交", () => {
+  test("BDD07", () => {
     const o=mock({status:"waiting_price"});state.orders=[o];
     handlePrice("SOLUSDT",105);
     assert(o.status==="rejected" && !o.qty,"out-of-range market order filled");
   });
-  test("BDD08 掛單必須先觸價才開倉", () => {
+  test("BDD08", () => {
     const o=mock();state.orders=[o];
     handlePrice("SOLUSDT",120);
     assert(o.status==="pending","out-of-range limit filled");
     handlePrice("SOLUSDT",100);
     assert(o.status==="open","limit was not filled in range");
   });
-  test("BDD09 超過24小時未成交掛單到期", () => {
+  test("BDD09", () => {
     const o=mock({receivedAt:new Date(Date.now()-25*3600*1000).toISOString()});
     state.orders=[o];handlePrice("SOLUSDT",100);
     assert(o.status==="expired","old order filled");
   });
-  test("BDD10 原訊號的取消掛單連動", () => {
+  test("BDD10", () => {
     const o=mock();state.orders=[o];state.lastSeenId=5001;
     ingest([{id:5002,text:"取消掛單 沒有接到",replyTo:5001,publishedAt:current()}],()=>{});
     assert(o.status==="cancelled" && state.orders.length===1,"cancel reply failed");
   });
-  test("BDD11 有新鮮報價才允許模擬成交", () => {
+  test("BDD11", () => {
     const o=mock({status:"waiting_price",receivedAt:new Date(Date.now()-AGE-3000).toISOString()});
     state.orders=[o];handlePrice("SOLUSDT",100);
     assert(o.status==="rejected","stale market quote filled");
   });
-  test("BDD12 每筆風險與名目倉位上限", () => {
+  test("BDD12", () => {
     const o=mock();state.orders=[o];openOrder(o,100);
     assert(o.qty*o.entryPrice<=START_BALANCE*MAX_POSITION+1e-5,"position cap exceeded");
     assert(o.qty*Math.abs(o.entryPrice-o.stop)<=START_BALANCE*RISK+1e-5,"risk cap exceeded");
   });
-  test("BDD13 做多止損計入不利滑價", () => {
+  test("BDD13", () => {
     const o=mock();state.orders=[o];openOrder(o,100);
     handlePrice("SOLUSDT",94);
     assert(o.status==="closed" && o.reason==="stop_loss" && o.exitPrice<94 && o.netPnl<0,"long stop wrong");
   });
-  test("BDD14 做空止損計入不利滑價", () => {
+  test("BDD14", () => {
     const o=mock({side:"short",stop:105});state.orders=[o];openOrder(o,100);
     handlePrice("SOLUSDT",106);
     assert(o.status==="closed" && o.exitPrice>106 && o.netPnl<0,"short stop wrong");
   });
-  test("BDD15 多單明確止盈價", () => {
+  test("BDD15", () => {
     const o=mock({target:110});state.orders=[o];openOrder(o,100);
     handlePrice("SOLUSDT",111);
     assert(o.status==="closed" && o.reason==="take_profit" && o.netPnl>0,"long TP wrong");
   });
-  test("BDD16 空單明確止盈價", () => {
+  test("BDD16", () => {
     const o=mock({side:"short",stop:105,target:90});state.orders=[o];openOrder(o,100);
     handlePrice("SOLUSDT",89);
     assert(o.status==="closed" && o.reason==="take_profit" && o.netPnl>0,"short TP wrong");
   });
-  test("BDD17 頻道無比例減倉，預設模擬減半", () => {
+  test("BDD17", () => {
     assert(closeMsg("兩倍了 減倉") && !closeMsg("賺錢了 兄弟們"),"exit text classification wrong");
     near(closeFraction("兩倍了 減倉"),0.5);
     const o=mock();state.orders=[o];openOrder(o,100);
@@ -780,12 +800,12 @@ function runBDDTests() {
     assert(o.status==="open" && o.exitEvents[0].assumedRatio &&
       realizedOf(o)>0,"partial exit not realized");
   });
-  test("BDD18 明示30%、一半及1/3減倉比例", () => {
+  test("BDD18", () => {
     near(closeFraction("減倉 30%"),0.3);
     near(closeFraction("平一半"),0.5);
     near(closeFraction("減倉 1/3"),1/3);
   });
-  test("BDD19 關聯Telegram回覆執行部分止盈", () => {
+  test("BDD19", () => {
     const o=mock();state.orders=[o];openOrder(o,100);
     state.lastSeenId=5001;
     ingest([{id:5002,text:"兩倍了 減倉",replyTo:5001,publishedAt:current()}],()=>{});
@@ -793,7 +813,7 @@ function runBDDTests() {
     handlePrice("SOLUSDT",100.5);
     assert(o.status==="open" && o.exitEvents.length===1 && o.qty<o.initialQty,"reply not executed");
   });
-  test("BDD20 重複收到同一回覆不可重複減倉", () => {
+  test("BDD20", () => {
     const o=mock();state.orders=[o];openOrder(o,100);
     state.lastSeenId=5001;
     const msg={id:5002,text:"兩倍了 減倉",replyTo:5001,publishedAt:current()};
@@ -801,14 +821,14 @@ function runBDDTests() {
     handlePrice("SOLUSDT",100.6);
     assert(o.exitEvents.length===1,"duplicate reply doubled exit");
   });
-  test("BDD21 頻道全部平倉需完成結算", () => {
+  test("BDD21", () => {
     const o=mock();state.orders=[o];openOrder(o,100);state.lastSeenId=5001;
     ingest([{id:5002,text:"全部平倉",replyTo:5001,publishedAt:current()}],()=>{});
     handlePrice("SOLUSDT",100.5);
     assert(o.status==="closed" && o.qty===0 && o.exitEvents.length===1 &&
       o.netPnl>0,"full close failed");
   });
-  test("BDD22 減倉獲利和未實現損益正確拆開", () => {
+  test("BDD22", () => {
     const o=mock();state.orders=[o];openOrder(o,100);
     const entryQty=o.qty;closeOrder(o,110,"partial",0.5,5002,true);
     const rep=report();const expectedRealized=o.exitEvents[0].netPnl;
@@ -817,7 +837,7 @@ function runBDDTests() {
     near(rep.equity,START_BALANCE+rep.realizedPnl+rep.unrealizedPnl);
     near(o.qty,entryQty/2);
   });
-  test("BDD23 減倉後觸發止損，不重複計算獲利", () => {
+  test("BDD23", () => {
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,110,"partial",0.5,5002,true);
     handlePrice("SOLUSDT",94);
@@ -825,7 +845,7 @@ function runBDDTests() {
     near(o.netPnl,o.exitEvents.reduce((sum,x)=>sum+x.netPnl,0));
     near(equity(),START_BALANCE+o.netPnl);
   });
-  test("BDD24 每日/月度績效納入部分平倉腿", () => {
+  test("BDD24", () => {
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,110,"partial",0.5,5002,true);
     closeOrder(o,108,"full",1,5003,false);
@@ -835,27 +855,27 @@ function runBDDTests() {
     near(r.daily[d].pnl,o.netPnl);
     near(r.symbols.SOLUSDT.pnl,o.netPnl);
   });
-  test("BDD25 手續費與滑價降低實際淨損益", () => {
+  test("BDD25", () => {
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,110,"take_profit");
     assert(o.feeEntry>0 && o.feeExit>0 &&
       o.netPnl<o.grossPnl && o.entryPrice>100 && o.exitPrice<110,
       "fees/slippage not charged");
   });
-  test("BDD26 Telegram 回覆關聯HTML正確解析", () => {
+  test("BDD26", () => {
     const html='<div data-post="KCryptoBTC168/5001"><div class="tgme_widget_message_text js-message_text">#SOL<br>市價 99-101附近多 止損 95</div><time datetime="'+current()+'"></time></div>'+
       '<div data-post="KCryptoBTC168/5002"><a class="tgme_widget_message_reply" href="https://t.me/KCryptoBTC168/5001">quoted</a>'+
       '<div class="tgme_widget_message_text js-message_text">兩倍了 減倉</div><time datetime="'+current()+'"></time></div>';
     const x=parseChannel(html);
     assert(x.length===2 && x[1].replyTo===5001 && x[1].text==="兩倍了 減倉","reply parsing mismatch");
   });
-  test("BDD27 過期新訊號不補歷史成交", () => {
+  test("BDD27", () => {
     state.lastSeenId=5000;
     ingest([{id:5001,text:"#SOL 市價 99-101附近多 止損 95",
       publishedAt:new Date(Date.now()-15*60*1000).toISOString(),replyTo:null}],()=>{});
     assert(state.orders.length===0 && state.messages[0].classification==="stale_or_missing_timestamp","stale message accepted");
   });
-  test("BDD28 未關聯的獲利留言不觸發出場", () => {
+  test("BDD28", () => {
     const o=mock();state.orders=[o];openOrder(o,100);state.lastSeenId=5001;
     ingest([{id:5002,text:"賺錢了兄弟們",replyTo:5001,publishedAt:current()}],()=>{});
     handlePrice("SOLUSDT",100.5);
@@ -863,212 +883,212 @@ function runBDDTests() {
   });
 
   // Parsing and Telegram ingestion — synthetic messages only.
-  test("BDD29 幣種小寫標籤正常解析",()=>{
+  test("BDD29",()=>{
     const x=signal("#sol 市價 99-101附近多 止損 95");
     assert(x.reason==="ok" && x.symbol==="SOLUSDT","lowercase ticker not normalized");
   });
-  test("BDD30 非 Binance 合約 XAU 必須拒絕",()=>{
+  test("BDD30",()=>{
     const x=signal("#XAU 市價 4000-4010附近多 止損 3900");
     assert(x.reason==="unsupported_market_XAU","unsupported gold market accepted");
   });
-  test("BDD31 未列入白名單的幣種不得成交",()=>{
+  test("BDD31",()=>{
     assert(signal("#NOTREAL 市價 99-101附近多 止損 95").reason==="not_trade_signal","unknown ticker accepted");
   });
-  test("BDD32 評論不是建倉訊號",()=>{
+  test("BDD32",()=>{
     assert(signal("#BTC 長期趨勢仍可能看多").reason==="not_trade_signal","commentary traded");
   });
-  test("BDD33 多單止損高於進場區間應拒絕",()=>{
+  test("BDD33",()=>{
     assert(signal("#SOL 市價 99-101附近多 止損 102").reason==="invalid_risk_levels","bad long stop accepted");
   });
-  test("BDD34 多單止損等於進場下緣應拒絕",()=>{
+  test("BDD34",()=>{
     assert(signal("#SOL 市價 99-101附近多 止損 99").reason==="invalid_risk_levels","zero long stop gap accepted");
   });
-  test("BDD35 空單止損等於進場上緣應拒絕",()=>{
+  test("BDD35",()=>{
     assert(signal("#SOL 掛單 99-101附近空 止損 101").reason==="invalid_risk_levels","zero short stop gap accepted");
   });
-  test("BDD36 進場價上下界自動排序",()=>{
+  test("BDD36",()=>{
     const x=signal("#BTC 掛單 80000-79000附近多 止損 78000");
     assert(x.reason==="ok" && x.low===79000 && x.high===80000,"reverse range not normalized");
   });
-  test("BDD37 單一市價也能作為進場價格",()=>{
+  test("BDD37",()=>{
     const x=signal("#BTC 市價 78500附近多 止損 77200");
     assert(x.reason==="ok" && x.low===78500 && x.high===78500,"single entry failed");
   });
-  test("BDD38 止盈目標價可被解析",()=>{
+  test("BDD38",()=>{
     const x=signal("#SOL 市價 99-101附近多 止損 95 止盈 120");
     assert(x.reason==="ok" && x.target===120,"take profit target missing");
   });
-  test("BDD39 進場價格缺失應拒絕",()=>{
+  test("BDD39",()=>{
     assert(signal("#SOL 市價附近多 止損 95").reason==="entry_missing","missing entry accepted");
   });
-  test("BDD40 空文字不產生交易",()=>{
+  test("BDD40",()=>{
     assert(signal("   ").reason==="not_trade_signal","blank signal accepted");
   });
-  test("BDD41 Telegram HTML 重複貼文 ID 只讀一次",()=>{
+  test("BDD41",()=>{
     const html='<div data-post="KCryptoBTC168/5010"><div class="tgme_widget_message_text js-message_text">A</div></div>'+
       '<div data-post="KCryptoBTC168/5010"><div class="tgme_widget_message_text js-message_text">B</div></div>';
     const x=parseChannel(html);
     assert(x.length===1 && x[0].id===5010,"duplicate channel item");
   });
-  test("BDD42 HTML entity 不應損壞訊號文字",()=>{
+  test("BDD42",()=>{
     assert(plain("#BTC &amp; SOL<br>止損 &lt; 80")==="#BTC & SOL\n止損 < 80","entity/br decoder broken");
   });
-  test("BDD43 引用的原訊號文字不應覆寫回覆正文",()=>{
+  test("BDD43",()=>{
     const h='<div data-post="KCryptoBTC168/5002"><a class="tgme_widget_message_reply" href="https://t.me/KCryptoBTC168/5001">'+
       '<div class="tgme_widget_message_text js-message_reply_text">#SOL 市價 99-101附近多 止損 95</div></a>'+
       '<div class="tgme_widget_message_text js-message_text">減倉</div><time datetime="'+current()+'"></time></div>';
     const x=parseChannel(h);
     assert(x.length===1 && x[0].text==="減倉" && x[0].replyTo===5001,"reply text overwritten");
   });
-  test("BDD44 編輯過的 Telegram 文字保留原文",()=>{
+  test("BDD44",()=>{
     const m={id:5001,text:"#SOL 市價 99-101附近多 止損 95",publishedAt:current()};
     ingest([m],()=>{});ingest([{...m,text:"內容已修改"}],()=>{});
     assert(state.messages.length===1 && state.messages[0].text===m.text &&
       state.messages[0].latestText==="內容已修改","original edit was lost");
   });
-  test("BDD45 晚到的舊訊息不可倒補成交",()=>{
+  test("BDD45",()=>{
     state.lastSeenId=5020;
     ingest([{id:5001,text:"#SOL 市價 99-101附近多 止損 95",publishedAt:current()}],()=>{});
     assert(state.orders.length===0 && state.messages[0].classification==="late_history_ignored","backfilled a past order");
   });
-  test("BDD46 超過容許時鐘誤差的未來訊息拒絕",()=>{
+  test("BDD46",()=>{
     ingest([{id:5001,text:"#SOL 市價 99-101附近多 止損 95",
       publishedAt:new Date(Date.now()+180000).toISOString()}],()=>{});
     assert(state.orders.length===0 && state.messages[0].classification==="stale_or_missing_timestamp","future signal accepted");
   });
-  test("BDD47 缺乏發布時間的訊號拒絕",()=>{
+  test("BDD47",()=>{
     ingest([{id:5001,text:"#SOL 市價 99-101附近多 止損 95",publishedAt:null}],()=>{});
     assert(state.orders.length===0 && state.messages[0].classification==="stale_or_missing_timestamp","undated signal accepted");
   });
-  test("BDD48 發布時間在容許窗內可以成為掛單",()=>{
+  test("BDD48",()=>{
     ingest([{id:5001,text:"#SOL 掛單 99-101附近多 止損 95",
       publishedAt:new Date(Date.now()-AGE+10000).toISOString()}],()=>{});
     assert(state.orders.length===1 && state.orders[0].status==="pending","fresh limit rejected");
   });
-  test("BDD49 找不到原單的平倉回覆須人工檢視",()=>{
+  test("BDD49",()=>{
     ingest([{id:5001,replyTo:4999,text:"全部平倉",publishedAt:current()}],()=>{});
     assert(state.orders.length===0 && state.messages[0].classification==="orphan_reply_needs_review","orphan close accepted");
   });
-  test("BDD50 過期的減倉回覆不補成交",()=>{
+  test("BDD50",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     state.lastSeenId=5001;
     ingest([{id:5002,replyTo:5001,text:"減倉",publishedAt:new Date(Date.now()-AGE-1000).toISOString()}],()=>{});
     assert(o.pendingCloseCommands.length===0 && o.exitEvents.length===0,"stale close processed");
   });
-  test("BDD51 同幣種不同有效訊號獨立成單",()=>{
+  test("BDD51",()=>{
     ingest([{id:5001,text:"#SOL 市價 99-101附近多 止損 95",publishedAt:current()},
       {id:5002,text:"#SOL 掛單 99-101附近多 止損 95",publishedAt:current()}],()=>{});
     assert(state.orders.length===2 && state.orders[0].messageId!==state.orders[1].messageId,"distinct orders collapsed");
   });
-  test("BDD52 首次同步基線使用最大 ID",()=>{
+  test("BDD52",()=>{
     state=fresh();
     ingest([{id:5003,text:"A",publishedAt:current()},{id:5001,text:"B",publishedAt:current()}],()=>{});
     assert(state.lastSeenId===5003 && state.messages.length===2 && state.orders.length===0,"baseline watermark wrong");
   });
-  test("BDD53 收到新貼文後高水位訊息 ID 前進",()=>{
+  test("BDD53",()=>{
     ingest([{id:5005,text:"評論",publishedAt:current()}],()=>{});
     assert(state.lastSeenId===5005 && state.messages.length===1,"watermark not advanced");
   });
-  test("BDD54 不支援的品種應保留分類但不開單",()=>{
+  test("BDD54",()=>{
     ingest([{id:5001,text:"#XAU 市價 4000-4010附近多 止損 3900",publishedAt:current()}],()=>{});
     assert(state.orders.length===0 && state.messages[0].classification==="unsupported_market_XAU","unsupported market order created");
   });
-  test("BDD55 不完整進出場敘述不自動交易",()=>{
+  test("BDD55",()=>{
     ingest([{id:5001,text:"#ZEC 現在不急著追多，可以先觀察",publishedAt:current()}],()=>{});
     assert(state.orders.length===0,"vague signal traded");
   });
-  test("BDD56 未引用原貼文的平倉指令列為待審",()=>{
+  test("BDD56",()=>{
     ingest([{id:5001,text:"全部平倉",publishedAt:current(),replyTo:null}],()=>{});
     assert(state.orders.length===0 && state.messages[0].classification==="unlinked_exit_needs_review","unlinked exit traded");
   });
-  test("BDD57 未成交限價單收到取消指令不得成交",()=>{
+  test("BDD57",()=>{
     const o=mock();state.orders=[o];state.lastSeenId=5001;
     ingest([{id:5002,text:"取消掛單",publishedAt:current(),replyTo:5001}],()=>{});
     assert(o.status==="cancelled","pending cancellation ignored");
   });
-  test("BDD58 等待市價的訂單也能取消",()=>{
+  test("BDD58",()=>{
     const o=mock({status:"waiting_price"});state.orders=[o];state.lastSeenId=5001;
     ingest([{id:5002,text:"取消掛單",publishedAt:current(),replyTo:5001}],()=>{});
     assert(o.status==="cancelled","waiting quote cancellation ignored");
   });
-  test("BDD59 已開倉收到取消掛單不可偷偷平倉",()=>{
+  test("BDD59",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);state.lastSeenId=5001;
     ingest([{id:5002,text:"取消掛單",publishedAt:current(),replyTo:5001}],()=>{});
     assert(o.status==="open" && o.exitEvents.length===0 &&
       state.messages[0].classification==="needs_review","cancelled an already filled order");
   });
-  test("BDD60 已取消限價單即使後來觸價也不建倉",()=>{
+  test("BDD60",()=>{
     const o=mock({status:"cancelled"});state.orders=[o];handlePrice("SOLUSDT",100);
     assert(o.status==="cancelled" && o.qty===0,"cancelled order reopened");
   });
 
 
   // State machine, order sizing, stop/take-profit and partial close.
-  test("BDD61 已過期掛單不得再次建倉",()=>{
+  test("BDD61",()=>{
     const o=mock({status:"expired"});state.orders=[o];handlePrice("SOLUSDT",100);
     assert(o.status==="expired" && o.qty===0,"expired order filled");
   });
-  test("BDD62 已拒絕訂單不得再次開倉",()=>{
+  test("BDD62",()=>{
     const o=mock({status:"rejected"});state.orders=[o];handlePrice("SOLUSDT",100);
     assert(o.status==="rejected" && o.qty===0,"rejected order filled");
   });
-  test("BDD63 同一筆訊號的連續收價不會重複開倉",()=>{
+  test("BDD63",()=>{
     const o=mock();state.orders=[o];handlePrice("SOLUSDT",100);
     const qty=o.qty,entry=o.entryTime;
     handlePrice("SOLUSDT",100);handlePrice("SOLUSDT",101);
     assert(o.status==="open" && o.qty===qty && o.entryTime===entry,"duplicate entry");
   });
-  test("BDD64 舊版頻道平倉請求相容",()=>{
+  test("BDD64",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);o.reason="channel_close_requested";
     handlePrice("SOLUSDT",100.5);
     assert(o.status==="closed" && o.reason==="channel_close","legacy pending close lost");
   });
-  test("BDD65 其他交易對的價格不可平掉 SOL",()=>{
+  test("BDD65",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     handlePrice("BTCUSDT",94);
     assert(o.status==="open" && o.exitEvents.length===0,"other symbol price changed SOL");
   });
-  test("BDD66 空單限價區間觸價可正確進場",()=>{
+  test("BDD66",()=>{
     const o=mock({side:"short",stop:105});state.orders=[o];
     handlePrice("SOLUSDT",101);
     assert(o.status==="open" && o.qty>0 && o.entryPrice<101,"short entry failed");
   });
-  test("BDD67 掛單價太高或太低都保持待成交",()=>{
+  test("BDD67",()=>{
     const o=mock();state.orders=[o];
     handlePrice("SOLUSDT",98);assert(o.status==="pending","low outside range filled");
     handlePrice("SOLUSDT",102);assert(o.status==="pending","high outside range filled");
   });
-  test("BDD68 掛單區間下緣是有效觸價",()=>{
+  test("BDD68",()=>{
     const o=mock();state.orders=[o];handlePrice("SOLUSDT",99);
     assert(o.status==="open","lower boundary rejected");
   });
-  test("BDD69 掛單區間上緣是有效觸價",()=>{
+  test("BDD69",()=>{
     const o=mock();state.orders=[o];handlePrice("SOLUSDT",101);
     assert(o.status==="open","upper boundary rejected");
   });
-  test("BDD70 進場報價 NaN/零/負數一律不能成交",()=>{
+  test("BDD70",()=>{
     for (const price of [NaN,0,-1,Infinity]) {
       const o=mock();state.orders=[o];handlePrice("SOLUSDT",price);
       assert(o.status==="pending" && !o.qty,"invalid quote filled: "+price);
     }
   });
-  test("BDD71 直接開倉價格不合法時拒絕",()=>{
+  test("BDD71",()=>{
     const o=mock();state.orders=[o];openOrder(o,0);
     assert(o.status==="rejected" && o.qty===0,"zero entry accepted");
   });
-  test("BDD72 止損先於頻道減倉命令執行",()=>{
+  test("BDD72",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     o.pendingCloseCommands.push({messageId:5002,fraction:0.5,reason:"channel_partial_take_profit"});
     handlePrice("SOLUSDT",94);
     assert(o.status==="closed" && o.reason==="stop_loss" && o.exitEvents.length===1,"stop was bypassed");
   });
-  test("BDD73 既定 TP 觸發時不得再重複頻道平倉",()=>{
+  test("BDD73",()=>{
     const o=mock({target:110});state.orders=[o];openOrder(o,100);
     o.pendingCloseCommands.push({messageId:5002,fraction:1,reason:"channel_close"});
     handlePrice("SOLUSDT",111);
     assert(o.status==="closed" && o.reason==="take_profit" && o.exitEvents.length===1,"double close with TP");
   });
-  test("BDD74 一筆兩個不同減倉回覆依序各減半",()=>{
+  test("BDD74",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);const initial=o.qty;
     o.pendingCloseCommands=[{messageId:5002,fraction:0.5,reason:"partial"},
       {messageId:5003,fraction:0.5,reason:"partial"}];
@@ -1076,7 +1096,7 @@ function runBDDTests() {
     assert(o.status==="open" && o.exitEvents.length===2,"partial command count wrong");
     near(o.qty,initial*0.25);
   });
-  test("BDD75 已執行過的減倉命令不再重播",()=>{
+  test("BDD75",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,110,"partial",0.5,5002);
     const remaining=o.qty;
@@ -1084,34 +1104,34 @@ function runBDDTests() {
     near(o.qty,remaining);
     assert(o.exitEvents.length===1,"partial exit replayed");
   });
-  test("BDD76 平倉比例 0 不得改變帳本",()=>{
+  test("BDD76",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);const q=o.qty;
     closeOrder(o,110,"partial",0,5002);
     assert(o.status==="open" && o.qty===q && o.exitEvents.length===0,"zero fraction exited");
   });
-  test("BDD77 平倉數量不可超過現有倉位",()=>{
+  test("BDD77",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,110,"channel_close",2);
     assert(o.status==="closed" && o.qty===0 && o.exitEvents.length===1 &&
       o.exitEvents[0].qty<=o.initialQty,"overclosed negative quantity");
   });
-  test("BDD78 已完成平倉不可重複結算",()=>{
+  test("BDD78",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,110,"take_profit");const pnl=o.netPnl;
     closeOrder(o,200,"take_profit");
     assert(o.exitEvents.length===1 && o.netPnl===pnl,"closed position double-settled");
   });
-  test("BDD79 停損不能讓已平倉的單再次出場",()=>{
+  test("BDD79",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,110,"take_profit");handlePrice("SOLUSDT",50);
     assert(o.status==="closed" && o.exitEvents.length===1,"closed position stopped again");
   });
-  test("BDD80 空單獲利方向正確",()=>{
+  test("BDD80",()=>{
     const o=mock({side:"short",stop:105});state.orders=[o];openOrder(o,100);
     closeOrder(o,90,"take_profit");
     assert(o.netPnl>0 && o.grossPnl>0,"profitable short scored as loss");
   });
-  test("BDD81 多筆倉位遵守單筆上限與總資金約束",()=>{
+  test("BDD81",()=>{
     const a=mock({id:"A",messageId:5001}),b=mock({id:"B",messageId:5002});
     state.orders=[a,b];openOrder(a,100);openOrder(b,100);
     const sum=a.qty*a.entryPrice+b.qty*b.entryPrice;
@@ -1119,44 +1139,44 @@ function runBDDTests() {
       b.qty*b.entryPrice<=START_BALANCE*MAX_POSITION+0.01 &&
       sum<=START_BALANCE+0.01,"portfolio allocation exceeded cap");
   });
-  test("BDD82 無可用淨值不得建立新倉",()=>{
+  test("BDD82",()=>{
     state.orders=[mock({status:"closed",qty:0,initialQty:1,netPnl:-START_BALANCE})];
     const o=mock({id:"N",messageId:5002});state.orders.push(o);openOrder(o,100);
     assert(o.status==="rejected" && o.qty===0,"opened with zero net worth");
   });
-  test("BDD83 指定超過100%的減倉比例必須拒絕",()=>{
+  test("BDD83",()=>{
     assert(closeFraction("減倉150%")===0 && closeFraction("減倉 4/3")===0,
       "invalid fraction converted into full close");
   });
-  test("BDD84 止盈百分比可判定為部分平倉",()=>{
+  test("BDD84",()=>{
     assert(partialMsg("止盈 30%") && closeMsg("止盈 30%"),"percentage TP not partial");
     near(closeFraction("止盈 30%"),0.3);
   });
-  test("BDD85 多單入場與出場都計算不利滑價",()=>{
+  test("BDD85",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);closeOrder(o,110,"take_profit");
     near(o.entryPrice,100*(1+SLIP));near(o.exitPrice,110*(1-SLIP));
   });
-  test("BDD86 空單入場與出場都計算不利滑價",()=>{
+  test("BDD86",()=>{
     const o=mock({side:"short",stop:105});state.orders=[o];openOrder(o,100);
     closeOrder(o,90,"take_profit");
     near(o.entryPrice,100*(1-SLIP));near(o.exitPrice,90*(1+SLIP));
   });
-  test("BDD87 每筆入場手續費依名目倉位計算",()=>{
+  test("BDD87",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     near(o.feeEntry,o.qty*o.entryPrice*FEE);
   });
-  test("BDD88 每個出場腿依實際平倉名目計算手續費",()=>{
+  test("BDD88",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,110,"partial",0.5,5002);closeOrder(o,115,"full");
     near(o.feeExit,o.exitEvents.reduce((v,x)=>v+x.feeExit,0));
   });
-  test("BDD89 減倉後再增值，已實現損益不變",()=>{
+  test("BDD89",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);closeOrder(o,110,"partial",0.5,5002);
     const before=realizedOf(o);
     handlePrice("SOLUSDT",100.5);
     near(realizedOf(o),before);
   });
-  test("BDD90 平倉接受無效價格必須不處理",()=>{
+  test("BDD90",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);const before=o.qty;
     closeOrder(o,0,"take_profit");
     closeOrder(o,NaN,"take_profit");
@@ -1165,16 +1185,16 @@ function runBDDTests() {
 
 
   // Portfolio accounting, audit, reports, security & recovery behaviour.
-  test("BDD91 無交易的績效報表維持期初資金",()=>{
+  test("BDD91",()=>{
     const r=report();near(r.equity,START_BALANCE);
     assert(r.closedTrades===0 && r.openPositions===0 && r.pendingOrders===0 &&
       r.realizedPnl===0 && r.unrealizedPnl===0,"empty portfolio report wrong");
   });
-  test("BDD92 已完成一筆賺錢的交易勝率為100%",()=>{
+  test("BDD92",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);closeOrder(o,110,"take_profit");
     const r=report();assert(r.closedTrades===1 && r.winRatePct===100 && r.realizedPnl>0,"win rate wrong");
   });
-  test("BDD93 一勝一敗的勝率為50%",()=>{
+  test("BDD93",()=>{
     const t=current();
     state.orders=[
       mock({id:"A",status:"closed",netPnl:10,exitTime:t,exitEvents:[{at:t,netPnl:10}]}),
@@ -1182,27 +1202,27 @@ function runBDDTests() {
     ];
     const r=report();assert(r.closedTrades===2 && r.winRatePct===50,"two trades win rate wrong");
   });
-  test("BDD94 盈虧因子是獲利總額除以虧損絕對值",()=>{
+  test("BDD94",()=>{
     const t=current();
     state.orders=[mock({status:"closed",netPnl:10,exitTime:t,exitEvents:[
       {at:t,netPnl:20},{at:t,netPnl:-10}
     ]})];
     near(report().profitFactor,2);
   });
-  test("BDD95 沒有虧損時盈虧因子顯示未定義",()=>{
+  test("BDD95",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);closeOrder(o,110,"take_profit");
     assert(report().profitFactor===null,"profit factor should be null without losses");
   });
-  test("BDD96 最大回撤按歷史淨值峰值計算",()=>{
+  test("BDD96",()=>{
     state.snapshots=[{at:current(),equity:10000},{at:current(),equity:11000},
       {at:current(),equity:9000}];
     near(report().maxDrawdownPct,2000/11000*100);
   });
-  test("BDD97 60秒內的重複績效快照不應堆積",()=>{
+  test("BDD97",()=>{
     snapshot();snapshot();snapshot();
     assert(state.snapshots.length===1,"snapshot interval missing");
   });
-  test("BDD98 UTC 跨日出場記入不同日期",()=>{
+  test("BDD98",()=>{
     const at1="2026-11-02T23:59:00Z",at2="2026-11-03T00:01:00Z";
     state.orders=[mock({status:"closed",netPnl:15,exitEvents:[
       {at:at1,netPnl:10},{at:at2,netPnl:5}
@@ -1210,14 +1230,14 @@ function runBDDTests() {
     const r=report();
     assert(r.daily["2026-11-02"].trades===1 && r.daily["2026-11-03"].trades===1,"UTC day split missing");
   });
-  test("BDD99 UTC 跨月平倉應分開月報表",()=>{
+  test("BDD99",()=>{
     state.orders=[mock({status:"closed",netPnl:30,exitEvents:[
       {at:"2026-10-31T23:59:00Z",netPnl:10},{at:"2026-11-01T00:01:00Z",netPnl:20}
     ]})];
     const r=report();
     assert(r.monthly["2026-10"].pnl===10 && r.monthly["2026-11"].pnl===20,"month boundary wrong");
   });
-  test("BDD100 幣種績效必須分別累計而非混淆",()=>{
+  test("BDD100",()=>{
     const t=current();
     state.orders=[
       mock({id:"A",symbol:"SOLUSDT",status:"closed",netPnl:8,exitEvents:[{at:t,netPnl:8}]}),
@@ -1226,125 +1246,125 @@ function runBDDTests() {
     const r=report();
     assert(r.symbols.SOLUSDT.pnl===8 && r.symbols.BTCUSDT.pnl===-3,"symbols merged");
   });
-  test("BDD101 報表手續費是入場與每次出場總和",()=>{
+  test("BDD101",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,110,"partial",0.5,5002);
     closeOrder(o,105,"full");
     near(report().feesPaid,o.feeEntry+o.feeExit);
   });
-  test("BDD102 部分平倉已實現收益要在持倉期間列報",()=>{
+  test("BDD102",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,110,"partial",0.5,5002);
     assert(o.status==="open" && report().realizedPnl>0 && report().partialExits===1,
       "partial revenue missing");
   });
-  test("BDD103 已平倉與持倉合計淨值不重複扣費",()=>{
+  test("BDD103",()=>{
     const a=mock({id:"A",messageId:5001}),b=mock({id:"B",messageId:5002});
     state.orders=[a,b];openOrder(a,100);closeOrder(a,110,"take_profit");
     openOrder(b,100);handlePrice("SOLUSDT",105);
     const r=report();
     near(r.equity,START_BALANCE+r.realizedPnl+r.unrealizedPnl);
   });
-  test("BDD104 出場紀錄在已平倉後仍保留",()=>{
+  test("BDD104",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,110,"partial",0.5,5002);
     closeOrder(o,115,"full",1,5003);
     assert(o.status==="closed" && o.exitEvents.length===2 &&
       o.exitEvents[0].messageId===5002 && o.exitEvents[1].messageId===5003,"exit audit trail lost");
   });
-  test("BDD105 掛單本身不影響淨值",()=>{
+  test("BDD105",()=>{
     state.orders=[mock(),mock({id:"B",messageId:5002,status:"waiting_price"})];
     assert(equity()===START_BALANCE && report().realizedPnl===0,"unfilled order affected equity");
   });
-  test("BDD106 已撤銷掛單不產生手續費",()=>{
+  test("BDD106",()=>{
     state.orders=[mock({status:"cancelled"})];
     assert(report().feesPaid===0 && report().realizedPnl===0,"cancelled order charged fee");
   });
-  test("BDD107 已平倉紀錄不因後續行情變動改變",()=>{
+  test("BDD107",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,110,"take_profit");const before=o.netPnl;
     handlePrice("SOLUSDT",80);
     near(o.netPnl,before);near(equity(),START_BALANCE+before);
   });
-  test("BDD108 CSV 匯出含交易關聯和結算欄位",()=>{
+  test("BDD108",()=>{
     const content=csv();
     assert(content.startsWith("messageId,symbol,side,kind,status") &&
       content.includes("netPnl") && content.includes("exitEvents"),"CSV fields incomplete");
   });
-  test("BDD109 CSV 內的引號須跳脫，不得破壞列結構",()=>{
+  test("BDD109",()=>{
     state.orders=[mock({reason:'alert "incorrect" text'})];
     const content=csv();
     assert(content.includes('""incorrect""') && content.split("\n").length===2,"CSV quote escape failed");
   });
-  test("BDD110 CSV 每筆單必須帶 Telegram 原始連結",()=>{
+  test("BDD110",()=>{
     state.orders=[mock()];
     assert(csv().includes("https://t.me/KCryptoBTC168/5001"),"original channel link missing");
   });
-  test("BDD111 CSV 必須包含分批出場明細 JSON",()=>{
+  test("BDD111",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,110,"partial",0.5,5002);
     assert(csv().includes("fractionOfRemaining") && csv().includes("5002"),"partial exits missing from export");
   });
-  test("BDD112 健康檢查無密碼也能驗證存活",()=>{
+  test("BDD112",()=>{
     const r=route(new Request("http://localhost/healthz"));
     assert(r.status===200 && r.headers.get("Cache-Control")==="no-store","health endpoint not healthy");
   });
-  test("BDD113 未登入不可存取儀表板或自我測試",()=>{
+  test("BDD113",()=>{
     for(const path of ["/","/api/report","/api/selftest","/api/orders","/api/orders.csv"]){
       assert(route(new Request("http://localhost"+path)).status===401,"unauthorized: "+path);
     }
   });
-  test("BDD114 格式錯誤的 Basic Authorization 必須拒絕",()=>{
+  test("BDD114",()=>{
     const r=route(new Request("http://localhost/api/report",{headers:{Authorization:"Basic invalidbase64%%%"} }));
     assert(r.status===401,"malformed Basic was accepted");
   });
-  test("BDD115 密碼錯誤的 API 請求須拒絕",()=>{
+  test("BDD115",()=>{
     const h="Basic "+btoa("viewer:not-the-secret");
     assert(route(new Request("http://localhost/api/report",{headers:{Authorization:h}})).status===401,
       "wrong password allowed");
   });
-  test("BDD116 有效密碼可存取績效 API",()=>{
+  test("BDD116",()=>{
     const h="Basic "+btoa("viewer:"+password);
     assert(route(new Request("http://localhost/api/report",{headers:{Authorization:h}})).status===200,
       "authenticated report inaccessible");
   });
-  test("BDD117 非 GET HTTP 操作應拒絕",()=>{
+  test("BDD117",()=>{
     const h="Basic "+btoa("viewer:"+password);
     assert(route(new Request("http://localhost/api/report",{method:"POST",headers:{Authorization:h}})).status===405,
       "POST accepted on read-only API");
   });
-  test("BDD118 無效 API 路徑回覆404",()=>{
+  test("BDD118",()=>{
     const h="Basic "+btoa("viewer:"+password);
     assert(route(new Request("http://localhost/api/unknown",{headers:{Authorization:h}})).status===404,
       "unknown API route did not 404");
   });
-  test("BDD119 報告 API 內容型別應為 JSON",()=>{
+  test("BDD119",()=>{
     const h="Basic "+btoa("viewer:"+password);
     const r=route(new Request("http://localhost/api/report",{headers:{Authorization:h}}));
     assert(r.status===200 && (r.headers.get("Content-Type")||"").includes("application/json"),
       "report content type wrong");
   });
-  test("BDD120 交易匯出 API 應標示 CSV 和附件名稱",()=>{
+  test("BDD120",()=>{
     const h="Basic "+btoa("viewer:"+password);
     const r=route(new Request("http://localhost/api/orders.csv",{headers:{Authorization:h}}));
     assert(r.status===200 && (r.headers.get("Content-Type")||"").includes("text/csv") &&
       (r.headers.get("Content-Disposition")||"").includes("filename="),"CSV download headers missing");
   });
-  test("BDD121 不得因路徑包含 selftest 就略過權限檢查",()=>{
+  test("BDD121",()=>{
     assert(route(new Request("http://localhost/api/selftest?debug=1")).status===401,
       "selftest auth bypass");
   });
-  test("BDD122 績效 API 禁止 HTTP 快取以防資料外洩",()=>{
+  test("BDD122",()=>{
     const h="Basic "+btoa("viewer:"+password);
     const r=route(new Request("http://localhost/api/report",{headers:{Authorization:h}}));
     assert(r.headers.get("Cache-Control")==="no-store","sensitive report cached");
   });
-  test("BDD123 每次正確行情更新報價時間與數值",()=>{
+  test("BDD123",()=>{
     handlePrice("SOLUSDT",123.456);
     assert(state.quotes.SOLUSDT?.price===123.456 &&
       !isNaN(Date.parse(state.quotes.SOLUSDT?.at)), "quote timestamp missing");
   });
-  test("BDD124 模擬交易 JSON 序列化還原保留減倉紀錄",()=>{
+  test("BDD124",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,110,"partial",0.5,5002,true);
     const saved=JSON.stringify(state);
@@ -1352,7 +1372,7 @@ function runBDDTests() {
     assert(x.status==="open" && x.exitEvents.length===1 && x.exitEvents[0].messageId===5002 &&
       x.qty>0 && x.qty<x.initialQty,"partial order lost on restart");
   });
-  test("BDD125 合成訊號可抑制寫入正式資料",()=>{
+  test("BDD125",()=>{
     let writes=0;
     ingest([{id:5001,text:"#SOL 掛單 99-101附近多 止損 95",publishedAt:current()}],
       ()=>{ writes++; });
@@ -1360,20 +1380,20 @@ function runBDDTests() {
   });
 
 
-  test("BDD126 淨獲利1%止盈以進場名目金額為基準",()=>{
+  test("BDD126",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     const threshold=onePctNetTargetMark(o);
     assert(threshold>o.entryPrice*1.01,"long net threshold must cover fees");
     const delta=projectedNetReturn(o,threshold);
     near(delta,0.01,1e-10);
   });
-  test("BDD127 多單標記價僅升1%扣費後不足不得平倉",()=>{
+  test("BDD127",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     handlePrice("SOLUSDT",o.entryPrice*1.01);
     assert(o.status==="open" && projectedNetReturn(o,o.entryPrice*1.01)<0.01,
       "closed on gross 1 percent without fees");
   });
-  test("BDD128 多單扣費後達淨利1%自動全部止盈",()=>{
+  test("BDD128",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     const mark=onePctNetTargetMark(o)*1.00001;
     handlePrice("SOLUSDT",mark);
@@ -1382,7 +1402,7 @@ function runBDDTests() {
     assert(o.netPnl>=o.initialQty*o.entryPrice*NET_TAKE_PROFIT,
       "long realized net gain below 1 percent");
   });
-  test("BDD129 空單扣費後達淨利1%自動平倉",()=>{
+  test("BDD129",()=>{
     const o=mock({side:"short",stop:105});state.orders=[o];openOrder(o,100);
     const mark=onePctNetTargetMark(o)*0.99999;
     assert(mark<o.entryPrice*0.99,"short target should account for costs");
@@ -1391,18 +1411,18 @@ function runBDDTests() {
       o.netPnl>=o.initialQty*o.entryPrice*NET_TAKE_PROFIT,
       "short net TP missed");
   });
-  test("BDD130 空單標記價跌1%但扣費不足時繼續持倉",()=>{
+  test("BDD130",()=>{
     const o=mock({side:"short",stop:105});state.orders=[o];openOrder(o,100);
     handlePrice("SOLUSDT",o.entryPrice*0.99);
     assert(o.status==="open" && projectedNetReturn(o,o.entryPrice*0.99)<0.01,
       "short gross 1 percent closed early");
   });
-  test("BDD131 低於1%時原有硬止損仍然優先執行",()=>{
+  test("BDD131",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     handlePrice("SOLUSDT",94);
     assert(o.status==="closed" && o.reason==="stop_loss" && o.netPnl<0,"stop ignored");
   });
-  test("BDD132 Telegram 自訂較低止盈價不能繞過淨利門檻",()=>{
+  test("BDD132",()=>{
     const o=mock({target:100.5});state.orders=[o];openOrder(o,100);
     handlePrice("SOLUSDT",100.5);
     assert(o.status==="open","explicit TP below 1 percent closed");
@@ -1410,13 +1430,13 @@ function runBDDTests() {
     assert(o.status==="closed" && o.netPnl>=o.initialQty*o.entryPrice*NET_TAKE_PROFIT,
       "net TP after lower target failed");
   });
-  test("BDD133 Telegram 自訂較高止盈價不能延後淨利1%的自動全平",()=>{
+  test("BDD133",()=>{
     const o=mock({target:150});state.orders=[o];openOrder(o,100);
     handlePrice("SOLUSDT",onePctNetTargetMark(o)*1.00001);
     assert(o.status==="closed" && o.reason==="net_take_profit_1pct" &&
       o.exitPrice<150,"high channel target prevented 1 percent TP");
   });
-  test("BDD134 減倉後剩餘數量仍以扣費淨利1%止盈",()=>{
+  test("BDD134",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,101,"channel_partial_take_profit",0.5,5002,true);
     assert(o.status==="open" && o.qty>0,"partial exit should remain open");
@@ -1426,11 +1446,11 @@ function runBDDTests() {
       o.exitEvents[1].qty===remaining &&
       o.exitEvents[1].netPnl>=remaining*o.entryPrice*NET_TAKE_PROFIT,"remaining net TP wrong");
   });
-  test("BDD135 交易未建倉時不得計算可平倉淨獲利",()=>{
+  test("BDD135",()=>{
     const o=mock();state.orders=[o];
     assert(projectedNetReturn(o,101)===null && onePctNetTargetMark(o)===null,"unopened order has net TP");
   });
-  test("BDD136 無效行情不可讓1%止盈函數產生誤判",()=>{
+  test("BDD136",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     for(const px of [0,-1,NaN,Infinity]){
       assert(projectedNetReturn(o,px)===null,"invalid net TP projection "+px);
@@ -1438,7 +1458,7 @@ function runBDDTests() {
     }
     assert(o.status==="open","invalid quote triggered close");
   });
-  test("BDD137 +1%自動止盈後後續價格不能重複平倉",()=>{
+  test("BDD137",()=>{
     const o=mock();state.orders=[o];openOrder(o,100);
     const mark=onePctNetTargetMark(o)*1.00001;
     handlePrice("SOLUSDT",mark);
@@ -1449,76 +1469,76 @@ function runBDDTests() {
   });
 
 
-  test("BDD138 Telegram 無私聊配對不能生成推播",()=>{
+  test("BDD138",()=>{
     state.orders=[mock({id:"A",messageId:5501})];
     queueNotice("test:unpaired","must not send");
     assert((state.notifications||[]).length===0,"unpaired target queued a message");
   });
-  test("BDD139 已配對新訊號應新增一則訊息",()=>{
+  test("BDD139",()=>{
     state.telegram.chatId="123456789";
     ingest([{id:5001,text:"#SOL 掛單 99-101附近多 止損 95",publishedAt:current()}],()=>{});
     assert(state.notifications.length===1 && state.notifications[0].key==="signal:5001","new signal notice missing");
   });
-  test("BDD140 同一 Telegram 訊號輪詢兩次不可重複推播",()=>{
+  test("BDD140",()=>{
     state.telegram.chatId="123456789";
     const msg={id:5001,text:"#SOL 掛單 99-101附近多 止損 95",publishedAt:current()};
     ingest([msg],()=>{});ingest([msg],()=>{});
     assert(state.notifications.length===1,"duplicate signal alert");
   });
-  test("BDD141 模擬成交必須通知實際開倉價",()=>{
+  test("BDD141",()=>{
     state.telegram.chatId="123456789";const o=mock();state.orders=[o];
     handlePrice("SOLUSDT",100);
     assert(o.status==="open" && state.notifications.some(n=>n.key==="open:5001" && n.text.includes("成交價")),"entry alert missing");
   });
-  test("BDD142 模擬止損通知有結算淨損益",()=>{
+  test("BDD142",()=>{
     state.telegram.chatId="123456789";const o=mock();state.orders=[o];openOrder(o,100);
     handlePrice("SOLUSDT",94);
     assert(state.notifications.some(n=>n.key==="exit:5001:1" && n.text.includes("已實現淨損益") && n.text.includes("模擬止損")),"stop alert missing");
   });
-  test("BDD143 淨利1%自動止盈通知去重",()=>{
+  test("BDD143",()=>{
     state.telegram.chatId="123456789";const o=mock();state.orders=[o];openOrder(o,100);
     const x=onePctNetTargetMark(o)*1.00001;
     handlePrice("SOLUSDT",x);handlePrice("SOLUSDT",x*1.01);
     assert(state.notifications.filter(n=>n.key==="exit:5001:1").length===1 &&
       state.notifications.some(n=>n.text.includes("淨利 1% 自動止盈")),"net TP notification duplicate/missing");
   });
-  test("BDD144 頻道減倉與最終出場各有唯一事件 ID",()=>{
+  test("BDD144",()=>{
     state.telegram.chatId="123456789";const o=mock();state.orders=[o];openOrder(o,100);
     closeOrder(o,100.5,"channel_partial_take_profit",0.5,5002,true);
     closeOrder(o,110,"net_take_profit_1pct");
     assert(state.notifications.filter(n=>n.key.startsWith("exit:5001:")).length===2 &&
       state.notifications.some(n=>n.key==="exit:5001:2"),"partial/full exit event identity wrong");
   });
-  test("BDD145 一般行情輪詢不得產生大量價格通知",()=>{
+  test("BDD145",()=>{
     state.telegram.chatId="123456789";const o=mock({status:"pending"});state.orders=[o];
     for(let n=0;n<10;n++)handlePrice("SOLUSDT",120);
     assert(state.notifications.length===0,"quote tick spammed Telegram");
   });
-  test("BDD146 不正確配對帳號即使拿到配對碼也要拒絕",()=>{
+  test("BDD146",()=>{
     state.telegram.pairingCode="0123456789abcdef0123456789abcdef";
     assert(!pairingMatches({from:{username:"someoneelse"},chat:{type:"private"},text:"/start "+state.telegram.pairingCode},state.telegram),
       "wrong username paired");
   });
-  test("BDD147 正確個人帳號與一次性代碼才能配對",()=>{
+  test("BDD147",()=>{
     state.telegram.pairingCode="0123456789abcdef0123456789abcdef";
     assert(pairingMatches({from:{username:TG_TARGET},chat:{type:"private"},text:"/start "+state.telegram.pairingCode},state.telegram),
       "valid pairing failed");
     assert(!pairingMatches({from:{username:TG_TARGET},chat:{type:"group"},text:"/start "+state.telegram.pairingCode},state.telegram),
       "group chat paired");
   });
-  test("BDD148 Telegram 推播管理 API 不可匿名查看",()=>{
+  test("BDD148",()=>{
     assert(route(new Request("http://localhost/api/telegram/status")).status===401 &&
       route(new Request("http://localhost/api/telegram/setup")).status===401,
       "telegram binding endpoints not protected");
   });
-  test("BDD149 Telegram 待發事件經 JSON 重啟仍保留去重鍵",()=>{
+  test("BDD149",()=>{
     state.telegram.chatId="123456789";
     queueNotice("exit:5001:1","test persistence");
     const restored=JSON.parse(JSON.stringify(state));
     assert(restored.notifications.length===1 && restored.notifications[0].key==="exit:5001:1","outbox not persistent");
   });
 
-  test("BDD150 Bot 入站檢查成功不得清除出站失敗或誤報恢復",()=>{
+  test("BDD150",()=>{
     const t=tgState();
     t.chatId="123456"; t.error="sendMessage HTTP 503";t.pollError="getUpdates timeout";
     state.notifications=[];
@@ -1527,7 +1547,7 @@ function runBDDTests() {
       state.notifications.length===0,"inbound check cleared outbound failure or emitted false recovery");
   });
 
-  test("BDD151 啟動時使用的無來源訊號假平倉不得送 Telegram",()=>{
+  test("BDD151",()=>{
     state.telegram.chatId="123456";
     const fake = mock({ messageId:undefined, id:"BOOT_TEST" });
     state.orders=[fake];
@@ -1537,7 +1557,7 @@ function runBDDTests() {
   });
 
 
-  test("BDD152 啟動自測期間即使有有效模擬 ID 也不准對外推播",()=>{
+  test("BDD152",()=>{
     state.telegram.chatId="123456";
     const old=notificationsMutedForStartupTests;
     try {
@@ -1548,6 +1568,18 @@ function runBDDTests() {
       closeOrder(fake,110,"take_profit");
       assert(state.notifications.length===0,"startup test leaked Telegram notification");
     } finally { notificationsMutedForStartupTests=old; }
+  });
+
+  test("BDD153",()=>{
+    state.orders=[mock({status:"closed",netPnl:5})];
+    const paper={equity:10005,netReturnPct:.05,realizedPnl:5,closedTrades:1};
+    const remote={schemaVersion:1,ledger:"BINANCE_DEMO_DONCHIAN",performance:{closedTrades:2,wins:1,netPnlUsdt:-1}};
+    const x=mergeDonchianStats(paper,remote,{error:null});
+    assert(x.equity===10005&&x.netReturnPct===.05&&x.combined.closedTrades===3&&x.combined.realizedPnlUsdt===4,"bad aggregation");
+  });
+  test("BDD154",()=>{
+    const x=mergeDonchianStats({realizedPnl:0,closedTrades:0},{schemaVersion:99},{error:"schema"});
+    assert(!x.donchianDemo.available&&page.includes("Donchian Demo 統計")&&page.includes("不同帳本"),"invalid integration state");
   });
 
   const failed=results.filter(x=>!x.pass);
@@ -1589,7 +1621,12 @@ const page = [
 "<div class='card'><label>總報酬率</label><div class='value' id='return'>—</div><div class='sub' id='realized'>已實現 —</div></div>",
 "<div class='card'><label>已平倉 / 勝率</label><div class='value' id='win'>—</div><div class='sub' id='pf'>盈虧因子 —</div></div>",
 "<div class='card'><label>最大回撤</label><div class='value' id='dd'>—</div><div class='sub' id='orders'>持倉與掛單 —</div></div>",
-"</div><div class='section'><h2>資金曲線</h2><small>每分鐘快照，僅代表觀察到的報價</small></div>",
+"</div><div class='section'><h2>Donchian Demo 統計</h2><small>獨立 Demo 帳本，不改寫 Paper 資金曲線</small></div>",
+"<div class='cards'><div class='card'><label>Donchian 訊號</label><div class='value' id='dSignals'>—</div><div class='sub' id='dSignalSub'>建倉 / 平倉</div></div>",
+"<div class='card'><label>Demo 已平倉 / 勝率</label><div class='value' id='dWin'>—</div><div class='sub' id='dPnl'>淨損益 —</div></div>",
+"<div class='card'><label>跨帳本彙總</label><div class='value' id='combinedPnl'>—</div><div class='sub' id='combinedTrades'>不同帳本，僅加總</div></div></div>",
+"<div class='warning' id='dStatus'>Donchian Demo 與 Paper 是不同帳本，不代表同一資金曲線。</div>",
+"<div class='section'><h2>Paper 資金曲線</h2><small>每分鐘快照，僅代表 Paper 帳本觀察到的報價</small></div>",
 "<div class='panel'><svg class='chart' id='chart' viewBox='0 0 900 210' preserveAspectRatio='none'></svg></div>",
 "<div class='section'><h2>模擬交易紀錄</h2><a href='/api/orders.csv' target='_blank'>匯出 CSV</a></div>",
 "<div class='panel'><table><thead><tr><th>原始訊號</th><th>幣種</th><th>方向</th><th>狀態</th><th>進場區間</th><th>進場 / 出場</th><th>淨損益</th></tr></thead><tbody id='trades'><tr><td colspan='7'>載入中...</td></tr></tbody></table></div>",
@@ -1609,6 +1646,10 @@ const page = [
 "$('pf').textContent='盈虧因子 '+(r.profitFactor==null?'—':fmt(r.profitFactor));",
 "$('dd').textContent=fmt(r.maxDrawdownPct)+'%';",
 "$('orders').textContent='持倉 '+r.openPositions+' / 掛單 '+r.pendingOrders+' / 部分平倉 '+(r.partialExits||0);",
+"const d=r.donchianDemo||{},dp=d.performance||{},ds=d.signals||{};",
+"$('dSignals').textContent=d.available?Number(ds.total||0):'—';$('dSignalSub').textContent=d.available?'建倉 '+Number(ds.entries||0)+' / 平倉 '+Number(ds.exits||0):'等待上游資料';",
+"$('dWin').textContent=d.available?Number(dp.closedTrades||0)+' / '+fmt(dp.winRatePct||0,1)+'%':'—';$('dPnl').innerHTML=d.available?'淨損益 '+pnl(dp.netPnlUsdt||0)+' USDT':'淨損益 —';",
+"$('combinedPnl').innerHTML=pnl(r.combined?.realizedPnlUsdt||0)+' USDT';$('combinedTrades').textContent='已平倉 '+Number(r.combined?.closedTrades||0)+' · 不同帳本';",
 "$('status').textContent='● 訊號：'+(s.channelError?'讀取異常':'正常')+' | 首次建立基線：'+(s.initialized?'完成':'等待中')+' | 最後訊號輪詢 '+(s.lastChannelPollAt||'—')+' | 已記錄貼文 '+s.messagesCaptured+' | 最後行情 '+(s.lastPricePollAt||'—')+(s.channelError?' | '+s.channelError:'')+(s.priceError?' | 行情錯誤：'+s.priceError:'');",
 "$('trades').innerHTML=o.length?o.slice().reverse().slice(0,100).map(x=>'<tr><td><a href=\"https://t.me/KCryptoBTC168/'+x.messageId+'\" target=\"_blank\">#'+x.messageId+'</a></td><td>'+clean(x.symbol)+'</td><td>'+clean(x.side)+'</td><td><span class=\"tag\">'+clean(x.status)+'</span></td><td>'+fmt(x.entryLow)+' – '+fmt(x.entryHigh)+'</td><td>'+(x.entryPrice?fmt(x.entryPrice):'—')+' / '+(x.exitPrice?fmt(x.exitPrice):'—')+'</td><td>'+((x.status==='closed')?pnl(x.netPnl):'—')+'</td></tr>').join(''):'<tr><td colspan=\"7\">目前沒有有效的新交易訊號；不倒填歷史成交。</td></tr>';",
 "const days=Object.entries(r.daily).sort((a,b)=>b[0].localeCompare(a[0]));",
@@ -1698,6 +1739,11 @@ async function priceLoop() {
 }
 void channelLoop();
 void priceLoop();
+async function donchianStatsLoop(){
+  await refreshDonchianStats();
+  setTimeout(donchianStatsLoop,30000);
+}
+void donchianStatsLoop();
 async function telegramLoop() {
   await telegramPolling();
   if(TELEGRAM_BOT_TOKEN && tgState().chatId) {

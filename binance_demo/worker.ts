@@ -14,6 +14,7 @@ const EXECUTE = CHANNEL_EXECUTE || DONCHIAN_EXECUTE;
 const LOCAL_BDD_ONLY = Bun.env.LOCAL_BDD_ONLY === "true" && !EXECUTE;
 const TELEGRAM_TOKEN = Bun.env.TELEGRAM_BOT_TOKEN || "";
 const TELEGRAM_CHAT_ID = Bun.env.DEMO_TELEGRAM_CHAT_ID || "";
+const STATS_SHARED_TOKEN = (Bun.env.STATS_SHARED_TOKEN || "").trim();
 const PATH = Bun.env.DATA_FILE || "/data/demo-state.json";
 const INITIAL_NOTIONAL = Math.min(100,Math.max(10,Number(Bun.env.DEMO_TRADE_NOTIONAL_USDT||50)));
 const MAX_OPEN = 1;
@@ -76,6 +77,11 @@ function auth(req){
   try{const raw=atob(value.substring(6));const val=Buffer.from(raw.split(":").slice(1).join(":"));
   const expected=Buffer.from(APP_PASSWORD);
   return val.length===expected.length&&timingSafeEqual(val,expected);}catch{return false;}
+}
+function statsAuth(req){
+ const got=Buffer.from(req.headers.get("x-stats-token")||"");
+ const expected=Buffer.from(STATS_SHARED_TOKEN);
+ return expected.length>=32&&got.length===expected.length&&timingSafeEqual(got,expected);
 }
 function response(obj,code=200){return Response.json(obj,{status:code,headers:{"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});}
 function tagDemoNotice(text){
@@ -430,6 +436,27 @@ function demoTradeRecords(){return ledger.orders.filter(o=>o.actualSettlement).m
  commission:o.actualSettlement.commission,funding:o.actualSettlement.funding,
  netPnlUsdt:o.actualSettlement.net,settledAt:o.actualSettlement.settledAt
  }));}
+function donchianStats(){
+ const trades=demoTradeRecords().filter(x=>x.sourceType==="DONCHIAN");
+ const orders=ledger.orders.filter(x=>x.sourceType==="DONCHIAN");
+ const candidates=ledger.candidate.filter(x=>x.sourceType==="DONCHIAN");
+ const events=ledger.events.filter(x=>x.type==="DONCHIAN_SIGNAL");
+ const sum=key=>trades.reduce((n,x)=>n+Number(x[key]||0),0);
+ const wins=trades.filter(x=>Number(x.netPnlUsdt)>0).length;
+ const open=orders.filter(x=>!x.actualSettlement&&!['CLOSED','CANCELED','REJECTED','EXPIRED'].includes(String(x.status))).length;
+ const last=events.at(-1)||null;
+ return {schemaVersion:1,ledger:"BINANCE_DEMO_DONCHIAN",mode:"DEMO_ONLY",strategy:"DONCHIAN_20_10_2R",
+  updatedAt:now(),executionEnabled:DONCHIAN_EXECUTE,credentialsConfigured:!!KEY&&!!SECRET,
+  signals:{total:events.length,entries:events.filter(x=>String(x.detail?.action).startsWith("ENTER")).length,
+   exits:events.filter(x=>String(x.detail?.action).startsWith("EXIT")).length,last:last?{at:last.at,...last.detail}:null},
+  candidates:{total:candidates.length,actionable:candidates.filter(x=>x.status==="CANDIDATE").length,
+   blocked:candidates.filter(x=>String(x.status).startsWith("BLOCKED")).length},
+  orders:{tracked:orders.length,open,closed:trades.length},
+  performance:{closedTrades:trades.length,wins,losses:trades.length-wins,
+   winRatePct:trades.length?wins/trades.length*100:0,grossRealized:sum("grossRealized"),
+   commission:sum("commission"),funding:sum("funding"),netPnlUsdt:sum("netPnlUsdt")},
+  advisoryPositions:Object.values(ledger.donchian).filter(x=>x?.position&&x.position!=="FLAT").length};
+}
 function projectedNet(o,bid,ask,entryFee=0,funding=0){
  if(!o.avgPrice||!o.filledQty)return null;
  const closePrice=o.side==="long"?bid*(1-SLIP):ask*(1+SLIP);
@@ -1037,6 +1064,10 @@ function bdd(){
   const c=ledger.candidate[0];if(c?.sourceType!=="DONCHIAN"||ledger.orders.length)throw Error("entry intent");});
  check(111,"Donchian exit persists execution request and advisory returns flat",()=>{applyDonchian("BTCUSDT",donchianCandles(100));applyDonchian("BTCUSDT",donchianCandles(111,21,1));applyDonchian("BTCUSDT",donchianCandles(153,21,2));
   const s=ledger.donchian.BTCUSDT;if(s.position!=="FLAT"||!s.executionExit||s.executionExit.action!=="EXIT_LONG")throw Error("exit intent");});
+ check(112,"Donchian statistics include only Donchian settlements",()=>{const settlement={entryAvgPrice:100,exitAvgPrice:102,exitQty:1,grossRealized:2,commission:.08,funding:0,net:1.92,settledAt:now()};
+  ledger.orders=[{sourceType:"DONCHIAN",clientOrderId:"D",symbol:"BTCUSDT",side:"long",status:"CLOSED",actualSettlement:settlement},{sourceType:"TELEGRAM_CHANNEL",clientOrderId:"T",symbol:"SOLUSDT",side:"long",status:"CLOSED",actualSettlement:{...settlement,net:99}}];
+  const x=donchianStats();if(x.performance.closedTrades!==1||x.performance.netPnlUsdt!==1.92||x.orders.closed!==1)throw Error("cross-source leak");});
+ check(113,"Donchian statistics expose no order identity or credentials",()=>{const raw=JSON.stringify(donchianStats());if(raw.includes("clientOrderId")||raw.includes("orderId")||raw.includes(APP_PASSWORD))throw Error("sensitive stats");});
  return {mode:"SYNTHETIC_BDD",total:results.length,passed:results.filter(t=>t.pass).length,
   failed:results.filter(t=>!t.pass).length,results,at:now()};
 }
@@ -1060,6 +1091,11 @@ const page='<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name
 const app=Bun.serve({hostname:"0.0.0.0",port:Number(Bun.env.PORT||8080),async fetch(req){
  const u=new URL(req.url);
  if(u.pathname==="/healthz")return response({ok:true,mode:"DEMO_ONLY",ready:!ledger.halted&&storageSafe});
+ if(u.pathname==="/api/stats"&&req.method==="GET"){
+  if(STATS_SHARED_TOKEN.length<32)return response({error:"Statistics integration not configured"},503);
+  if(!statsAuth(req))return response({error:"Unauthorized"},401);
+  return response(donchianStats());
+ }
  if(!auth(req))return new Response("Login required",{status:401,headers:{"WWW-Authenticate":'Basic realm="K Signal DEMO"',"Cache-Control":"no-store"}});
  if(u.pathname==="/api/demo/credentials" && req.method==="GET"){
    if(!KEY||!SECRET)return response({valid:false,blocked:true,reason:"Configure DEMO credentials in Railway"},428);
