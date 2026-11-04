@@ -28,7 +28,17 @@ authenticated /api/status=200
 POST /api/demo/order-test=428 (expected: Demo credentials missing)
 ```
 
-The local host could read the Telegram public channel but timed out reaching `demo-fapi.binance.com`; this is recorded as a failed local public-endpoint check, not a pass. Railway public endpoint verification must be repeated after deployment.
+The local host could read the Telegram public channel but timed out reaching `demo-fapi.binance.com`; this remains a failed local public-endpoint check, not a pass. Railway public endpoint verification was repeated separately below.
+
+Railway v1.1 deployment on 2026-11-04:
+```
+deployment=497fca38-fde0-4ea1-b894-834805dfe292 status=SUCCESS
+BINANCE_DEMO_BDD {"passed":85,"failed":0,"total":85,"errors":[]}
+DEMO_PUBLIC_CONNECTED {"host":"https://demo-fapi.binance.com","btcStatus":"TRADING","credentialsConfigured":false,"orderEnabled":false}
+GET /healthz = 200 {"ok":true,"mode":"DEMO_ONLY","ready":true}
+```
+
+The deployed Function source was compared byte-for-byte with `binance_demo/worker.ts`. No matched Demo order was created.
 
 Previous Railway deployment baseline (before v1.1):
 ```
