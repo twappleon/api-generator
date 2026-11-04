@@ -1,7 +1,7 @@
 # BDD — Binance Demo Safety and Integration
 
 ## Executed
-97 isolated in-memory synthetic checks (local Bun 1.4.4; Railway startup fails on regression). The original 47 scenarios remain, the v1.1 lifecycle suite remains, and 12 deterministic Donchian cases add coverage for:
+103 isolated in-memory synthetic checks (local Bun 1.4.4; Railway startup fails on regression). The original lifecycle and Donchian scenarios remain, with added coverage for:
 
 - partial-fill remainder and canceled-partial state transitions;
 - active/terminal order classifiers, identity and overfill rejection;
@@ -19,10 +19,13 @@
 - insufficient history refusal, first-observation baseline, closed-candle deduplication;
 - independence from channel candidates, exchange orders and the Telegram channel poller;
 - status metadata for interval, periods and explicit channel independence.
+- long/short signal-time 10-bar stop calculation and fixed 2R take-profit calculation;
+- fixed stop/take-profit exit reasons and trigger prices;
+- entry/exit messages explicitly containing pair, direction, entry, stop, target and exit reason.
 
 Local execution on 2026-11-04:
 ```
-BINANCE_DEMO_BDD {"passed":97,"failed":0,"total":97,"errors":[]}
+BINANCE_DEMO_BDD {"passed":103,"failed":0,"total":103,"errors":[]}
 ```
 
 Local HTTP route checks on 2026-11-04:
@@ -101,6 +104,18 @@ Feature: Independent Donchian timing alerts
    When the independent Donchian poll runs
    Then record a long-exit timing alert and return the advisory state to flat
 
+ Scenario: Long entry levels are explicit
+   Given a new 15-minute close breaks the prior 20-bar upper channel
+   When the independent Donchian poll runs
+   Then the alert names the symbol, long direction and entry close
+   And fixes stop loss at the signal-time 10-bar lower channel
+   And fixes take profit at two times the entry-to-stop risk
+
+ Scenario: A fixed level is reached
+   Given an open Donchian advisory has stored entry, stop loss and take profit
+   When a closed candle reaches its stop loss or 2R take profit
+   Then send an exit alert with the original levels, exit price and exact reason
+
  Scenario: Telegram channel polling fails
    Given the public Telegram channel cannot be read
    When the service tick continues
@@ -108,4 +123,4 @@ Feature: Independent Donchian timing alerts
 ```
 
 ## Integration pending (not passed)
-Demo API key signed auth, non-matching test-order POST, matched MARKET/partial LIMIT fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and net-1% realized PnL, real outbound Donchian alert delivery, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. Actual virtual-fund Demo orders require separate explicit user approval and `DEMO_ORDER_ENABLED=true`.
+Demo API key signed auth, non-matching test-order POST, matched MARKET/partial LIMIT fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and net-1% realized PnL, natural breakout-triggered Donchian alert delivery, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. Actual virtual-fund Demo orders require separate explicit user approval and `DEMO_ORDER_ENABLED=true`.

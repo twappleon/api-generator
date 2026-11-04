@@ -26,6 +26,7 @@ const ALLOWED = new Set(["BTCUSDT","ETHUSDT","SOLUSDT","ZECUSDT"]);
 const DONCHIAN_INTERVAL="15m";
 const DONCHIAN_ENTRY_PERIOD=20;
 const DONCHIAN_EXIT_PERIOD=10;
+const DONCHIAN_TAKE_PROFIT_R=2;
 const DONCHIAN_SYMBOLS=[...ALLOWED];
 const SIGNED_PATHS = new Set(["/fapi/v1/order","/fapi/v1/order/test","/fapi/v1/account",
   "/fapi/v2/balance","/fapi/v3/positionRisk","/fapi/v1/positionSide/dual",
@@ -194,19 +195,71 @@ function hasUnmanagedPosition(positions,orders){
  return positions.filter(x=>Math.abs(Number(x.positionAmt||0))>1e-10).some(row=>
    row.positionSide!=="BOTH"||!orders.some(o=>!["CLOSED","CLOSED_UNFILLED"].includes(o.status)&&o.symbol===row.symbol));
 }
-function evaluateDonchian(candles,position="FLAT"){
+function evaluateDonchian(candles,positionOrState="FLAT"){
  const current=candles.at(-1);
  if(!current)return null;
+ const advisory=typeof positionOrState==="string"?{position:positionOrState}:positionOrState;
+ const position=advisory?.position||"FLAT";
  const period=position==="FLAT"?DONCHIAN_ENTRY_PERIOD:DONCHIAN_EXIT_PERIOD;
  if(candles.length<period+1)return null;
  const prior=candles.slice(-(period+1),-1);
  const upper=Math.max(...prior.map(x=>x.high)),lower=Math.min(...prior.map(x=>x.low));
  if(!Number.isFinite(upper)||!Number.isFinite(lower)||!Number.isFinite(current.close))return null;
- if(position==="FLAT"&&current.close>upper)return {action:"ENTER_LONG",upper,lower,price:current.close,closeTime:current.closeTime};
- if(position==="FLAT"&&current.close<lower)return {action:"ENTER_SHORT",upper,lower,price:current.close,closeTime:current.closeTime};
- if(position==="LONG"&&current.close<lower)return {action:"EXIT_LONG",upper,lower,price:current.close,closeTime:current.closeTime};
- if(position==="SHORT"&&current.close>upper)return {action:"EXIT_SHORT",upper,lower,price:current.close,closeTime:current.closeTime};
+ if(position==="FLAT"){
+  const exitPrior=candles.slice(-(DONCHIAN_EXIT_PERIOD+1),-1);
+  const exitUpper=Math.max(...exitPrior.map(x=>x.high)),exitLower=Math.min(...exitPrior.map(x=>x.low));
+  if(current.close>upper){const risk=current.close-exitLower;
+   return {action:"ENTER_LONG",upper,lower,exitUpper,exitLower,price:current.close,
+    stopLoss:exitLower,takeProfit:current.close+DONCHIAN_TAKE_PROFIT_R*risk,riskReward:DONCHIAN_TAKE_PROFIT_R,reason:"ENTRY_BREAKOUT",closeTime:current.closeTime};}
+  if(current.close<lower){const risk=exitUpper-current.close;
+   return {action:"ENTER_SHORT",upper,lower,exitUpper,exitLower,price:current.close,
+    stopLoss:exitUpper,takeProfit:current.close-DONCHIAN_TAKE_PROFIT_R*risk,riskReward:DONCHIAN_TAKE_PROFIT_R,reason:"ENTRY_BREAKOUT",closeTime:current.closeTime};}
+ }
+ if(position==="LONG"&&Number.isFinite(advisory.takeProfit)&&current.close>=advisory.takeProfit)
+  return {action:"EXIT_LONG",upper,lower,price:current.close,reason:"TAKE_PROFIT_2R",triggerLevel:advisory.takeProfit,closeTime:current.closeTime};
+ if(position==="LONG"&&Number.isFinite(advisory.stopLoss)&&current.close<=advisory.stopLoss)
+  return {action:"EXIT_LONG",upper,lower,price:current.close,reason:"STOP_LOSS",triggerLevel:advisory.stopLoss,closeTime:current.closeTime};
+ if(position==="SHORT"&&Number.isFinite(advisory.takeProfit)&&current.close<=advisory.takeProfit)
+  return {action:"EXIT_SHORT",upper,lower,price:current.close,reason:"TAKE_PROFIT_2R",triggerLevel:advisory.takeProfit,closeTime:current.closeTime};
+ if(position==="SHORT"&&Number.isFinite(advisory.stopLoss)&&current.close>=advisory.stopLoss)
+  return {action:"EXIT_SHORT",upper,lower,price:current.close,reason:"STOP_LOSS",triggerLevel:advisory.stopLoss,closeTime:current.closeTime};
+ if(position==="LONG"&&current.close<lower)return {action:"EXIT_LONG",upper,lower,price:current.close,reason:"CHANNEL_EXIT",triggerLevel:lower,closeTime:current.closeTime};
+ if(position==="SHORT"&&current.close>upper)return {action:"EXIT_SHORT",upper,lower,price:current.close,reason:"CHANNEL_EXIT",triggerLevel:upper,closeTime:current.closeTime};
  return null;
+}
+function donchianPrice(value){
+ if(value===null||value===undefined||!Number.isFinite(Number(value)))return "未設定";
+ return Number(value).toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:8});
+}
+function donchianPair(symbol){return symbol.endsWith("USDT")?symbol.slice(0,-4)+"/USDT":symbol;}
+function donchianNotification(symbol,event,state,previousPosition){
+ const p=donchianPrice,pair=donchianPair(symbol),closed=new Date(event.closeTime).toISOString();
+ if(event.action==="ENTER_LONG"||event.action==="ENTER_SHORT"){
+  const long=event.action==="ENTER_LONG",risk=Math.abs(event.price-event.stopLoss),riskPct=risk/event.price*100;
+  return "🚨 DONCHIAN "+(long?"多方建倉提示":"空方建倉提示")+
+   "\n\n幣別："+pair+"（"+symbol+"）\n方向："+(long?"做多 LONG":"做空 SHORT")+
+   "\n週期："+DONCHIAN_INTERVAL+"（已收盤 K 線）"+
+   "\n\n建倉參考價："+p(event.price)+
+   "\n停損參考價："+p(event.stopLoss)+"（固定於訊號產生時的 10 期"+(long?"下軌":"上軌")+"）"+
+   "\n停利參考價："+p(event.takeProfit)+"（2R，報酬風險比 2:1）"+
+   "\n每單位風險："+p(risk)+"（"+riskPct.toFixed(3)+"%）"+
+   "\n\n觸發條件：15m 收盤"+(long?"突破 20 期上軌 ":"跌破 20 期下軌 ")+p(long?event.upper:event.lower)+
+   "\n移動平倉：15m 收盤"+(long?"跌破 10 期下軌":"突破 10 期上軌")+
+   "\nK 線收盤："+closed+
+   "\n\n⚠️ 僅為策略提示，不會自動下單，與 Telegram 頻道訊號無關。";
+ }
+ const long=previousPosition==="LONG",pnl=state.entryPrice?
+  ((long?event.price-state.entryPrice:state.entryPrice-event.price)/state.entryPrice*100):null;
+ const reason={TAKE_PROFIT_2R:"到達 2R 停利",STOP_LOSS:"到達固定停損",CHANNEL_EXIT:"觸發 10 期移動通道平倉"}[event.reason]||event.reason;
+ return "🔔 DONCHIAN "+(long?"多方平倉提示":"空方平倉提示")+
+  "\n\n幣別："+pair+"（"+symbol+"）\n方向："+(long?"平多 EXIT LONG":"平空 EXIT SHORT")+
+  "\n週期："+DONCHIAN_INTERVAL+"（已收盤 K 線）"+
+  "\n\n原建倉參考價："+p(state.entryPrice)+"\n本次平倉參考價："+p(event.price)+
+  "\n原停損參考價："+p(state.stopLoss)+"\n原停利參考價："+p(state.takeProfit)+
+  (pnl===null?"":"\n提示區間報酬："+(pnl>=0?"+":"")+pnl.toFixed(3)+"%")+
+  "\n平倉原因："+reason+(Number.isFinite(event.triggerLevel)?"（觸發價 "+p(event.triggerLevel)+"）":"")+
+  "\nK 線收盤："+closed+
+  "\n\n⚠️ 僅為策略提示，不會自動下單，與 Telegram 頻道訊號無關。";
 }
 function applyDonchian(symbol,candles){
  if(!ALLOWED.has(symbol)||!candles.length)return null;
@@ -217,26 +270,20 @@ function applyDonchian(symbol,candles){
   ledger.donchian[symbol]=state;save();return null; // baseline only; never alert stale history
  }
  if(latest.closeTime<=state.lastCandleCloseTime)return null;
- const event=evaluateDonchian(candles,state.position);
+ const event=evaluateDonchian(candles,state);
  state.lastCandleCloseTime=latest.closeTime;state.lastObservedClose=latest.close;
  if(event){
   const previousPosition=state.position;
   if(event.action==="ENTER_LONG"||event.action==="ENTER_SHORT"){
    state.position=event.action==="ENTER_LONG"?"LONG":"SHORT";
    state.entryPrice=event.price;state.entryTime=new Date(event.closeTime).toISOString();
+   state.stopLoss=event.stopLoss;state.takeProfit=event.takeProfit;
   }else{state.position="FLAT";state.exitPrice=event.price;state.exitTime=new Date(event.closeTime).toISOString();}
   state.lastAction={...event,at:now(),previousPosition};
   log("DONCHIAN_SIGNAL",{symbol,action:event.action,price:event.price,closeTime:event.closeTime});
-  const label={ENTER_LONG:"多方建倉時機",ENTER_SHORT:"空方建倉時機",EXIT_LONG:"多方平倉時機",EXIT_SHORT:"空方平倉時機"}[event.action];
-  const pnl=(event.action.startsWith("EXIT")&&state.entryPrice)?
-    ((previousPosition==="LONG"?event.price-state.entryPrice:state.entryPrice-event.price)/state.entryPrice*100):null;
   enqueue("donchian:"+symbol+":"+event.closeTime+":"+event.action,
-    "📊 DONCHIAN ALERT · 獨立策略\n"+symbol+" · "+DONCHIAN_INTERVAL+"\n"+label+
-    "\n收盤價："+event.price+"\n通道上緣："+event.upper+"\n通道下緣："+event.lower+
-    (pnl===null?"":"\n提示區間報酬："+(pnl>=0?"+":"")+pnl.toFixed(3)+"%")+
-    "\nK 線收盤："+new Date(event.closeTime).toISOString()+
-    "\n只提供策略時機提示，不會自動下單，與 Telegram 頻道訊號無關。");
-  if(event.action.startsWith("EXIT")){state.entryPrice=null;state.entryTime=null;}
+    donchianNotification(symbol,event,state,previousPosition));
+  if(event.action.startsWith("EXIT")){state.entryPrice=null;state.entryTime=null;state.stopLoss=null;state.takeProfit=null;}
  }
  ledger.donchian[symbol]=state;save();return event;
 }
@@ -399,7 +446,8 @@ function safeStatus(){
   backoffUntil:ledger.demoBackoffUntil?new Date(ledger.demoBackoffUntil).toISOString():null,
   managedOpen:ledger.orders.filter(o=>!["CLOSED","CLOSED_UNFILLED"].includes(o.status)).length,
   donchian:{independentFromTelegramChannel:true,interval:DONCHIAN_INTERVAL,
-   entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,symbols:DONCHIAN_SYMBOLS,
+   entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,takeProfitRiskReward:DONCHIAN_TAKE_PROFIT_R,
+   stopLoss:"signal-time 10-period opposite channel",symbols:DONCHIAN_SYMBOLS,
    lastPoll:ledger.lastDonchianPoll,error:ledger.donchianError},
   limit:{notionalUsdt:INITIAL_NOTIONAL,maxOpen:MAX_OPEN,maxAccountRiskFraction:MAX_LOSS,netTpFraction:TP_NET}};
 }
@@ -879,6 +927,14 @@ function bdd(){
   applyDonchian("BTCUSDT",donchianCandles(111,21,1));const x=applyDonchian("BTCUSDT",donchianCandles(89,21,2));
   if(x?.action!=="EXIT_LONG"||ledger.donchian.BTCUSDT.position!=="FLAT"||ledger.donchian.BTCUSDT.entryPrice!==null)throw Error("exit state");});
  check(97,"Status declares Donchian independent from Telegram channel",()=>{const x=safeStatus().donchian;if(!x.independentFromTelegramChannel||x.interval!=="15m"||x.entryPeriod!==20||x.exitPeriod!==10)throw Error("status");});
+ check(98,"Donchian long entry exposes fixed stop and 2R take profit",()=>{const x=evaluateDonchian(donchianCandles(111));if(x.stopLoss!==90||x.takeProfit!==153||x.riskReward!==2)throw Error("long levels");});
+ check(99,"Donchian short entry exposes fixed stop and 2R take profit",()=>{const x=evaluateDonchian(donchianCandles(89));if(x.stopLoss!==110||x.takeProfit!==47||x.riskReward!==2)throw Error("short levels");});
+ check(100,"Donchian long position exits at fixed 2R take profit",()=>{const x=evaluateDonchian(donchianCandles(153),{position:"LONG",stopLoss:90,takeProfit:153});if(x?.action!=="EXIT_LONG"||x.reason!=="TAKE_PROFIT_2R")throw Error("long tp");});
+ check(101,"Donchian short position exits at fixed stop loss",()=>{const x=evaluateDonchian(donchianCandles(111),{position:"SHORT",stopLoss:110,takeProfit:47});if(x?.action!=="EXIT_SHORT"||x.reason!=="STOP_LOSS")throw Error("short sl");});
+ check(102,"Donchian entry notification clearly names pair entry stop and target",()=>{const x=evaluateDonchian(donchianCandles(111));const m=donchianNotification("BTCUSDT",x,{},"FLAT");
+  if(!m.includes("幣別：BTC/USDT（BTCUSDT）")||!m.includes("建倉參考價：111")||!m.includes("停損參考價：90")||!m.includes("停利參考價：153")||!m.includes("2R"))throw Error("entry message");});
+ check(103,"Donchian exit notification preserves original levels and exit reason",()=>{const state={entryPrice:111,stopLoss:90,takeProfit:153};const event=evaluateDonchian(donchianCandles(153),{position:"LONG",...state});const m=donchianNotification("BTCUSDT",event,state,"LONG");
+  if(!m.includes("本次平倉參考價：153")||!m.includes("原停損參考價：90")||!m.includes("原停利參考價：153")||!m.includes("到達 2R 停利"))throw Error("exit message");});
  return {mode:"SYNTHETIC_BDD",total:results.length,passed:results.filter(t=>t.pass).length,
   failed:results.filter(t=>!t.pass).length,results,at:now()};
 }
@@ -893,7 +949,7 @@ const page='<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name
 '<main><h1>K Signal — Binance Demo Trading</h1><p class="tag">DEMO ONLY · 不連正式 Binance · 不使用真實資金</p>'+
 '<section><h2>環境與風控</h2><pre id="status">載入中</pre></section>'+
 '<section><h2>候選交易訊號</h2><pre id="candidates">載入中</pre></section>'+
-'<section><h2>Donchian 獨立策略提示</h2><p>15 分鐘已收盤 K 線；20 期突破提示建倉，10 期反向突破提示平倉。不讀取 Telegram 頻道，也不會自動下單。</p><pre id="donchian">載入中</pre></section>'+
+'<section><h2>Donchian 獨立策略提示</h2><p>15 分鐘已收盤 K 線；20 期突破提示建倉。通知明列幣別、建倉價、訊號當下 10 期反向通道停損、2R 停利；持倉另以 10 期移動通道提示平倉。不讀取 Telegram 頻道，也不會自動下單。</p><pre id="donchian">載入中</pre></section>'+
 '<section><h2>Demo 交易與對帳</h2><pre id="orders">載入中</pre></section>'+
 '<section><a href="/api/bdd">執行 BDD 測試</a> · <a href="/api/donchian">Donchian 狀態</a> · <a href="/api/audit">審計事件</a> · <a href="https://t.me/KCryptoBTC168">原始頻道</a></section>'+
 '<p>所有交易必須使用 Demo API 專用金鑰，並在 Railway 環境變數手動設定 DEMO_ORDER_ENABLED=true。單筆名目上限 100 USDT、僅允許一個持倉。'+
@@ -920,6 +976,7 @@ const app=Bun.serve({hostname:"0.0.0.0",port:Number(Bun.env.PORT||8080),async fe
  if(u.pathname==="/api/candidates")return response(ledger.candidate);
  if(u.pathname==="/api/donchian")return response({strategy:{independentFromTelegramChannel:true,
    interval:DONCHIAN_INTERVAL,entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,
+   takeProfitRiskReward:DONCHIAN_TAKE_PROFIT_R,stopLoss:"signal-time 10-period opposite channel",
    symbols:DONCHIAN_SYMBOLS,lastPoll:ledger.lastDonchianPoll,error:ledger.donchianError},states:ledger.donchian});
  if(u.pathname==="/api/orders")return response(ledger.orders);
  if(u.pathname==="/api/audit")return response(ledger.events.slice(-300));
