@@ -46,7 +46,7 @@ GET /healthz = 200 {"ok":true,"mode":"DEMO_ONLY","ready":true}
 deployed worker chars=69948; local worker chars=69948; exact match=true
 ```
 
-This release makes every Donchian entry alert name the pair, direction, 15-minute entry reference close, fixed signal-time 10-period stop, fixed 2R target, unit risk and percentage risk. Exit alerts preserve the original entry/stop/target and state the exact exit reason. No Telegram message was sent merely to deploy this formatting revision, and no matched Demo order was created.
+This release makes every Donchian entry alert name the pair, direction, 15-minute entry reference close, fixed signal-time 10-period stop, fixed 2R target, unit risk and percentage risk. Exit alerts preserve the original entry/stop/target and state the exact exit reason. A later user-requested one-time format test verified recipient `@twjavaleon`, delivered `donchian:format-test:20261104-v1` with `status=SENT`, and was visibly confirmed in Telegram Desktop with synthetic BTC/USDT entry 100,000, stop 98,000 and 2R target 104,000. The temporary harness was removed immediately. Restored deployment `1a6c96ea-fe19-4ba0-8aed-4917c659ff61` passed 103/103, health 200 and exact source parity. No matched Demo order was created.
 
 The local host could read the Telegram public channel but timed out reaching `demo-fapi.binance.com`; this remains a failed local public-endpoint check, not a pass. Railway public endpoint verification was repeated separately below.
 
