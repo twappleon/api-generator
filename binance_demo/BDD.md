@@ -37,6 +37,18 @@ authenticated /api/donchian=200
 dashboard contains independent/non-ordering Donchian disclosure
 ```
 
+Railway pair-specific K-line-link deployment on 2026-11-04:
+```
+deployment=748e2887-942e-40af-8ae0-04c63388abb5 status=SUCCESS
+BINANCE_DEMO_BDD {"passed":104,"failed":0,"total":104,"errors":[]}
+DEMO_PUBLIC_CONNECTED {"host":"https://demo-fapi.binance.com","btcStatus":"TRADING","credentialsConfigured":false,"orderEnabled":false}
+DONCHIAN_PUBLIC_CONNECTED {"host":"https://demo-fapi.binance.com","interval":"15m","symbols":["BTCUSDT","ETHUSDT","SOLUSDT","ZECUSDT"]}
+GET /healthz = 200 {"ok":true,"mode":"DEMO_ONLY","ready":true}
+deployed worker chars=70652; local worker chars=70652; exact match=true
+```
+
+Every Donchian entry and exit notification now derives `https://www.binance.com/en/futures/{symbol}` from its own allowlisted symbol, tells the recipient to select 15m, and labels the link as public-chart viewing only rather than a Demo order entry point. No Telegram test message or Demo exchange order was created for this deployment.
+
 Railway explicit-price Donchian deployment on 2026-11-04:
 ```
 deployment=ccd4b0fe-aa2d-4724-89f4-e90bbd45363a status=SUCCESS
