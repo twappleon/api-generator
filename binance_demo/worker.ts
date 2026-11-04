@@ -261,6 +261,13 @@ function paperReport(){
  const realized=closed.reduce((n,x)=>n+x.netPnl,0),wins=closed.filter(x=>x.netPnl>0).length;
  return {initialBalance:10000,equity:10000+realized+unrealized,openPositions:open.length,closedTrades:closed.length,wins,winRatePct:closed.length?wins/closed.length*100:0,realizedPnl:realized,unrealizedPnl:unrealized};
 }
+function paperClosedRecords(){
+ return ledger.donchianPaper.filter(x=>x.status==="CLOSED").slice(-100).reverse().map(x=>({
+  symbol:x.symbol,side:x.side,referenceEntry:x.referenceEntry,entryPrice:x.entryPrice,exitPrice:x.exitPrice,
+  stopLoss:x.stopLoss,takeProfit:x.takeProfit,entryTime:x.entryTime,exitTime:x.exitTime,exitReason:x.exitReason,
+  grossPnl:x.grossPnl,fees:Number(x.feeEntry||0)+Number(x.feeExit||0),netPnl:x.netPnl,
+  chartUrl:donchianChartUrl(x.symbol),status:"PAPER_CLOSED"}));
+}
 function donchianExecutionCandidate(symbol,event,enabled=DONCHIAN_EXECUTE){
  const long=event.action==="ENTER_LONG",reference=Number(event.price);
  return {id:"DONCHIAN_"+symbol+"_"+event.closeTime,symbol,side:long?"long":"short",mode:"MARKET",
@@ -478,7 +485,7 @@ function donchianStats(){
   performance:{closedTrades:trades.length,wins,losses:trades.length-wins,
    winRatePct:trades.length?wins/trades.length*100:0,grossRealized:sum("grossRealized"),
    commission:sum("commission"),funding:sum("funding"),netPnlUsdt:sum("netPnlUsdt")},
-  advisoryPositions,paper:paperReport()};
+  advisoryPositions,closedPaperPositions:paperClosedRecords(),paper:paperReport()};
 }
 function projectedNet(o,bid,ask,entryFee=0,funding=0){
  if(!o.avgPrice||!o.filledQty)return null;
@@ -1095,6 +1102,7 @@ function bdd(){
   const s=donchianStats(),x=s.advisoryPositions[0];if(x.symbol!=="SOLUSDT"||x.entryPrice!==93.96||x.stopLoss!==86.46||x.takeProfit!==108.96||x.status!=="PAPER_OPEN"||s.paper.openPositions!==1)throw Error("paper detail");});
  check(115,"Donchian Paper closes and records fee-adjusted PnL",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:100};ledger.donchian.BTCUSDT=s;paperOpen("BTCUSDT",s);paperClose("BTCUSDT",{price:110,closeTime:Date.now(),reason:"TAKE_PROFIT_2R"});const x=ledger.donchianPaper[0];if(x.status!=="CLOSED"||x.netPnl>=x.grossPnl||paperReport().closedTrades!==1)throw Error("paper close");});
  check(116,"Donchian notifications are Paper-labelled and never claim Demo execution",()=>{const x=evaluateDonchian(donchianCandles(111)),m=donchianNotification("SOLUSDT",x,{},"FLAT");if(!m.startsWith("DONCHIAN PAPER")||!m.includes("已建立 Paper 模擬持倉")||m.includes("BINANCE DEMO\n"))throw Error("paper label");});
+ check(117,"Donchian Paper closed records remain available after the position leaves the open table",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:100};ledger.donchian.ETHUSDT=s;paperOpen("ETHUSDT",s);paperClose("ETHUSDT",{price:110,closeTime:Date.now(),reason:"TAKE_PROFIT_2R"});const x=donchianStats().closedPaperPositions[0];if(x.symbol!=="ETHUSDT"||x.status!=="PAPER_CLOSED"||x.netPnl<=0||!x.exitTime||!x.chartUrl||"id" in x||"orderId" in x||"clientOrderId" in x)throw Error("closed Paper record");});
  return {mode:"SYNTHETIC_BDD",total:results.length,passed:results.filter(t=>t.pass).length,
   failed:results.filter(t=>!t.pass).length,results,at:now()};
 }

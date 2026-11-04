@@ -37,7 +37,11 @@ Paper-first wording rule: Donchian Telegram notices and the dashboard use `DONCH
 
 Reporting separation rule: the dashboard must keep `Telegram 訊號 Paper 帳本` and `Donchian 策略 Paper 帳本` in separate visual blocks, with independent starting balances and net asset values. Do not display a combined net asset value or cross-ledger total.
 
+Closed-history rule: a Donchian Paper position leaving the open table must remain durable in `donchianPaper` and appear in the sanitized latest-100 `Donchian Paper 平倉紀錄` table. Include simulated entry/exit, exit reason, fees, net PnL and close time; exclude internal IDs, credentials and exchange-order identities.
+
 **Codex v1.6 reporting separation:** Paper deployment `2e7b9c94-895b-4263-896d-3af5e65bca9a` passed 156/156. The live dashboard visibly separates Telegram Paper as account A and Donchian Paper as account B, removes the combined aggregate from the report response, and labels the Telegram-only equity curve and trade history. Health returned 200 and deployed source matched git exactly. Screenshot: `artifacts/paper-ledgers-separated-20261104.png`.
+
+**Codex v1.7 closed history:** Demo deployment `79f436ab-7803-4cc2-88b0-98bf79873d91` passed 117/117 and Paper deployment `3a4c8ca1-d06c-494f-b49f-dd79e3a22729` passed 157/157. The sanitized API and dashboard retain the latest 100 closed Donchian Paper records. A natural ETHUSDT `CHANNEL_EXIT` was verified at reference 2,330.44, simulated entry 2,330.91, simulated exit 2,313.05, 0.08 USDT fees and -0.85 USDT net PnL. Both live sources matched git; credentials and both Demo gates remained false. Screenshot: `artifacts/donchian-paper-closed-history-20261104.png`.
 
 ## 3. Immediate Codex tasks (P0)
 1. **Review architecture and safety:** keep production and Demo host entirely segregated. Ensure no path or config can direct signed orders to production. Prefer source-controlled modular implementation and automated tests over monolithic inline Function, but preserve deployment compatibility.

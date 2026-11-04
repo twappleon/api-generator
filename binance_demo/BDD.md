@@ -247,6 +247,8 @@ Feature: Donchian statistics in Paper Monitor
    When a stop, 2R target or moving-channel exit signal occurs
    Then close the Paper position with adverse exit slippage and both-side fees
    And include it in Donchian Paper realized PnL, closed trades and win rate
+   And retain a sanitized closed record after it disappears from the open-position table
+   And show the record in `Donchian Paper 平倉紀錄` with entry, exit, reason, fees, net PnL and close time
 
  Scenario: Paper-first wording cannot be mistaken for an exchange order
    Given a Donchian entry or exit signal
@@ -258,6 +260,8 @@ Feature: Donchian statistics in Paper Monitor
 Railway evidence (2026-11-04): Demo BDD 116/116 and Paper BDD 155/155 passed. The Paper-first dashboard and notification wording were verified; the live Donchian Paper ledger held 3 positions, equity 9,995.44 USDT and unrealized PnL -4.56 USDT. No Demo order was created.
 
 Ledger-separation evidence (2026-11-04): Paper deployment `2e7b9c94-895b-4263-896d-3af5e65bca9a` succeeded with 156/156 BDD. The live page rendered `Telegram 訊號 Paper 帳本` as independent account A and `Donchian 策略 Paper 帳本` as independent account B, each with its own starting balance and net asset value. No combined net asset value was rendered; health was HTTP 200 and deployed source matched git exactly.
+
+Closed-history evidence (2026-11-04): Demo deployment `79f436ab-7803-4cc2-88b0-98bf79873d91` passed 117/117 and Paper deployment `3a4c8ca1-d06c-494f-b49f-dd79e3a22729` passed 157/157. A natural ETHUSDT `CHANNEL_EXIT` remained visible after leaving the open table, with reference 2,330.44, simulated entry 2,330.91, simulated exit 2,313.05, fees 0.08 USDT, net PnL -0.85 USDT and close time. Both deployed sources matched git; Demo credentials remained unconfigured and both order gates stayed false.
 
 ## Integration pending (not passed)
 Demo API key signed auth, non-matching test-order POST, matched Donchian MARKET entry/exit, partial fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and realized net PnL, natural breakout-triggered execution, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. User approval for virtual-fund Donchian execution was granted on 2026-11-04, but credentials and signed dry-run evidence are still missing; keep `DEMO_DONCHIAN_ORDER_ENABLED=false` until those checks pass.

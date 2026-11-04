@@ -615,7 +615,7 @@ function mergeDonchianStats(paper,remote=donchianStatsCache.data,cache=donchianS
   const valid=remote?.ledger==="BINANCE_DEMO_DONCHIAN"&&remote?.schemaVersion===1;
   const p=valid?remote.performance||{}:{};
   return {...paper,
-    donchianDemo:{available:valid,error:cache.error,signals:valid?remote.signals:null,performance:valid?p:null,paper:valid?remote.paper:null,positions:valid&&Array.isArray(remote.advisoryPositions)?remote.advisoryPositions:[]}}
+    donchianDemo:{available:valid,error:cache.error,signals:valid?remote.signals:null,performance:valid?p:null,paper:valid?remote.paper:null,positions:valid&&Array.isArray(remote.advisoryPositions)?remote.advisoryPositions:[],closedPositions:valid&&Array.isArray(remote.closedPaperPositions)?remote.closedPaperPositions:[]}}
 }
 function report() {
   const closed = state.orders.filter(o => o.status === "closed");
@@ -1583,6 +1583,7 @@ function runBDDTests() {
   test("BDD155",()=>{const remote={schemaVersion:1,ledger:"BINANCE_DEMO_DONCHIAN",performance:{},paper:{openPositions:1,equity:9999},advisoryPositions:[{symbol:"SOLUSDT",status:"PAPER_OPEN"}]};
     const x=mergeDonchianStats({realizedPnl:0,closedTrades:0},remote,{error:null});assert(x.donchianDemo.paper.openPositions===1&&page.includes("Donchian Paper 模擬持倉明細"),"paper detail missing");});
   test("BDD156",()=>{assert(page.includes("Telegram 訊號 Paper 帳本")&&page.includes("Telegram Paper 淨值")&&page.includes("Donchian 策略 Paper 帳本")&&page.includes("Donchian Paper 淨值")&&!page.includes("跨帳本合計"),"Paper ledgers are not visually separated");});
+  test("BDD157",()=>{const remote={schemaVersion:1,ledger:"BINANCE_DEMO_DONCHIAN",performance:{},paper:{closedTrades:1},closedPaperPositions:[{symbol:"BTCUSDT",status:"PAPER_CLOSED",netPnl:2}]};const x=mergeDonchianStats({},remote,{error:null});assert(x.donchianDemo.closedPositions.length===1&&page.includes("Donchian Paper 平倉紀錄")&&page.includes("dClosedPositions"),"closed Paper history missing");});
 
   const failed=results.filter(x=>!x.pass);
   return {
@@ -1633,6 +1634,8 @@ const page = [
 "<div class='warning' id='dStatus'>此區只計算 Donchian Paper，不與上方 Telegram Paper 淨值相加；不會送出 Binance Demo 或正式訂單。</div></div>",
 "<div class='section'><h2>Donchian Paper 模擬持倉明細</h2><small>每筆名目 100 USDT；含手續費與模擬滑價</small></div>",
 "<div class='panel'><table><thead><tr><th>幣別</th><th>方向</th><th>狀態</th><th>建倉參考</th><th>現價</th><th>停損</th><th>停利</th><th>未實現損益</th><th>訊號時間</th><th>K線</th></tr></thead><tbody id='dPositions'><tr><td colspan='10'>尚無 Paper 持倉</td></tr></tbody></table></div>",
+"<div class='section'><h2>Donchian Paper 平倉紀錄</h2><small>平倉後永久保留於獨立 Paper 帳本；最多顯示最近 100 筆</small></div>",
+"<div class='panel'><table><thead><tr><th>幣別</th><th>方向</th><th>狀態</th><th>建倉參考</th><th>模擬進場</th><th>模擬出場</th><th>原因</th><th>費用</th><th>淨損益</th><th>平倉時間</th><th>K線</th></tr></thead><tbody id='dClosedPositions'><tr><td colspan='11'>尚無 Donchian Paper 平倉紀錄</td></tr></tbody></table></div>",
 "<div class='section'><h2>Telegram Paper 資金曲線</h2><small>每分鐘快照，只代表獨立帳本 A</small></div>",
 "<div class='panel'><svg class='chart' id='chart' viewBox='0 0 900 210' preserveAspectRatio='none'></svg></div>",
 "<div class='section'><h2>Telegram Paper 模擬交易紀錄</h2><a href='/api/orders.csv' target='_blank'>匯出 CSV</a></div>",
@@ -1658,6 +1661,7 @@ const page = [
 "$('dWin').textContent=d.available?Number(pp.openPositions||0)+' / '+Number(pp.closedTrades||0):'—';$('dPnl').innerHTML=d.available?'已實現 '+pnl(pp.realizedPnl||0)+' / 未實現 '+pnl(pp.unrealizedPnl||0):'損益 —';",
 "$('dPaperEquity').textContent=d.available?fmt(pp.equity)+' USDT':'—';$('dActual').textContent=d.available?Number(dp.closedTrades||0):'—';",
 "const ps=d.positions||[];$('dPositions').innerHTML=ps.length?ps.map(x=>'<tr><td>'+clean(x.symbol)+'</td><td>'+clean(x.side)+'</td><td><span class=\"tag\">Paper 模擬持倉</span></td><td>'+fmt(x.entryPrice)+'</td><td>'+fmt(x.lastPrice)+'</td><td>'+fmt(x.stopLoss)+'</td><td>'+fmt(x.takeProfit)+'</td><td>'+pnl(x.paperPnl||0)+'</td><td>'+clean(x.entryTime||'—')+'</td><td><a target=\"_blank\" href=\"'+clean(x.chartUrl)+'\">15m K線</a></td></tr>').join(''):'<tr><td colspan=\"10\">尚無 Paper 持倉</td></tr>';",
+"const cs=d.closedPositions||[];$('dClosedPositions').innerHTML=cs.length?cs.map(x=>'<tr><td>'+clean(x.symbol)+'</td><td>'+clean(x.side)+'</td><td><span class=\"tag\">已平倉</span></td><td>'+fmt(x.referenceEntry)+'</td><td>'+fmt(x.entryPrice)+'</td><td>'+fmt(x.exitPrice)+'</td><td>'+clean(x.exitReason||'—')+'</td><td>'+fmt(x.fees||0)+'</td><td>'+pnl(x.netPnl||0)+'</td><td>'+clean(x.exitTime||'—')+'</td><td><a target=\"_blank\" href=\"'+clean(x.chartUrl)+'\">15m K線</a></td></tr>').join(''):'<tr><td colspan=\"11\">尚無 Donchian Paper 平倉紀錄</td></tr>';",
 "$('status').textContent='● 訊號：'+(s.channelError?'讀取異常':'正常')+' | 首次建立基線：'+(s.initialized?'完成':'等待中')+' | 最後訊號輪詢 '+(s.lastChannelPollAt||'—')+' | 已記錄貼文 '+s.messagesCaptured+' | 最後行情 '+(s.lastPricePollAt||'—')+(s.channelError?' | '+s.channelError:'')+(s.priceError?' | 行情錯誤：'+s.priceError:'');",
 "$('trades').innerHTML=o.length?o.slice().reverse().slice(0,100).map(x=>'<tr><td><a href=\"https://t.me/KCryptoBTC168/'+x.messageId+'\" target=\"_blank\">#'+x.messageId+'</a></td><td>'+clean(x.symbol)+'</td><td>'+clean(x.side)+'</td><td><span class=\"tag\">'+clean(x.status)+'</span></td><td>'+fmt(x.entryLow)+' – '+fmt(x.entryHigh)+'</td><td>'+(x.entryPrice?fmt(x.entryPrice):'—')+' / '+(x.exitPrice?fmt(x.exitPrice):'—')+'</td><td>'+((x.status==='closed')?pnl(x.netPnl):'—')+'</td></tr>').join(''):'<tr><td colspan=\"7\">目前沒有有效的新交易訊號；不倒填歷史成交。</td></tr>';",
 "const days=Object.entries(r.daily).sort((a,b)=>b[0].localeCompare(a[0]));",
