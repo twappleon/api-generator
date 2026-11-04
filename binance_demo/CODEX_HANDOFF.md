@@ -1,0 +1,46 @@
+# Codex Handoff — K Signal Paper Lab + Binance USDⓈ-M Demo
+**Prepared:** 2026-11-04 (Asia/Phnom_Penh)
+**Ownership:** user requested continuation in Codex.
+**Repository:** https://github.com/twappleon/api-generator
+**Working branch:** `feature/k-signal-binance-demo-20261104`
+**Draft PR:** https://github.com/twappleon/api-generator/pull/8
+**Base:** `master`. Keep PR **Draft** pending acceptance.
+
+## 1. Current system layout / authoritative source
+| Component | Checked-in source | Deployment | Data |
+| --- | --- | --- | --- |
+| Paper Lab | `paper_lab/worker.ts` | Railway Function `k-signal-paper-monitor` at https://k-signal-paper-monitor-production.up.railway.app | Separate persistent `/data/paper-state.json` volume |
+| Binance USD-M Demo | `binance_demo/worker.ts` | Railway Function `k-signal-binance-demo` at https://k-signal-binance-demo-production.up.railway.app | Separate persistent `/data/demo-state.json` volume |
+
+Both services are in the user's Railway `k-signal-paper-lab` project, `production` environment, Southeast Asia region. The Worker files are snapshots matching the last inspected deployed function source. **Railway Functions have inline code rather than GitHub auto-deploy.** Update the Git branch *and* the correct Railway Function explicitly; verify the runtime after each update.
+
+Do not print or duplicate APP_PASSWORD, TELEGRAM_BOT_TOKEN, BINANCE_DEMO_API_SECRET or private chat identifiers in source files, issue comments or logs.
+
+## 2. Functionality implemented
+**Paper Lab**: public Telegram channel `https://t.me/KCryptoBTC168` polls; unique signal IDs; simulated long/short positions with stop and partial closes; fully simulated +1% TP **after** entry/exit fees & modeled slippage; performance reporting, CSV, protected dashboard; Telegram via bot `@crytotradebot` to bound account `@twjavaleon`. Previously two fake BDD exit notifications with `undefined` source IDs leaked; the live fix adds validated source IDs, startup-test notification muting and regression tests. Last verified **152/152 synthetic BDD**.
+
+**Binance Demo**: separate Bun/TypeScript worker, hardcoded `https://demo-fapi.binance.com`; public Telegram polling; candidates; unique client IDs; HMAC-signed `/fapi/v1/order`; query `/fapi/v1/order`, `/fapi/v3/positionRisk`; Demo `/fapi/v1/algoOrder` stop, reduceOnly close on projected net +1%; uses `/fapi/v1/userTrades`, `/fapi/v1/income`, best bid/ask and estimated fee/slippage; isolated 1x, One-Way required, max one managed position, 50 USDT default / 100 cap, 0.5% risk. Git source includes protected `GET /api/demo/credentials` and `POST /api/demo/order-test` (non-matching Demo `/fapi/v1/order/test`, with `X-Demo-Confirm: DEMO_ONLY_TEST`). **`DEMO_ORDER_ENABLED=false` remains mandatory until user authorization.**
+
+**Last verified:** Binance Demo Function `SUCCESS/Online`; 47/47 isolated synthetic BDD passed; Demo `/fapi/v1/time`, exchangeInfo and BTCUSDT markPrice successfully called. No signed authentication or actual exchange Demo fills had yet been verified, because Demo API key/secret had not been configured at last check. Verify current Railway Variable **names**, not secret values, before proceeding.
+
+## 3. Immediate Codex tasks (P0)
+1. **Review architecture and safety:** keep production and Demo host entirely segregated. Ensure no path or config can direct signed orders to production. Prefer source-controlled modular implementation and automated tests over monolithic inline Function, but preserve deployment compatibility.
+2. **Connect virtual-funds Demo credentials safely** only after the user creates Demo-only keys in the Binance UI and stores them in Railway `BINANCE_DEMO_API_KEY`, `BINANCE_DEMO_API_SECRET`; do not ask to paste credentials in chat/repo. Test signed `GET /api/demo/credentials` and explicit `/fapi/v1/order/test` without real Demo matching. `DEMO_ORDER_ENABLED` must remain `false` until a separate user confirmation for creating actual virtual-funds Demo orders.
+3. **Audit correctness before sending Demo orders:** confirm Binance's *current* order, algoOrder, stop and query response schemas. Treat timeout/5xx as unknown execution: reconcile by deterministic client ID, never blindly resubmit. For Algo stop creation uncertainty query exchange-side stop by ID. Review partial fills, qty precision, tick/min-notional, reduceOnly/order status, hedge/One-Way, and external/unmanaged positions.
+4. **Correct known gaps:** limit-order life-cycle has no robust 24h cancellation/partial-fill expiration; stale Telegram entries only visible latest 20 posts without reliable pagination; account-wide positions and funding/fee reconciliation need robust data; stop-confirmation/TP idempotency and state write errors need fault injection. Stop must be exchange-side before bot considers a position protected, and any unprotected filled position should trigger a halt and actionable warning.
+5. **Testing:** extend BDD beyond 47 synthetic cases with auth failure, 429/5xx/timeout, restart, volume readonly, stop creation, partial fills, duplicate responses, precision, daily PnL vs real Demo account, and Telegram notifications. Do not contaminate persistent Demo ledger or send synthetic notifications from tests. Record exactly which tests passed.
+6. **Deploy:** make changes on this branch / PR #8, update Railway Function separately, verify health, logs, and actual environment, and keep Paper Lab untouched.
+
+## 4. Required user-visible acceptance
+- At least signed Demo credentials checked and `POST /fapi/v1/order/test` successful **without a matched order**.
+- Real Demo orders/partial fills/stop/TP and reconciliation **only after explicit user approval**, using virtual funds; no real Binance exchange orders.
+- Telegram notifications clearly prefixed "BINANCE DEMO", show client/order ID and actual exchange-confirmed status.
+- Complete net PnL reconciliation includes actual fees, funding and exit fills. Projected +1% does *not* guarantee exact +1% realized net after slippage, latency or gaps.
+- Tests report separately: synthetic BDD vs public endpoint vs signed dry run vs virtual-funds execution vs long-running soak.
+- No secrets in repository, screenshots, PR body, logs or shared reports.
+
+## 5. Codex completion template
+Report (a) changed files & commit/PR, (b) Railway service and deployment ID, (c) signed Demo check results, (d) Demo orders actually placed? count, (e) stop and TP state and reconciliation, (f) BDD pass/fail and missing tests, (g) blocked items or required user action. No "done" unless all actually verified.
+
+## 6. Suggested prompt
+"Continue the K Signal Binance Demo project from `binance_demo/CODEX_HANDOFF.md` on branch `feature/k-signal-binance-demo-20261104` and Draft PR #8. Prioritize P0 API safety, Demo-only signed authentication `/order/test`, partial fill/stop/TP and idempotent reconciliation. Keep `DEMO_ORDER_ENABLED=false`; do not touch real Binance. Verify state against Railway before editing, keep PR and live Railway code in sync, run isolated tests, and report exact proof."
