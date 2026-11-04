@@ -1,7 +1,7 @@
 # BDD — Binance Demo Safety and Integration
 
 ## Executed
-97 isolated in-memory synthetic checks (local Bun 1.4.4; Railway startup fails on regression). The original 85 scenarios remain, plus 12 deterministic Donchian cases for:
+97 isolated in-memory synthetic checks (local Bun 1.4.4; Railway startup fails on regression). The original 47 scenarios remain, the v1.1 lifecycle suite remains, and 12 deterministic Donchian cases add coverage for:
 
 - partial-fill remainder and canceled-partial state transitions;
 - active/terminal order classifiers, identity and overfill rejection;
