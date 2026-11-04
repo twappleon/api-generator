@@ -615,7 +615,7 @@ function mergeDonchianStats(paper,remote=donchianStatsCache.data,cache=donchianS
   const valid=remote?.ledger==="BINANCE_DEMO_DONCHIAN"&&remote?.schemaVersion===1;
   const p=valid?remote.performance||{}:{},dClosed=Number(p.closedTrades||0),dNet=Number(p.netPnlUsdt||0);
   return {...paper,
-    donchianDemo:{available:valid,error:cache.error,signals:valid?remote.signals:null,performance:valid?p:null,positions:valid&&Array.isArray(remote.advisoryPositions)?remote.advisoryPositions:[]},
+    donchianDemo:{available:valid,error:cache.error,signals:valid?remote.signals:null,performance:valid?p:null,paper:valid?remote.paper:null,positions:valid&&Array.isArray(remote.advisoryPositions)?remote.advisoryPositions:[]},
     combined:{realizedPnlUsdt:paper.realizedPnl+dNet,closedTrades:paper.closedTrades+dClosed}}
 }
 function report() {
@@ -1581,8 +1581,8 @@ function runBDDTests() {
     const x=mergeDonchianStats({realizedPnl:0,closedTrades:0},{schemaVersion:99},{error:"schema"});
     assert(!x.donchianDemo.available&&page.includes("Donchian Demo 統計")&&page.includes("不同帳本"),"invalid integration state");
   });
-  test("BDD155",()=>{const remote={schemaVersion:1,ledger:"BINANCE_DEMO_DONCHIAN",performance:{},advisoryPositions:[{symbol:"SOLUSDT",status:"SIGNAL_ONLY_NOT_EXECUTED"}]};
-    const x=mergeDonchianStats({realizedPnl:0,closedTrades:0},remote,{error:null});assert(x.donchianDemo.positions[0].symbol==="SOLUSDT"&&page.includes("策略建倉提示明細"),"advisory detail missing");});
+  test("BDD155",()=>{const remote={schemaVersion:1,ledger:"BINANCE_DEMO_DONCHIAN",performance:{},paper:{openPositions:1,equity:9999},advisoryPositions:[{symbol:"SOLUSDT",status:"PAPER_OPEN"}]};
+    const x=mergeDonchianStats({realizedPnl:0,closedTrades:0},remote,{error:null});assert(x.donchianDemo.paper.openPositions===1&&page.includes("Donchian Paper 模擬持倉明細"),"paper detail missing");});
 
   const failed=results.filter(x=>!x.pass);
   return {
@@ -1625,11 +1625,12 @@ const page = [
 "<div class='card'><label>最大回撤</label><div class='value' id='dd'>—</div><div class='sub' id='orders'>持倉與掛單 —</div></div>",
 "</div><div class='section'><h2>Donchian Demo 統計</h2><small>獨立 Demo 帳本，不改寫 Paper 資金曲線</small></div>",
 "<div class='cards'><div class='card'><label>Donchian 訊號</label><div class='value' id='dSignals'>—</div><div class='sub' id='dSignalSub'>建倉 / 平倉</div></div>",
-"<div class='card'><label>Demo 已平倉 / 勝率</label><div class='value' id='dWin'>—</div><div class='sub' id='dPnl'>淨損益 —</div></div>",
-"<div class='card'><label>跨帳本彙總</label><div class='value' id='combinedPnl'>—</div><div class='sub' id='combinedTrades'>不同帳本，僅加總</div></div></div>",
+"<div class='card'><label>Donchian Paper 持倉 / 平倉</label><div class='value' id='dWin'>—</div><div class='sub' id='dPnl'>損益 —</div></div>",
+"<div class='card'><label>Donchian Paper 淨值</label><div class='value' id='combinedPnl'>—</div><div class='sub' id='combinedTrades'>期初 10,000 USDT</div></div>",
+"<div class='card'><label>Demo 實際已平倉</label><div class='value' id='dActual'>—</div><div class='sub'>Demo 下單仍停用</div></div></div>",
 "<div class='warning' id='dStatus'>Donchian Demo 與 Paper 是不同帳本，不代表同一資金曲線。</div>",
-"<div class='section'><h2>策略建倉提示明細</h2><small>提示持倉，不代表交易所已成交</small></div>",
-"<div class='panel'><table><thead><tr><th>幣別</th><th>方向</th><th>狀態</th><th>建倉參考</th><th>停損</th><th>停利</th><th>訊號時間</th><th>K線</th></tr></thead><tbody id='dPositions'><tr><td colspan='8'>尚無提示持倉</td></tr></tbody></table></div>",
+"<div class='section'><h2>Donchian Paper 模擬持倉明細</h2><small>每筆名目 100 USDT；含手續費與模擬滑價</small></div>",
+"<div class='panel'><table><thead><tr><th>幣別</th><th>方向</th><th>狀態</th><th>建倉參考</th><th>現價</th><th>停損</th><th>停利</th><th>未實現損益</th><th>訊號時間</th><th>K線</th></tr></thead><tbody id='dPositions'><tr><td colspan='10'>尚無 Paper 持倉</td></tr></tbody></table></div>",
 "<div class='section'><h2>Paper 資金曲線</h2><small>每分鐘快照，僅代表 Paper 帳本觀察到的報價</small></div>",
 "<div class='panel'><svg class='chart' id='chart' viewBox='0 0 900 210' preserveAspectRatio='none'></svg></div>",
 "<div class='section'><h2>模擬交易紀錄</h2><a href='/api/orders.csv' target='_blank'>匯出 CSV</a></div>",
@@ -1650,11 +1651,11 @@ const page = [
 "$('pf').textContent='盈虧因子 '+(r.profitFactor==null?'—':fmt(r.profitFactor));",
 "$('dd').textContent=fmt(r.maxDrawdownPct)+'%';",
 "$('orders').textContent='持倉 '+r.openPositions+' / 掛單 '+r.pendingOrders+' / 部分平倉 '+(r.partialExits||0);",
-"const d=r.donchianDemo||{},dp=d.performance||{},ds=d.signals||{};",
+"const d=r.donchianDemo||{},dp=d.performance||{},pp=d.paper||{},ds=d.signals||{};",
 "$('dSignals').textContent=d.available?Number(ds.total||0):'—';$('dSignalSub').textContent=d.available?'建倉 '+Number(ds.entries||0)+' / 平倉 '+Number(ds.exits||0):'等待上游資料';",
-"$('dWin').textContent=d.available?Number(dp.closedTrades||0)+' / '+fmt(dp.winRatePct||0,1)+'%':'—';$('dPnl').innerHTML=d.available?'淨損益 '+pnl(dp.netPnlUsdt||0)+' USDT':'淨損益 —';",
-"$('combinedPnl').innerHTML=pnl(r.combined?.realizedPnlUsdt||0)+' USDT';$('combinedTrades').textContent='已平倉 '+Number(r.combined?.closedTrades||0)+' · 不同帳本';",
-"const ps=d.positions||[];$('dPositions').innerHTML=ps.length?ps.map(x=>'<tr><td>'+clean(x.symbol)+'</td><td>'+clean(x.side)+'</td><td><span class=\"tag\">提示持倉／未成交</span></td><td>'+fmt(x.entryPrice)+'</td><td>'+fmt(x.stopLoss)+'</td><td>'+fmt(x.takeProfit)+'</td><td>'+clean(x.entryTime||'—')+'</td><td><a target=\"_blank\" href=\"'+clean(x.chartUrl)+'\">15m K線</a></td></tr>').join(''):'<tr><td colspan=\"8\">尚無提示持倉</td></tr>';",
+"$('dWin').textContent=d.available?Number(pp.openPositions||0)+' / '+Number(pp.closedTrades||0):'—';$('dPnl').innerHTML=d.available?'已實現 '+pnl(pp.realizedPnl||0)+' / 未實現 '+pnl(pp.unrealizedPnl||0):'損益 —';",
+"$('combinedPnl').textContent=d.available?fmt(pp.equity)+' USDT':'—';$('dActual').textContent=d.available?Number(dp.closedTrades||0):'—';",
+"const ps=d.positions||[];$('dPositions').innerHTML=ps.length?ps.map(x=>'<tr><td>'+clean(x.symbol)+'</td><td>'+clean(x.side)+'</td><td><span class=\"tag\">Paper 模擬持倉</span></td><td>'+fmt(x.entryPrice)+'</td><td>'+fmt(x.lastPrice)+'</td><td>'+fmt(x.stopLoss)+'</td><td>'+fmt(x.takeProfit)+'</td><td>'+pnl(x.paperPnl||0)+'</td><td>'+clean(x.entryTime||'—')+'</td><td><a target=\"_blank\" href=\"'+clean(x.chartUrl)+'\">15m K線</a></td></tr>').join(''):'<tr><td colspan=\"10\">尚無 Paper 持倉</td></tr>';",
 "$('status').textContent='● 訊號：'+(s.channelError?'讀取異常':'正常')+' | 首次建立基線：'+(s.initialized?'完成':'等待中')+' | 最後訊號輪詢 '+(s.lastChannelPollAt||'—')+' | 已記錄貼文 '+s.messagesCaptured+' | 最後行情 '+(s.lastPricePollAt||'—')+(s.channelError?' | '+s.channelError:'')+(s.priceError?' | 行情錯誤：'+s.priceError:'');",
 "$('trades').innerHTML=o.length?o.slice().reverse().slice(0,100).map(x=>'<tr><td><a href=\"https://t.me/KCryptoBTC168/'+x.messageId+'\" target=\"_blank\">#'+x.messageId+'</a></td><td>'+clean(x.symbol)+'</td><td>'+clean(x.side)+'</td><td><span class=\"tag\">'+clean(x.status)+'</span></td><td>'+fmt(x.entryLow)+' – '+fmt(x.entryHigh)+'</td><td>'+(x.entryPrice?fmt(x.entryPrice):'—')+' / '+(x.exitPrice?fmt(x.exitPrice):'—')+'</td><td>'+((x.status==='closed')?pnl(x.netPnl):'—')+'</td></tr>').join(''):'<tr><td colspan=\"7\">目前沒有有效的新交易訊號；不倒填歷史成交。</td></tr>';",
 "const days=Object.entries(r.daily).sort((a,b)=>b[0].localeCompare(a[0]));",

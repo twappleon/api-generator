@@ -40,15 +40,15 @@ const now = () => new Date().toISOString();
 if(APP_PASSWORD.length<16) throw Error("APP_PASSWORD >=16 required");
 if(!PATH.startsWith("/data/")&&!LOCAL_BDD_ONLY) throw Error("Demo must use its own /data mounted volume");
 if(!Number.isFinite(INITIAL_NOTIONAL)) throw Error("Invalid demo notional");
-const blank=()=>({schema:3,baseline:false,lastSeen:0,lastChannelPoll:null,lastDemoPoll:null,
+const blank=()=>({schema:4,baseline:false,lastSeen:0,lastChannelPoll:null,lastDemoPoll:null,
   channelError:null,demoError:null,lastDonchianPoll:null,donchianError:null,halted:false,haltReason:null,
   candidate:[],orders:[],events:[],outbox:[],lastQuote:{},lastGoodAccount:null,
-  demoBackoffUntil:0,donchian:{}});
+  demoBackoffUntil:0,donchian:{},donchianPaper:[]});
 mkdirSync(dirname(PATH),{recursive:true});
 let ledger=blank();
 if(existsSync(PATH)){
  const loaded=JSON.parse(readFileSync(PATH,"utf8"));
- ledger={...blank(),...loaded,schema:3,
+ ledger={...blank(),...loaded,schema:4,
    donchian:loaded.donchian&&typeof loaded.donchian==="object"?loaded.donchian:{}};
 }
 let storageSafe=true, synthetic=false;
@@ -242,6 +242,24 @@ function donchianPrice(value){
 }
 function donchianPair(symbol){return symbol.endsWith("USDT")?symbol.slice(0,-4)+"/USDT":symbol;}
 function donchianChartUrl(symbol){return "https://www.tradingview.com/chart/?symbol=BINANCE%3A"+encodeURIComponent(symbol)+".P&interval=15";}
+function paperOpen(symbol,s){
+ const id=symbol+":"+s.entryTime;if(ledger.donchianPaper.some(x=>x.id===id))return;
+ const long=s.position==="LONG",fill=s.entryPrice*(long?1+SLIP:1-SLIP),qty=100/fill;
+ ledger.donchianPaper.push({id,symbol,side:s.position,status:"OPEN",referenceEntry:s.entryPrice,entryPrice:fill,qty,
+  stopLoss:s.stopLoss,takeProfit:s.takeProfit,entryTime:s.entryTime,feeEntry:fill*qty*FEE_FALLBACK,feeExit:0,grossPnl:0,netPnl:0,exitPrice:null,exitTime:null,exitReason:null});
+ if(!synthetic)save();
+}
+function paperClose(symbol,event){
+ const x=ledger.donchianPaper.findLast(t=>t.symbol===symbol&&t.status==="OPEN");if(!x)return;
+ const long=x.side==="LONG",fill=event.price*(long?1-SLIP:1+SLIP);x.exitPrice=fill;x.exitTime=new Date(event.closeTime).toISOString();x.exitReason=event.reason;
+ x.grossPnl=(long?fill-x.entryPrice:x.entryPrice-fill)*x.qty;x.feeExit=fill*x.qty*FEE_FALLBACK;x.netPnl=x.grossPnl-x.feeEntry-x.feeExit;x.status="CLOSED";
+}
+function paperReport(){
+ const rows=ledger.donchianPaper,open=rows.filter(x=>x.status==="OPEN"),closed=rows.filter(x=>x.status==="CLOSED");
+ const unrealized=open.reduce((n,x)=>{const mark=Number(ledger.donchian[x.symbol]?.lastObservedClose||x.entryPrice),exit=mark*(x.side==="LONG"?1-SLIP:1+SLIP);return n+(x.side==="LONG"?exit-x.entryPrice:x.entryPrice-exit)*x.qty-x.feeEntry-exit*x.qty*FEE_FALLBACK},0);
+ const realized=closed.reduce((n,x)=>n+x.netPnl,0),wins=closed.filter(x=>x.netPnl>0).length;
+ return {initialBalance:10000,equity:10000+realized+unrealized,openPositions:open.length,closedTrades:closed.length,wins,winRatePct:closed.length?wins/closed.length*100:0,realizedPnl:realized,unrealizedPnl:unrealized};
+}
 function donchianExecutionCandidate(symbol,event,enabled=DONCHIAN_EXECUTE){
  const long=event.action==="ENTER_LONG",reference=Number(event.price);
  return {id:"DONCHIAN_"+symbol+"_"+event.closeTime,symbol,side:long?"long":"short",mode:"MARKET",
@@ -306,9 +324,10 @@ function applyDonchian(symbol,candles){
    state.position=event.action==="ENTER_LONG"?"LONG":"SHORT";
    state.entryPrice=event.price;state.entryTime=new Date(event.closeTime).toISOString();
    state.stopLoss=event.stopLoss;state.takeProfit=event.takeProfit;
+   paperOpen(symbol,state);
    const candidate=donchianExecutionCandidate(symbol,event);
    if(!ledger.candidate.some(row=>row.id===candidate.id))ledger.candidate.push(candidate);
-  }else{state.position="FLAT";state.exitPrice=event.price;state.exitTime=new Date(event.closeTime).toISOString();}
+  }else{paperClose(symbol,event);state.position="FLAT";state.exitPrice=event.price;state.exitTime=new Date(event.closeTime).toISOString();}
   if(event.action.startsWith("EXIT"))state.executionExit=donchianExitRequest(symbol,event);
   state.lastAction={...event,at:now(),previousPosition};
   log("DONCHIAN_SIGNAL",{symbol,action:event.action,price:event.price,closeTime:event.closeTime,
@@ -445,9 +464,9 @@ function donchianStats(){
  const wins=trades.filter(x=>Number(x.netPnlUsdt)>0).length;
  const open=orders.filter(x=>!x.actualSettlement&&!['CLOSED','CANCELED','REJECTED','EXPIRED'].includes(String(x.status))).length;
  const last=events.at(-1)||null;
- const advisoryPositions=Object.entries(ledger.donchian).filter(([,s])=>s?.position&&s.position!=="FLAT").map(([symbol,s])=>({
+ const advisoryPositions=Object.entries(ledger.donchian).filter(([,s])=>s?.position&&s.position!=="FLAT").map(([symbol,s])=>{paperOpen(symbol,s);const t=ledger.donchianPaper.findLast(x=>x.symbol===symbol&&x.status==="OPEN"),mark=Number(s.lastObservedClose||s.entryPrice),exit=mark*(s.position==="LONG"?1-SLIP:1+SLIP),paperPnl=t?((t.side==="LONG"?exit-t.entryPrice:t.entryPrice-exit)*t.qty-t.feeEntry-exit*t.qty*FEE_FALLBACK):null;return {
   symbol,side:s.position,entryPrice:s.entryPrice,stopLoss:s.stopLoss,takeProfit:s.takeProfit,
-  entryTime:s.entryTime,lastPrice:s.lastObservedClose,chartUrl:donchianChartUrl(symbol),status:"SIGNAL_ONLY_NOT_EXECUTED"}));
+  entryTime:s.entryTime,lastPrice:s.lastObservedClose,chartUrl:donchianChartUrl(symbol),status:"PAPER_OPEN",paperPnl};});
  return {schemaVersion:1,ledger:"BINANCE_DEMO_DONCHIAN",mode:"DEMO_ONLY",strategy:"DONCHIAN_20_10_2R",
   updatedAt:now(),executionEnabled:DONCHIAN_EXECUTE,credentialsConfigured:!!KEY&&!!SECRET,
   signals:{total:events.length,entries:events.filter(x=>String(x.detail?.action).startsWith("ENTER")).length,
@@ -458,7 +477,7 @@ function donchianStats(){
   performance:{closedTrades:trades.length,wins,losses:trades.length-wins,
    winRatePct:trades.length?wins/trades.length*100:0,grossRealized:sum("grossRealized"),
    commission:sum("commission"),funding:sum("funding"),netPnlUsdt:sum("netPnlUsdt")},
-  advisoryPositions};
+  advisoryPositions,paper:paperReport()};
 }
 function projectedNet(o,bid,ask,entryFee=0,funding=0){
  if(!o.avgPrice||!o.filledQty)return null;
@@ -1004,7 +1023,7 @@ function bdd(){
   catch(e){if(String(e).includes("accepted"))throw e;}});
  check(74,"Positive funding increases projected net",()=>{let a=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0);
   let b=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0.1);if(b.net<=a.net)throw Error("funding");});
- check(75,"Schema v3 contains durable reconciliation and Donchian fields",()=>{const x=blank();if(x.schema!==3||x.demoBackoffUntil!==0||!Array.isArray(x.orders)||!x.donchian)throw Error("schema");});
+ check(75,"Schema v4 contains durable reconciliation and Donchian Paper fields",()=>{const x=blank();if(x.schema!==4||x.demoBackoffUntil!==0||!Array.isArray(x.orders)||!x.donchian||!Array.isArray(x.donchianPaper))throw Error("schema");});
  check(76,"Test-order diagnostic pins One-Way position side",()=>{if(DIAGNOSTIC_POSITION_SIDE!=="BOTH")throw Error("position side");});
  check(77,"Execution stays false unless an exact lowercase scoped flag is true",()=>{if(Bun.env.DEMO_ORDER_ENABLED!=="true"&&Bun.env.DEMO_DONCHIAN_ORDER_ENABLED!=="true"&&EXECUTE)throw Error("unsafe env parsing");});
  check(78,"Local BDD path override can never coexist with execution",()=>{if(LOCAL_BDD_ONLY&&EXECUTE)throw Error("unsafe local mode");});
@@ -1071,8 +1090,9 @@ function bdd(){
   ledger.orders=[{sourceType:"DONCHIAN",clientOrderId:"D",symbol:"BTCUSDT",side:"long",status:"CLOSED",actualSettlement:settlement},{sourceType:"TELEGRAM_CHANNEL",clientOrderId:"T",symbol:"SOLUSDT",side:"long",status:"CLOSED",actualSettlement:{...settlement,net:99}}];
   const x=donchianStats();if(x.performance.closedTrades!==1||x.performance.netPnlUsdt!==1.92||x.orders.closed!==1)throw Error("cross-source leak");});
  check(113,"Donchian statistics expose no order identity or credentials",()=>{const raw=JSON.stringify(donchianStats());if(raw.includes("clientOrderId")||raw.includes("orderId")||raw.includes(APP_PASSWORD))throw Error("sensitive stats");});
- check(114,"Open Donchian advisory exposes report levels but never claims execution",()=>{ledger.donchian.SOLUSDT={position:"LONG",entryPrice:93.96,stopLoss:86.46,takeProfit:108.96,entryTime:now(),lastObservedClose:93.96};
-  const x=donchianStats().advisoryPositions[0];if(x.symbol!=="SOLUSDT"||x.entryPrice!==93.96||x.stopLoss!==86.46||x.takeProfit!==108.96||x.status!=="SIGNAL_ONLY_NOT_EXECUTED")throw Error("advisory detail");});
+ check(114,"Open Donchian advisory exposes report levels and Paper position",()=>{ledger.donchian.SOLUSDT={position:"LONG",entryPrice:93.96,stopLoss:86.46,takeProfit:108.96,entryTime:now(),lastObservedClose:93.96};
+  const s=donchianStats(),x=s.advisoryPositions[0];if(x.symbol!=="SOLUSDT"||x.entryPrice!==93.96||x.stopLoss!==86.46||x.takeProfit!==108.96||x.status!=="PAPER_OPEN"||s.paper.openPositions!==1)throw Error("paper detail");});
+ check(115,"Donchian Paper closes and records fee-adjusted PnL",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:100};ledger.donchian.BTCUSDT=s;paperOpen("BTCUSDT",s);paperClose("BTCUSDT",{price:110,closeTime:Date.now(),reason:"TAKE_PROFIT_2R"});const x=ledger.donchianPaper[0];if(x.status!=="CLOSED"||x.netPnl>=x.grossPnl||paperReport().closedTrades!==1)throw Error("paper close");});
  return {mode:"SYNTHETIC_BDD",total:results.length,passed:results.filter(t=>t.pass).length,
   failed:results.filter(t=>!t.pass).length,results,at:now()};
 }
