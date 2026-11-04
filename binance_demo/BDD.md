@@ -35,6 +35,18 @@ dashboard contains independent/non-ordering Donchian disclosure
 
 The local host could read the Telegram public channel but timed out reaching `demo-fapi.binance.com`; this remains a failed local public-endpoint check, not a pass. Railway public endpoint verification was repeated separately below.
 
+Railway v1.2 Donchian deployment on 2026-11-04:
+```
+deployment=a7a80ecb-4db6-4643-ba60-f645317d3492 status=SUCCESS
+BINANCE_DEMO_BDD {"passed":97,"failed":0,"total":97,"errors":[]}
+DEMO_PUBLIC_CONNECTED {"host":"https://demo-fapi.binance.com","btcStatus":"TRADING","credentialsConfigured":false,"orderEnabled":false}
+DONCHIAN_PUBLIC_CONNECTED {"host":"https://demo-fapi.binance.com","interval":"15m","symbols":["BTCUSDT","ETHUSDT","SOLUSDT","ZECUSDT"]}
+GET /healthz = 200 {"ok":true,"mode":"DEMO_ONLY","ready":true}
+deployed worker bytes=64675; local worker bytes=64675; exact match=true
+```
+
+The first live poll established a baseline for all four symbols and intentionally emitted no stale Donchian alert. No outbound alert was naturally triggered during the bounded deployment check, so actual outbound Donchian delivery remains unverified. No matched Demo order was created.
+
 Railway v1.1 deployment on 2026-11-04:
 ```
 deployment=497fca38-fde0-4ea1-b894-834805dfe292 status=SUCCESS
