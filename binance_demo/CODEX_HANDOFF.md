@@ -25,7 +25,7 @@ Do not print or duplicate APP_PASSWORD, TELEGRAM_BOT_TOKEN, BINANCE_DEMO_API_SEC
 
 **Codex v1.1 continuation:** hardened partial-fill and 24-hour LIMIT cancellation, account-wide position ownership, Algo stop query/idempotency, TP unknown-result reconciliation, actual owned-fill fee/funding settlement, 429/5xx backoff, persistence fail-closed behavior and Demo-prefixed Telegram events. Commit `ec6b0d7` contains the implementation; the deployment evidence update follows it. Paper Lab was not modified or restarted. Matched Demo orders placed: **0**.
 
-**Codex v1.2 continuation:** added notification-only Donchian timing state and protected `/api/donchian`. It is independent of Telegram channel ingestion and never creates exchange orders. Explicit entry/stop/2R target/exit messaging and fixed-level exits bring the local suite to 103/103. `DEMO_ORDER_ENABLED=false`; matched Demo orders placed: **0**.
+**Codex v1.2 continuation:** added notification-only Donchian timing state and protected `/api/donchian`. It is independent of Telegram channel ingestion and never creates exchange orders. Explicit entry/stop/2R target/exit messaging and fixed-level exits pass 103/103 locally and on Railway deployment `ccd4b0fe-aa2d-4724-89f4-e90bbd45363a`; health was 200 and deployed source matched exactly. `DEMO_ORDER_ENABLED=false`; matched Demo orders placed: **0**.
 
 ## 3. Immediate Codex tasks (P0)
 1. **Review architecture and safety:** keep production and Demo host entirely segregated. Ensure no path or config can direct signed orders to production. Prefer source-controlled modular implementation and automated tests over monolithic inline Function, but preserve deployment compatibility.

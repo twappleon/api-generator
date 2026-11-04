@@ -36,6 +36,18 @@ authenticated /api/donchian=200
 dashboard contains independent/non-ordering Donchian disclosure
 ```
 
+Railway explicit-price Donchian deployment on 2026-11-04:
+```
+deployment=ccd4b0fe-aa2d-4724-89f4-e90bbd45363a status=SUCCESS
+BINANCE_DEMO_BDD {"passed":103,"failed":0,"total":103,"errors":[]}
+DEMO_PUBLIC_CONNECTED {"host":"https://demo-fapi.binance.com","btcStatus":"TRADING","credentialsConfigured":false,"orderEnabled":false}
+DONCHIAN_PUBLIC_CONNECTED {"host":"https://demo-fapi.binance.com","interval":"15m","symbols":["BTCUSDT","ETHUSDT","SOLUSDT","ZECUSDT"]}
+GET /healthz = 200 {"ok":true,"mode":"DEMO_ONLY","ready":true}
+deployed worker chars=69948; local worker chars=69948; exact match=true
+```
+
+This release makes every Donchian entry alert name the pair, direction, 15-minute entry reference close, fixed signal-time 10-period stop, fixed 2R target, unit risk and percentage risk. Exit alerts preserve the original entry/stop/target and state the exact exit reason. No Telegram message was sent merely to deploy this formatting revision, and no matched Demo order was created.
+
 The local host could read the Telegram public channel but timed out reaching `demo-fapi.binance.com`; this remains a failed local public-endpoint check, not a pass. Railway public endpoint verification was repeated separately below.
 
 Railway v1.2 Donchian deployment on 2026-11-04:
