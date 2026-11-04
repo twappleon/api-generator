@@ -1,7 +1,7 @@
 # BDD — Binance Demo Safety and Integration
 
 ## Executed
-103 isolated in-memory synthetic checks (local Bun 1.4.4; Railway startup fails on regression). The original lifecycle and Donchian scenarios remain, with added coverage for:
+104 isolated in-memory synthetic checks (local Bun 1.4.4; Railway startup fails on regression). The original lifecycle and Donchian scenarios remain, with added coverage for:
 
 - partial-fill remainder and canceled-partial state transitions;
 - active/terminal order classifiers, identity and overfill rejection;
@@ -22,10 +22,11 @@
 - long/short signal-time 10-bar stop calculation and fixed 2R take-profit calculation;
 - fixed stop/take-profit exit reasons and trigger prices;
 - entry/exit messages explicitly containing pair, direction, entry, stop, target and exit reason.
+- matching pair-specific Binance Futures K-line URLs plus the view-only/non-ordering disclosure.
 
 Local execution on 2026-11-04:
 ```
-BINANCE_DEMO_BDD {"passed":103,"failed":0,"total":103,"errors":[]}
+BINANCE_DEMO_BDD {"passed":104,"failed":0,"total":104,"errors":[]}
 ```
 
 Local HTTP route checks on 2026-11-04:
@@ -127,6 +128,13 @@ Feature: Independent Donchian timing alerts
    Given an open Donchian advisory has stored entry, stop loss and take profit
    When a closed candle reaches its stop loss or 2R take profit
    Then send an exit alert with the original levels, exit price and exact reason
+
+ Scenario: Signal includes its chart
+   Given a Donchian entry or exit signal for ETHUSDT
+   When the notification is rendered
+   Then it includes https://www.binance.com/en/futures/ETHUSDT
+   And tells the user to select 15m
+   And states that the link is view-only and not a Demo order entry point
 
  Scenario: Telegram channel polling fails
    Given the public Telegram channel cannot be read

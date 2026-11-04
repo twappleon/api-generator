@@ -232,6 +232,7 @@ function donchianPrice(value){
  return Number(value).toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:8});
 }
 function donchianPair(symbol){return symbol.endsWith("USDT")?symbol.slice(0,-4)+"/USDT":symbol;}
+function donchianChartUrl(symbol){return "https://www.binance.com/en/futures/"+encodeURIComponent(symbol);}
 function donchianNotification(symbol,event,state,previousPosition){
  const p=donchianPrice,pair=donchianPair(symbol),closed=new Date(event.closeTime).toISOString();
  if(event.action==="ENTER_LONG"||event.action==="ENTER_SHORT"){
@@ -245,8 +246,9 @@ function donchianNotification(symbol,event,state,previousPosition){
    "\n每單位風險："+p(risk)+"（"+riskPct.toFixed(3)+"%）"+
    "\n\n觸發條件：15m 收盤"+(long?"突破 20 期上軌 ":"跌破 20 期下軌 ")+p(long?event.upper:event.lower)+
    "\n移動平倉：15m 收盤"+(long?"跌破 10 期下軌":"突破 10 期上軌")+
+   "\nK線連結（請切換 15m）："+donchianChartUrl(symbol)+
    "\nK 線收盤："+closed+
-   "\n\n⚠️ 僅為策略提示，不會自動下單，與 Telegram 頻道訊號無關。";
+   "\n\n⚠️ 僅為策略提示；K線連結只供查看公開行情，不是 Demo 下單入口。系統不會自動下單，與 Telegram 頻道訊號無關。";
  }
  const long=previousPosition==="LONG",pnl=state.entryPrice?
   ((long?event.price-state.entryPrice:state.entryPrice-event.price)/state.entryPrice*100):null;
@@ -258,8 +260,9 @@ function donchianNotification(symbol,event,state,previousPosition){
   "\n原停損參考價："+p(state.stopLoss)+"\n原停利參考價："+p(state.takeProfit)+
   (pnl===null?"":"\n提示區間報酬："+(pnl>=0?"+":"")+pnl.toFixed(3)+"%")+
   "\n平倉原因："+reason+(Number.isFinite(event.triggerLevel)?"（觸發價 "+p(event.triggerLevel)+"）":"")+
+  "\nK線連結（請切換 15m）："+donchianChartUrl(symbol)+
   "\nK 線收盤："+closed+
-  "\n\n⚠️ 僅為策略提示，不會自動下單，與 Telegram 頻道訊號無關。";
+  "\n\n⚠️ 僅為策略提示；K線連結只供查看公開行情，不是 Demo 下單入口。系統不會自動下單，與 Telegram 頻道訊號無關。";
 }
 function applyDonchian(symbol,candles){
  if(!ALLOWED.has(symbol)||!candles.length)return null;
@@ -447,7 +450,7 @@ function safeStatus(){
   managedOpen:ledger.orders.filter(o=>!["CLOSED","CLOSED_UNFILLED"].includes(o.status)).length,
   donchian:{independentFromTelegramChannel:true,interval:DONCHIAN_INTERVAL,
    entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,takeProfitRiskReward:DONCHIAN_TAKE_PROFIT_R,
-   stopLoss:"signal-time 10-period opposite channel",symbols:DONCHIAN_SYMBOLS,
+   stopLoss:"signal-time 10-period opposite channel",chartUrlTemplate:"https://www.binance.com/en/futures/{symbol}",symbols:DONCHIAN_SYMBOLS,
    lastPoll:ledger.lastDonchianPoll,error:ledger.donchianError},
   limit:{notionalUsdt:INITIAL_NOTIONAL,maxOpen:MAX_OPEN,maxAccountRiskFraction:MAX_LOSS,netTpFraction:TP_NET}};
 }
@@ -935,6 +938,8 @@ function bdd(){
   if(!m.includes("幣別：BTC/USDT（BTCUSDT）")||!m.includes("建倉參考價：111")||!m.includes("停損參考價：90")||!m.includes("停利參考價：153")||!m.includes("2R"))throw Error("entry message");});
  check(103,"Donchian exit notification preserves original levels and exit reason",()=>{const state={entryPrice:111,stopLoss:90,takeProfit:153};const event=evaluateDonchian(donchianCandles(153),{position:"LONG",...state});const m=donchianNotification("BTCUSDT",event,state,"LONG");
   if(!m.includes("本次平倉參考價：153")||!m.includes("原停損參考價：90")||!m.includes("原停利參考價：153")||!m.includes("到達 2R 停利"))throw Error("exit message");});
+ check(104,"Donchian notifications include the matching pair K-line link",()=>{const x=evaluateDonchian(donchianCandles(111));const m=donchianNotification("ETHUSDT",x,{},"FLAT");
+  if(!m.includes("K線連結（請切換 15m）：https://www.binance.com/en/futures/ETHUSDT")||!m.includes("不是 Demo 下單入口"))throw Error("chart link");});
  return {mode:"SYNTHETIC_BDD",total:results.length,passed:results.filter(t=>t.pass).length,
   failed:results.filter(t=>!t.pass).length,results,at:now()};
 }
@@ -977,6 +982,7 @@ const app=Bun.serve({hostname:"0.0.0.0",port:Number(Bun.env.PORT||8080),async fe
  if(u.pathname==="/api/donchian")return response({strategy:{independentFromTelegramChannel:true,
    interval:DONCHIAN_INTERVAL,entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,
    takeProfitRiskReward:DONCHIAN_TAKE_PROFIT_R,stopLoss:"signal-time 10-period opposite channel",
+   chartUrlTemplate:"https://www.binance.com/en/futures/{symbol}",
    symbols:DONCHIAN_SYMBOLS,lastPoll:ledger.lastDonchianPoll,error:ledger.donchianError},states:ledger.donchian});
  if(u.pathname==="/api/orders")return response(ledger.orders);
  if(u.pathname==="/api/audit")return response(ledger.events.slice(-300));
