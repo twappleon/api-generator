@@ -1579,7 +1579,7 @@ function runBDDTests() {
   });
   test("BDD154",()=>{
     const x=mergeDonchianStats({realizedPnl:0,closedTrades:0},{schemaVersion:99},{error:"schema"});
-    assert(!x.donchianDemo.available&&page.includes("Donchian Demo 統計")&&page.includes("不同帳本"),"invalid integration state");
+    assert(!x.donchianDemo.available&&page.includes("Donchian Paper 統計")&&page.includes("Demo 下單停用"),"invalid integration state");
   });
   test("BDD155",()=>{const remote={schemaVersion:1,ledger:"BINANCE_DEMO_DONCHIAN",performance:{},paper:{openPositions:1,equity:9999},advisoryPositions:[{symbol:"SOLUSDT",status:"PAPER_OPEN"}]};
     const x=mergeDonchianStats({realizedPnl:0,closedTrades:0},remote,{error:null});assert(x.donchianDemo.paper.openPositions===1&&page.includes("Donchian Paper 模擬持倉明細"),"paper detail missing");});
@@ -1623,12 +1623,12 @@ const page = [
 "<div class='card'><label>總報酬率</label><div class='value' id='return'>—</div><div class='sub' id='realized'>已實現 —</div></div>",
 "<div class='card'><label>已平倉 / 勝率</label><div class='value' id='win'>—</div><div class='sub' id='pf'>盈虧因子 —</div></div>",
 "<div class='card'><label>最大回撤</label><div class='value' id='dd'>—</div><div class='sub' id='orders'>持倉與掛單 —</div></div>",
-"</div><div class='section'><h2>Donchian Demo 統計</h2><small>獨立 Demo 帳本，不改寫 Paper 資金曲線</small></div>",
+"</div><div class='section'><h2>Donchian Paper 統計</h2><small>策略先用 Paper 模擬；Demo 下單停用</small></div>",
 "<div class='cards'><div class='card'><label>Donchian 訊號</label><div class='value' id='dSignals'>—</div><div class='sub' id='dSignalSub'>建倉 / 平倉</div></div>",
 "<div class='card'><label>Donchian Paper 持倉 / 平倉</label><div class='value' id='dWin'>—</div><div class='sub' id='dPnl'>損益 —</div></div>",
 "<div class='card'><label>Donchian Paper 淨值</label><div class='value' id='combinedPnl'>—</div><div class='sub' id='combinedTrades'>期初 10,000 USDT</div></div>",
 "<div class='card'><label>Demo 實際已平倉</label><div class='value' id='dActual'>—</div><div class='sub'>Demo 下單仍停用</div></div></div>",
-"<div class='warning' id='dStatus'>Donchian Demo 與 Paper 是不同帳本，不代表同一資金曲線。</div>",
+"<div class='warning' id='dStatus'>Donchian 策略先使用獨立 Paper 子帳本；不會送出 Binance Demo 或正式訂單。</div>",
 "<div class='section'><h2>Donchian Paper 模擬持倉明細</h2><small>每筆名目 100 USDT；含手續費與模擬滑價</small></div>",
 "<div class='panel'><table><thead><tr><th>幣別</th><th>方向</th><th>狀態</th><th>建倉參考</th><th>現價</th><th>停損</th><th>停利</th><th>未實現損益</th><th>訊號時間</th><th>K線</th></tr></thead><tbody id='dPositions'><tr><td colspan='10'>尚無 Paper 持倉</td></tr></tbody></table></div>",
 "<div class='section'><h2>Paper 資金曲線</h2><small>每分鐘快照，僅代表 Paper 帳本觀察到的報價</small></div>",

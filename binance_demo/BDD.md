@@ -245,9 +245,15 @@ Feature: Donchian statistics in Paper Monitor
    When a stop, 2R target or moving-channel exit signal occurs
    Then close the Paper position with adverse exit slippage and both-side fees
    And include it in Donchian Paper realized PnL, closed trades and win rate
+
+ Scenario: Paper-first wording cannot be mistaken for an exchange order
+   Given a Donchian entry or exit signal
+   When its Telegram notice and Paper dashboard are rendered
+   Then label them `DONCHIAN PAPER`
+   And state that no Binance Demo or production order was sent
 ```
 
-Railway evidence (2026-11-04): Demo BDD 115/115 and Paper BDD 155/155 passed. The live Donchian Paper ledger held 3 positions, equity 9,995.44 USDT and unrealized PnL -4.56 USDT. SOL showed LONG 93.96, current 92.71, stop 86.46, target 108.96 and -1.45 USDT. No Demo order was created.
+Railway evidence (2026-11-04): Demo BDD 116/116 and Paper BDD 155/155 passed. The Paper-first dashboard and notification wording were verified; the live Donchian Paper ledger held 3 positions, equity 9,995.44 USDT and unrealized PnL -4.56 USDT. No Demo order was created.
 
 ## Integration pending (not passed)
 Demo API key signed auth, non-matching test-order POST, matched Donchian MARKET entry/exit, partial fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and realized net PnL, natural breakout-triggered execution, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. User approval for virtual-fund Donchian execution was granted on 2026-11-04, but credentials and signed dry-run evidence are still missing; keep `DEMO_DONCHIAN_ORDER_ENABLED=false` until those checks pass.

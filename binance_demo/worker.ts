@@ -86,6 +86,7 @@ function statsAuth(req){
 function response(obj,code=200){return Response.json(obj,{status:code,headers:{"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});}
 function tagDemoNotice(text){
  const body=String(text);
+ if(body.toUpperCase().includes("DONCHIAN PAPER"))return body;
  return body.toUpperCase().includes("BINANCE DEMO")?body:"BINANCE DEMO\n"+body;
 }
 function enqueue(id,text){
@@ -280,7 +281,7 @@ function donchianNotification(symbol,event,state,previousPosition){
  const p=donchianPrice,pair=donchianPair(symbol),closed=new Date(event.closeTime).toISOString();
  if(event.action==="ENTER_LONG"||event.action==="ENTER_SHORT"){
   const long=event.action==="ENTER_LONG",risk=Math.abs(event.price-event.stopLoss),riskPct=risk/event.price*100;
-  return "🚨 DONCHIAN "+(long?"多方建倉提示":"空方建倉提示")+
+  return "DONCHIAN PAPER\n🚨 "+(long?"多方建倉提示":"空方建倉提示")+
    "\n\n幣別："+pair+"（"+symbol+"）\n方向："+(long?"做多 LONG":"做空 SHORT")+
    "\n週期："+DONCHIAN_INTERVAL+"（已收盤 K 線）"+
    "\n\n建倉參考價："+p(event.price)+
@@ -291,12 +292,12 @@ function donchianNotification(symbol,event,state,previousPosition){
    "\n移動平倉：15m 收盤"+(long?"跌破 10 期下軌":"突破 10 期上軌")+
    "\nTradingView K線（15m）："+donchianChartUrl(symbol)+
    "\nK 線收盤："+closed+
-   "\n\n⚠️ 僅為策略提示；K線連結只供查看公開行情，不是 Demo 下單入口。系統不會自動下單，與 Telegram 頻道訊號無關。";
+   "\n\n✅ 已建立 Paper 模擬持倉；不會送出 Binance Demo 或正式交易訂單，與 Telegram 頻道訊號無關。";
  }
  const long=previousPosition==="LONG",pnl=state.entryPrice?
   ((long?event.price-state.entryPrice:state.entryPrice-event.price)/state.entryPrice*100):null;
  const reason={TAKE_PROFIT_2R:"到達 2R 停利",STOP_LOSS:"到達固定停損",CHANNEL_EXIT:"觸發 10 期移動通道平倉"}[event.reason]||event.reason;
- return "🔔 DONCHIAN "+(long?"多方平倉提示":"空方平倉提示")+
+ return "DONCHIAN PAPER\n🔔 "+(long?"多方平倉提示":"空方平倉提示")+
   "\n\n幣別："+pair+"（"+symbol+"）\n方向："+(long?"平多 EXIT LONG":"平空 EXIT SHORT")+
   "\n週期："+DONCHIAN_INTERVAL+"（已收盤 K 線）"+
   "\n\n原建倉參考價："+p(state.entryPrice)+"\n本次平倉參考價："+p(event.price)+
@@ -305,7 +306,7 @@ function donchianNotification(symbol,event,state,previousPosition){
   "\n平倉原因："+reason+(Number.isFinite(event.triggerLevel)?"（觸發價 "+p(event.triggerLevel)+"）":"")+
   "\nTradingView K線（15m）："+donchianChartUrl(symbol)+
   "\nK 線收盤："+closed+
-  "\n\n⚠️ 僅為策略提示；K線連結只供查看公開行情，不是 Demo 下單入口。系統不會自動下單，與 Telegram 頻道訊號無關。";
+  "\n\n✅ 已結算 Paper 模擬持倉；不會送出 Binance Demo 或正式交易訂單，與 Telegram 頻道訊號無關。";
 }
 function applyDonchian(symbol,candles){
  if(!ALLOWED.has(symbol)||!candles.length)return null;
@@ -1071,7 +1072,7 @@ function bdd(){
  check(103,"Donchian exit notification preserves original levels and exit reason",()=>{const state={entryPrice:111,stopLoss:90,takeProfit:153};const event=evaluateDonchian(donchianCandles(153),{position:"LONG",...state});const m=donchianNotification("BTCUSDT",event,state,"LONG");
   if(!m.includes("本次平倉參考價：153")||!m.includes("原停損參考價：90")||!m.includes("原停利參考價：153")||!m.includes("到達 2R 停利"))throw Error("exit message");});
  check(104,"Donchian notifications include the matching TradingView 15m K-line link",()=>{const x=evaluateDonchian(donchianCandles(111));const m=donchianNotification("ETHUSDT",x,{},"FLAT");
-  if(!m.includes("TradingView K線（15m）：https://www.tradingview.com/chart/?symbol=BINANCE%3AETHUSDT.P&interval=15")||!m.includes("不是 Demo 下單入口"))throw Error("chart link");});
+  if(!m.includes("TradingView K線（15m）：https://www.tradingview.com/chart/?symbol=BINANCE%3AETHUSDT.P&interval=15")||!m.includes("不會送出 Binance Demo 或正式交易訂單"))throw Error("chart link");});
  check(105,"Donchian execution candidate carries entry stop target and source",()=>{const event=evaluateDonchian(donchianCandles(111));const c=donchianExecutionCandidate("BTCUSDT",event,true);
   if(c.status!=="CANDIDATE"||c.sourceType!=="DONCHIAN"||c.side!=="long"||c.stop!==90||c.strategyTarget!==153||c.entryLow>=111||c.entryHigh<=111)throw Error("candidate");});
  check(106,"Disabled Donchian execution records a blocked intent",()=>{const event=evaluateDonchian(donchianCandles(89));const c=donchianExecutionCandidate("BTCUSDT",event,false);
@@ -1093,6 +1094,7 @@ function bdd(){
  check(114,"Open Donchian advisory exposes report levels and Paper position",()=>{ledger.donchian.SOLUSDT={position:"LONG",entryPrice:93.96,stopLoss:86.46,takeProfit:108.96,entryTime:now(),lastObservedClose:93.96};
   const s=donchianStats(),x=s.advisoryPositions[0];if(x.symbol!=="SOLUSDT"||x.entryPrice!==93.96||x.stopLoss!==86.46||x.takeProfit!==108.96||x.status!=="PAPER_OPEN"||s.paper.openPositions!==1)throw Error("paper detail");});
  check(115,"Donchian Paper closes and records fee-adjusted PnL",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:100};ledger.donchian.BTCUSDT=s;paperOpen("BTCUSDT",s);paperClose("BTCUSDT",{price:110,closeTime:Date.now(),reason:"TAKE_PROFIT_2R"});const x=ledger.donchianPaper[0];if(x.status!=="CLOSED"||x.netPnl>=x.grossPnl||paperReport().closedTrades!==1)throw Error("paper close");});
+ check(116,"Donchian notifications are Paper-labelled and never claim Demo execution",()=>{const x=evaluateDonchian(donchianCandles(111)),m=donchianNotification("SOLUSDT",x,{},"FLAT");if(!m.startsWith("DONCHIAN PAPER")||!m.includes("已建立 Paper 模擬持倉")||m.includes("BINANCE DEMO\n"))throw Error("paper label");});
  return {mode:"SYNTHETIC_BDD",total:results.length,passed:results.filter(t=>t.pass).length,
   failed:results.filter(t=>!t.pass).length,results,at:now()};
 }
