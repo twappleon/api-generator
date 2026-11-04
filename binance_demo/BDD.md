@@ -41,6 +41,19 @@ authenticated /api/donchian=200
 dashboard exposes source-scoped Donchian execution and closed-trade records
 ```
 
+Railway TradingView chart-link deployment on 2026-11-04:
+```
+deployment=562fdd5d-a982-450d-a1d1-ad7dba71511d status=SUCCESS
+BINANCE_DEMO_BDD {"passed":111,"failed":0,"total":111,"errors":[]}
+TradingView BTCUSDT perpetual 15m URL = 200
+DEMO_PUBLIC_CONNECTED {"host":"https://demo-fapi.binance.com","btcStatus":"TRADING","credentialsConfigured":false,"channelOrderEnabled":false,"donchianOrderEnabled":false}
+DONCHIAN_PUBLIC_CONNECTED {"host":"https://demo-fapi.binance.com","interval":"15m","symbols":["BTCUSDT","ETHUSDT","SOLUSDT","ZECUSDT"]}
+GET /healthz = 200 {"ok":true,"mode":"DEMO_ONLY","ready":true}
+deployed worker chars=79943; local worker chars=79943; exact match=true
+```
+
+Notifications now use `https://www.tradingview.com/chart/?symbol=BINANCE%3A{symbol}.P&interval=15` instead of the region-blocked Binance website. No Telegram test message or Demo exchange order was created for this deployment.
+
 Railway source-scoped Donchian Demo execution deployment on 2026-11-04:
 ```
 deployment=8e9e9f94-c36c-4d26-82fa-cb0abeffab17 status=SUCCESS
