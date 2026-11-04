@@ -1,7 +1,7 @@
 # BDD — Binance Demo Safety and Integration
 
 ## Executed
-104 isolated in-memory synthetic checks (local Bun 1.4.4; Railway startup fails on regression). The original lifecycle and Donchian scenarios remain, with added coverage for:
+111 isolated in-memory synthetic checks (local Bun 1.4.4; Railway startup fails on regression). The original lifecycle and Donchian scenarios remain, with added coverage for:
 
 - partial-fill remainder and canceled-partial state transitions;
 - active/terminal order classifiers, identity and overfill rejection;
@@ -17,16 +17,20 @@
 - strict 20-bar long/short entry breakouts and boundary/no-signal behavior;
 - strict 10-bar long/short exits and return to flat advisory state;
 - insufficient history refusal, first-observation baseline, closed-candle deduplication;
-- independence from channel candidates, exchange orders and the Telegram channel poller;
+- source separation from Telegram-channel candidates and the Telegram channel poller;
 - status metadata for interval, periods and explicit channel independence.
 - long/short signal-time 10-bar stop calculation and fixed 2R take-profit calculation;
 - fixed stop/take-profit exit reasons and trigger prices;
 - entry/exit messages explicitly containing pair, direction, entry, stop, target and exit reason.
 - matching pair-specific Binance Futures K-line URLs plus the view-only/non-ordering disclosure.
+- source-tagged Donchian entry candidates with stop, 2R target and bounded reference deviation;
+- an independent Donchian execution gate that cannot arm Telegram-channel candidates;
+- deterministic Donchian exit requests and disabled-intent recording;
+- weighted entry/exit prices and actual net PnL records after commission and funding.
 
 Local execution on 2026-11-04:
 ```
-BINANCE_DEMO_BDD {"passed":104,"failed":0,"total":104,"errors":[]}
+BINANCE_DEMO_BDD {"passed":111,"failed":0,"total":111,"errors":[]}
 ```
 
 Local HTTP route checks on 2026-11-04:
@@ -34,7 +38,7 @@ Local HTTP route checks on 2026-11-04:
 health=200
 unauthenticated /api/donchian=401
 authenticated /api/donchian=200
-dashboard contains independent/non-ordering Donchian disclosure
+dashboard exposes source-scoped Donchian execution and closed-trade records
 ```
 
 Railway pair-specific K-line-link deployment on 2026-11-04:
@@ -152,7 +156,34 @@ Feature: Independent Donchian timing alerts
    Given the public Telegram channel cannot be read
    When the service tick continues
    Then the Donchian public-kline poll still runs in its separate error boundary
+
+Feature: Donchian virtual-fund Demo execution
+ Scenario: Donchian execution is armed without arming the channel
+   Given DEMO_DONCHIAN_ORDER_ENABLED=true
+   And DEMO_ORDER_ENABLED=false
+   When a fresh Telegram-channel candidate and a Donchian candidate exist
+   Then only the Donchian candidate is eligible for Demo submission
+
+ Scenario: Donchian entry signal becomes a protected Demo intent
+   Given a closed 15-minute candle produces a Donchian entry signal
+   When the execution gate and all Demo safety checks are ready
+   Then create one source-tagged MARKET candidate with deterministic IDs
+   And retain the signal stop and 2R target
+   And require the existing exchange-side stop and reconciliation lifecycle
+
+ Scenario: Donchian exit closes the managed Demo position
+   Given a source-tagged Donchian Demo position is exchange-confirmed
+   When a Donchian exit signal is recorded
+   Then cancel any active entry remainder
+   And submit one deterministic reduceOnly MARKET close
+   And reconcile owned fills before reporting profit or loss
+
+ Scenario: Closed Demo trade record
+   Given owned entry and exit fills, USDT commission and funding rows
+   When settlement completes
+   Then `/api/trades` includes weighted entry and exit prices
+   And actual gross, commission, funding and net PnL
 ```
 
 ## Integration pending (not passed)
-Demo API key signed auth, non-matching test-order POST, matched MARKET/partial LIMIT fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and net-1% realized PnL, natural breakout-triggered Donchian alert delivery, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. Actual virtual-fund Demo orders require separate explicit user approval and `DEMO_ORDER_ENABLED=true`.
+Demo API key signed auth, non-matching test-order POST, matched Donchian MARKET entry/exit, partial fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and realized net PnL, natural breakout-triggered execution, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. User approval for virtual-fund Donchian execution was granted on 2026-11-04, but credentials and signed dry-run evidence are still missing; keep `DEMO_DONCHIAN_ORDER_ENABLED=false` until those checks pass.

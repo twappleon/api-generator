@@ -8,7 +8,9 @@ const CHANNEL = "https://t.me/s/KCryptoBTC168";
 const APP_PASSWORD = Bun.env.APP_PASSWORD || "";
 const KEY = Bun.env.BINANCE_DEMO_API_KEY || "";
 const SECRET = Bun.env.BINANCE_DEMO_API_SECRET || "";
-const EXECUTE = Bun.env.DEMO_ORDER_ENABLED === "true";
+const CHANNEL_EXECUTE = Bun.env.DEMO_ORDER_ENABLED === "true";
+const DONCHIAN_EXECUTE = Bun.env.DEMO_DONCHIAN_ORDER_ENABLED === "true";
+const EXECUTE = CHANNEL_EXECUTE || DONCHIAN_EXECUTE;
 const LOCAL_BDD_ONLY = Bun.env.LOCAL_BDD_ONLY === "true" && !EXECUTE;
 const TELEGRAM_TOKEN = Bun.env.TELEGRAM_BOT_TOKEN || "";
 const TELEGRAM_CHAT_ID = Bun.env.DEMO_TELEGRAM_CHAT_ID || "";
@@ -27,6 +29,7 @@ const DONCHIAN_INTERVAL="15m";
 const DONCHIAN_ENTRY_PERIOD=20;
 const DONCHIAN_EXIT_PERIOD=10;
 const DONCHIAN_TAKE_PROFIT_R=2;
+const DONCHIAN_ENTRY_MAX_DEVIATION=0.005;
 const DONCHIAN_SYMBOLS=[...ALLOWED];
 const SIGNED_PATHS = new Set(["/fapi/v1/order","/fapi/v1/order/test","/fapi/v1/account",
   "/fapi/v2/balance","/fapi/v3/positionRisk","/fapi/v1/positionSide/dual",
@@ -233,6 +236,22 @@ function donchianPrice(value){
 }
 function donchianPair(symbol){return symbol.endsWith("USDT")?symbol.slice(0,-4)+"/USDT":symbol;}
 function donchianChartUrl(symbol){return "https://www.binance.com/en/futures/"+encodeURIComponent(symbol);}
+function donchianExecutionCandidate(symbol,event,enabled=DONCHIAN_EXECUTE){
+ const long=event.action==="ENTER_LONG",reference=Number(event.price);
+ return {id:"DONCHIAN_"+symbol+"_"+event.closeTime,symbol,side:long?"long":"short",mode:"MARKET",
+  entryLow:reference*(1-DONCHIAN_ENTRY_MAX_DEVIATION),entryHigh:reference*(1+DONCHIAN_ENTRY_MAX_DEVIATION),
+  stop:Number(event.stopLoss),strategyTarget:Number(event.takeProfit),strategy:"DONCHIAN_20_10_2R",
+  sourceType:"DONCHIAN",sourceTime:new Date(event.closeTime).toISOString(),receivedAt:now(),
+  status:enabled?"CANDIDATE":"BLOCKED_DONCHIAN_EXECUTION_DISABLED",
+  url:donchianChartUrl(symbol),reason:enabled?"AWAITING_DEMO_RISK_CHECK":"DONCHIAN_EXECUTION_DISABLED"};
+}
+function donchianExitRequest(symbol,event,enabled=DONCHIAN_EXECUTE){return {
+ id:"DONCHIAN_EXIT_"+symbol+"_"+event.closeTime,symbol,side:event.action==="EXIT_LONG"?"long":"short",
+ action:event.action,reason:event.reason,referencePrice:event.price,triggerLevel:event.triggerLevel,
+ closeTime:event.closeTime,requestedAt:now(),status:enabled?"PENDING":"BLOCKED_DONCHIAN_EXECUTION_DISABLED"};}
+function executionAllowed(candidate,channelEnabled=CHANNEL_EXECUTE,donchianEnabled=DONCHIAN_EXECUTE){
+ return candidate?.sourceType==="DONCHIAN"?donchianEnabled:channelEnabled;
+}
 function donchianNotification(symbol,event,state,previousPosition){
  const p=donchianPrice,pair=donchianPair(symbol),closed=new Date(event.closeTime).toISOString();
  if(event.action==="ENTER_LONG"||event.action==="ENTER_SHORT"){
@@ -281,9 +300,13 @@ function applyDonchian(symbol,candles){
    state.position=event.action==="ENTER_LONG"?"LONG":"SHORT";
    state.entryPrice=event.price;state.entryTime=new Date(event.closeTime).toISOString();
    state.stopLoss=event.stopLoss;state.takeProfit=event.takeProfit;
+   const candidate=donchianExecutionCandidate(symbol,event);
+   if(!ledger.candidate.some(row=>row.id===candidate.id))ledger.candidate.push(candidate);
   }else{state.position="FLAT";state.exitPrice=event.price;state.exitTime=new Date(event.closeTime).toISOString();}
+  if(event.action.startsWith("EXIT"))state.executionExit=donchianExitRequest(symbol,event);
   state.lastAction={...event,at:now(),previousPosition};
-  log("DONCHIAN_SIGNAL",{symbol,action:event.action,price:event.price,closeTime:event.closeTime});
+  log("DONCHIAN_SIGNAL",{symbol,action:event.action,price:event.price,closeTime:event.closeTime,
+   demoExecutionEnabled:DONCHIAN_EXECUTE});
   enqueue("donchian:"+symbol+":"+event.closeTime+":"+event.action,
     donchianNotification(symbol,event,state,previousPosition));
   if(event.action.startsWith("EXIT")){state.entryPrice=null;state.entryTime=null;state.stopLoss=null;state.takeProfit=null;}
@@ -389,10 +412,24 @@ function actualSettlement(o,trades,fundingRows){
  const commission=owned.reduce((n,t)=>n+Number(t.commission||0),0);
  const gross=owned.reduce((n,t)=>n+Number(t.realizedPnl||0),0);
  const funding=fundingRows.reduce((n,t)=>n+Number(t.income||0),0);
+ const entryRows=owned.filter(t=>String(t.orderId)===entryId),exitRows=owned.filter(t=>exitIds.has(String(t.orderId)));
+ const weighted=rows=>{const qty=rows.reduce((n,t)=>n+Number(t.qty||0),0);
+  return qty>0?rows.reduce((n,t)=>n+Number(t.price||0)*Number(t.qty||0),0)/qty:null;};
  return {tradeCount:owned.length,entryTradeCount:owned.filter(t=>String(t.orderId)===entryId).length,
    exitTradeCount:owned.filter(t=>exitIds.has(String(t.orderId))).length,grossRealized:gross,commission,funding,
+   entryAvgPrice:weighted(entryRows),exitAvgPrice:weighted(exitRows),
+   entryQty:entryRows.reduce((n,t)=>n+Number(t.qty||0),0),exitQty:exitRows.reduce((n,t)=>n+Number(t.qty||0),0),
    net:gross-commission+funding,settledAt:now()};
 }
+function demoTradeRecords(){return ledger.orders.filter(o=>o.actualSettlement).map(o=>({
+ id:o.clientOrderId,sourceId:o.sourceId,sourceType:o.sourceType||"TELEGRAM_CHANNEL",strategy:o.strategy||null,
+ symbol:o.symbol,side:o.side,status:o.status,entryOrderId:o.orderId,
+ exitOrderId:o.tpOrderId||o.stopActualOrderId||null,entryPrice:o.actualSettlement.entryAvgPrice??o.avgPrice,
+ exitPrice:o.actualSettlement.exitAvgPrice??null,quantity:o.actualSettlement.exitQty||o.filledQty,
+ exitReason:o.strategyExitReason||o.exitReason||null,grossRealized:o.actualSettlement.grossRealized,
+ commission:o.actualSettlement.commission,funding:o.actualSettlement.funding,
+ netPnlUsdt:o.actualSettlement.net,settledAt:o.actualSettlement.settledAt
+ }));}
 function projectedNet(o,bid,ask,entryFee=0,funding=0){
  if(!o.avgPrice||!o.filledQty)return null;
  const closePrice=o.side==="long"?bid*(1-SLIP):ask*(1+SLIP);
@@ -438,6 +475,7 @@ async function demoSignedDiagnostics(placeTestOrder=false){
 function safeStatus(){
  return {service:"K Signal Demo Execution",mode:"BINANCE_USDM_DEMO_ONLY",endpoint:DEMO_HOST,
   demoKeyConfigured:!!KEY,demoSecretConfigured:!!SECRET,armed:EXECUTE,
+  channelOrderEnabled:CHANNEL_EXECUTE,donchianOrderEnabled:DONCHIAN_EXECUTE,
   halted:ledger.halted||!storageSafe,haltReason:ledger.haltReason,
   readyToPlace:EXECUTE&&!!KEY&&!!SECRET&&!ledger.halted&&storageSafe&&ledger.baseline,
   accountSource:"Binance Demo only",channel:"KCryptoBTC168",
@@ -451,6 +489,7 @@ function safeStatus(){
   donchian:{independentFromTelegramChannel:true,interval:DONCHIAN_INTERVAL,
    entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,takeProfitRiskReward:DONCHIAN_TAKE_PROFIT_R,
    stopLoss:"signal-time 10-period opposite channel",chartUrlTemplate:"https://www.binance.com/en/futures/{symbol}",symbols:DONCHIAN_SYMBOLS,
+   demoExecutionEnabled:DONCHIAN_EXECUTE,executionReady:DONCHIAN_EXECUTE&&!!KEY&&!!SECRET&&!ledger.halted&&storageSafe,
    lastPoll:ledger.lastDonchianPoll,error:ledger.donchianError},
   limit:{notionalUsdt:INITIAL_NOTIONAL,maxOpen:MAX_OPEN,maxAccountRiskFraction:MAX_LOSS,netTpFraction:TP_NET}};
 }
@@ -471,14 +510,14 @@ function captureCandidates(posts){
   log("CANDIDATE",{id:candidate.id,symbol:candidate.symbol,side:candidate.side});
   enqueue("candidate:"+candidate.id,"📡 Binance DEMO 候選訊號\n"+
      candidate.symbol+" "+candidate.side+"\n"+candidate.url+"\n狀態："+
-     (EXECUTE?"風控檢查中":"安全鎖定，不會下單"));
+     (CHANNEL_EXECUTE?"風控檢查中":"頻道執行鎖定，不會下單"));
  }
  ledger.lastChannelPoll=now();save();
 }
 function pendingCandidates(){return ledger.candidate.filter(c=>c.status==="CANDIDATE"&&
  Date.now()-Date.parse(c.receivedAt)<5*60*1000);}
 async function submitEntry(c){
- if(!EXECUTE||!KEY||!SECRET||ledger.halted||!storageSafe)return;
+ if(!executionAllowed(c)||!KEY||!SECRET||ledger.halted||!storageSafe)return;
  if(ledger.orders.some(o=>o.sourceId===c.id)||ledger.orders.some(o=>!["CLOSED","CLOSED_UNFILLED"].includes(o.status)))return;
  const mark=await publicGet("/fapi/v1/premiumIndex",{symbol:c.symbol});
  const px=Number(mark.markPrice);
@@ -501,6 +540,9 @@ async function submitEntry(c){
  await signed("POST","/fapi/v1/leverage",{symbol:c.symbol,leverage:1});
  const cid=idFor(c,"ENTRY");
  const o={sourceId:c.id,symbol:c.symbol,side:c.side,status:"SUBMIT_UNKNOWN",
+  sourceType:c.sourceType||"TELEGRAM_CHANNEL",strategy:c.strategy||null,
+  strategyEntryReference:c.sourceType==="DONCHIAN"?(c.entryLow+c.entryHigh)/2:null,
+  strategyTarget:c.strategyTarget??null,strategyExitReason:null,strategyExitReference:null,
   clientOrderId:cid,stopClientId:idFor(c,"STOP"),tpClientId:idFor(c,"TP"),
   qty:orderInfo.quantity,stop:orderInfo.stopPrice,signalTime:c.sourceTime,
   orderId:null,exchangeStatus:null,filledQty:0,avgPrice:0,stopConfirmed:false,
@@ -516,6 +558,7 @@ async function submitEntry(c){
      quantity:orderInfo.quantity,newClientOrderId:cid,newOrderRespType:"RESULT"});
    recordOrderStatus(o,remote);c.status="SUBMITTED";save();
    enqueue("entry:"+cid,"🟡 Binance DEMO 開倉下單\n"+c.symbol+
+     "\n來源："+(o.sourceType==="DONCHIAN"?"Donchian 20期突破":"Telegram 頻道候選")+
      "\nClient ID: "+cid+"\nOrder ID: "+String(o.orderId??"待對帳")+
      "\n交易所狀態："+o.exchangeStatus+"\n僅 Demo 測試資金");
  }catch(err){
@@ -611,9 +654,11 @@ async function queryTp(o){
   o.tpFilledQty=Number(r.executedQty||0);o.tpLastCheckedAt=now();o.lastError=null;save();return r;
  }catch(err){noteBackoff(err);o.lastError=String(err).slice(0,200);save();throw err;}
 }
-async function submitTp(o,qty,quote){
- if(o.tpIntentAt)return;
- o.tpIntentAt=now();o.status="TP_SUBMITTING";save();
+async function submitTp(o,qty,quote,exitReason="NET_TP_1PCT",exitReference=null){
+ if(o.tpIntentAt)return false;
+ o.tpIntentAt=now();o.status="TP_SUBMITTING";o.exitReason=exitReason;
+ if(exitReason.startsWith("DONCHIAN_")){o.strategyExitReason=exitReason;o.strategyExitReference=exitReference?.referencePrice??null;}
+ save();
  try{
   const remote=await signed("POST","/fapi/v1/order",{
    symbol:o.symbol,side:o.side==="long"?"SELL":"BUY",type:"MARKET",
@@ -623,14 +668,19 @@ async function submitTp(o,qty,quote){
     throw Error("Invalid DEMO TP submission response");
   o.tpOrderId=remote.orderId||null;o.tpStatus=remote.status;o.tpFilledQty=Number(remote.executedQty||0);
   o.status="TP_SENT";save();
-  enqueue("tp:"+o.clientOrderId,"🎯 Binance DEMO 預估扣費淨利達 1%\n"+o.symbol+
+  const title=exitReason.startsWith("DONCHIAN_")?"🔔 Binance DEMO Donchian 平倉執行":"🎯 Binance DEMO 預估扣費淨利達 1%";
+  enqueue("tp:"+o.clientOrderId,title+"\n"+o.symbol+
    "\nClient ID: "+o.tpClientId+"\nOrder ID: "+String(o.tpOrderId??"待對帳")+
-   "\n交易所狀態："+o.tpStatus+"\n預估比例 "+(quote.rate*100).toFixed(3)+
-   "%\n已提交 reduceOnly 平倉，等待實際成交對帳。");
+   "\n交易所狀態："+o.tpStatus+"\n平倉原因："+exitReason+
+   (quote?"\n預估扣費淨利比例 "+(quote.rate*100).toFixed(3)+"%":"")+
+   (exitReference?.referencePrice?"\nDonchian 平倉參考價："+donchianPrice(exitReference.referencePrice):"")+
+   "\n已提交 reduceOnly 平倉，等待實際成交對帳。");
+  return true;
  }catch(err){
   noteBackoff(err);o.status=err?.unknown?"TP_UNKNOWN":"TP_REJECTED";o.lastError=String(err);save();
   if(err?.unknown){try{await queryTp(o);}catch{}}
   halt("DEMO_TP_ORDER_UNCONFIRMED:"+o.symbol);
+  return false;
  }
 }
 async function cancelStopAfterClose(o){
@@ -656,6 +706,33 @@ async function settleClosed(o){
    "\nEntry Client ID: "+o.clientOrderId+"\nExit Order ID: "+String(o.tpOrderId||o.stopActualOrderId||"交易所紀錄")+
    "\n實際淨損益（成交損益－手續費＋Funding）："+settlement.net.toFixed(6)+" USDT"+
    "\n成交筆數："+settlement.tradeCount+"\n僅 Demo 測試資金");
+}
+async function processDonchianExitRequests(){
+ if(!DONCHIAN_EXECUTE||!KEY||!SECRET||ledger.halted||!storageSafe)return;
+ for(const [symbol,state] of Object.entries(ledger.donchian)){
+  const request=state.executionExit;
+  if(!request||request.status!=="PENDING")continue;
+  const o=ledger.orders.find(row=>row.sourceType==="DONCHIAN"&&row.symbol===symbol&&row.side===request.side&&
+   !["CLOSED","CLOSED_UNFILLED"].includes(row.status));
+  if(!o){request.status="NO_MANAGED_DONCHIAN_POSITION";request.completedAt=now();save();continue;}
+  if(o.tpIntentAt){request.status="EXIT_ALREADY_PENDING";request.completedAt=now();save();continue;}
+  if(o.filledQty<=0){
+   if(isOrderActive(o.exchangeStatus))await cancelEntryRemainder(o,"DONCHIAN_EXIT_BEFORE_FILL");
+   request.status="ENTRY_NOT_FILLED";request.completedAt=now();save();continue;
+  }
+  const positions=await signedQuery("/fapi/v3/positionRisk",{symbol});
+  const row=Array.isArray(positions)?positions.find(x=>x.positionSide==="BOTH"&&x.symbol===symbol):null;
+  const signedQty=Number(row?.positionAmt||0),qty=Math.abs(signedQty);
+  const expectedSign=o.side==="long"?1:-1;
+  if(qty<1e-10){request.status="POSITION_ALREADY_FLAT";request.completedAt=now();save();continue;}
+  if(Math.sign(signedQty)!==expectedSign){halt("DEMO_DONCHIAN_POSITION_SIDE_MISMATCH:"+symbol);continue;}
+  if(isOrderActive(o.exchangeStatus)&&!await cancelEntryRemainder(o,"DONCHIAN_SIGNAL_EXIT"))continue;
+  const top=await publicGet("/fapi/v1/ticker/bookTicker",{symbol});
+  const quote=projectedNet(o,Number(top.bidPrice),Number(top.askPrice),o.entryFee,o.funding);
+  const sent=await submitTp(o,qty,quote,"DONCHIAN_"+request.reason,request);
+  request.status=sent?"SUBMITTED":"FAILED";request.completedAt=now();save();
+  log("DONCHIAN_DEMO_EXIT",{symbol,requestId:request.id,clientOrderId:o.tpClientId,status:request.status});
+ }
 }
 async function reconcile(){
  if(!KEY||!SECRET||!storageSafe)return;
@@ -739,7 +816,8 @@ async function checkDemoPublic(){
  if(Date.now()-lastPublicLogAt > 600000){
     console.info("DEMO_PUBLIC_CONNECTED",JSON.stringify({host:DEMO_HOST,
      btcMarkPrice:Number(mark.markPrice),btcStatus:btc.status,
-     credentialsConfigured:!!KEY&&!!SECRET,orderEnabled:EXECUTE}));
+     credentialsConfigured:!!KEY&&!!SECRET,channelOrderEnabled:CHANNEL_EXECUTE,
+     donchianOrderEnabled:DONCHIAN_EXECUTE}));
     lastPublicLogAt=Date.now();
  }
  return {demo:true,time:tm,btcStatus:btc.status,btcMarkPrice:Number(mark.markPrice)};
@@ -758,9 +836,6 @@ async function tick(){
    await checkDemoPublic();
    if(KEY && SECRET){
      await reconcile();
-     if(EXECUTE&&!ledger.halted && storageSafe){
-       const c=pendingCandidates()[0];if(c)await submitEntry(c);
-     }
    }
  }catch(err){noteBackoff(err);ledger.demoError=String(err).slice(0,200);
    if(EXECUTE&&err?.auth)halt("DEMO_AUTHENTICATION_REJECTED");
@@ -768,6 +843,14 @@ async function tick(){
  try{await pollDonchian();}
  catch(err){ledger.donchianError=String(err).slice(0,200);
    console.error("DONCHIAN_ERROR",ledger.donchianError);}
+ try{
+  if(KEY&&SECRET&&!ledger.halted&&storageSafe){
+   await processDonchianExitRequests();
+   const c=pendingCandidates().find(executionAllowed);if(c)await submitEntry(c);
+  }
+ }catch(err){noteBackoff(err);ledger.demoError=String(err).slice(0,200);
+  if(EXECUTE&&err?.auth)halt("DEMO_AUTHENTICATION_REJECTED");
+  console.error("DEMO_EXECUTION_ERROR",ledger.demoError);}
  try{save();}catch{} finally{busy=false;}
 }
 async function flushNotifications(){
@@ -893,7 +976,7 @@ function bdd(){
   let b=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0.1);if(b.net<=a.net)throw Error("funding");});
  check(75,"Schema v3 contains durable reconciliation and Donchian fields",()=>{const x=blank();if(x.schema!==3||x.demoBackoffUntil!==0||!Array.isArray(x.orders)||!x.donchian)throw Error("schema");});
  check(76,"Test-order diagnostic pins One-Way position side",()=>{if(DIAGNOSTIC_POSITION_SIDE!=="BOTH")throw Error("position side");});
- check(77,"Execution stays false unless exact lowercase true",()=>{if(Bun.env.DEMO_ORDER_ENABLED!=="true"&&EXECUTE)throw Error("unsafe env parsing");});
+ check(77,"Execution stays false unless an exact lowercase scoped flag is true",()=>{if(Bun.env.DEMO_ORDER_ENABLED!=="true"&&Bun.env.DEMO_DONCHIAN_ORDER_ENABLED!=="true"&&EXECUTE)throw Error("unsafe env parsing");});
  check(78,"Local BDD path override can never coexist with execution",()=>{if(LOCAL_BDD_ONLY&&EXECUTE)throw Error("unsafe local mode");});
  check(79,"Persistence fault transitions service to durable fail-closed halt",()=>{const previous=storageSafe;
   try{markPersistenceFailure("synthetic disk readonly");if(storageSafe||!ledger.halted||ledger.haltReason!=="PERSISTENCE_FAILURE")throw Error("not halted");}
@@ -940,6 +1023,20 @@ function bdd(){
   if(!m.includes("本次平倉參考價：153")||!m.includes("原停損參考價：90")||!m.includes("原停利參考價：153")||!m.includes("到達 2R 停利"))throw Error("exit message");});
  check(104,"Donchian notifications include the matching pair K-line link",()=>{const x=evaluateDonchian(donchianCandles(111));const m=donchianNotification("ETHUSDT",x,{},"FLAT");
   if(!m.includes("K線連結（請切換 15m）：https://www.binance.com/en/futures/ETHUSDT")||!m.includes("不是 Demo 下單入口"))throw Error("chart link");});
+ check(105,"Donchian execution candidate carries entry stop target and source",()=>{const event=evaluateDonchian(donchianCandles(111));const c=donchianExecutionCandidate("BTCUSDT",event,true);
+  if(c.status!=="CANDIDATE"||c.sourceType!=="DONCHIAN"||c.side!=="long"||c.stop!==90||c.strategyTarget!==153||c.entryLow>=111||c.entryHigh<=111)throw Error("candidate");});
+ check(106,"Disabled Donchian execution records a blocked intent",()=>{const event=evaluateDonchian(donchianCandles(89));const c=donchianExecutionCandidate("BTCUSDT",event,false);
+  if(c.status!=="BLOCKED_DONCHIAN_EXECUTION_DISABLED"||c.reason!=="DONCHIAN_EXECUTION_DISABLED")throw Error("not blocked");});
+ check(107,"Donchian execution flag cannot arm Telegram channel candidates",()=>{if(executionAllowed({sourceType:"TELEGRAM_CHANNEL"},false,true)||!executionAllowed({sourceType:"DONCHIAN"},false,true))throw Error("scope leak");});
+ check(108,"Donchian exit creates a deterministic execution request",()=>{const event=evaluateDonchian(donchianCandles(153),{position:"LONG",stopLoss:90,takeProfit:153});const r=donchianExitRequest("BTCUSDT",event,true);
+  if(r.status!=="PENDING"||r.side!=="long"||r.reason!=="TAKE_PROFIT_2R"||!r.id.includes("BTCUSDT"))throw Error("exit request");});
+ check(109,"Actual Demo settlement records weighted entry exit and net PnL",()=>{const o={orderId:1,tpOrderId:2,clientOrderId:"KSDTEST",sourceId:"D1",sourceType:"DONCHIAN",strategy:"DONCHIAN_20_10_2R",symbol:"BTCUSDT",side:"long",status:"CLOSED",filledQty:1};
+  o.actualSettlement=actualSettlement(o,[{orderId:1,price:"100",qty:"1",realizedPnl:"0",commission:"0.04",commissionAsset:"USDT"},{orderId:2,price:"102",qty:"1",realizedPnl:"2",commission:"0.04",commissionAsset:"USDT"}],[]);ledger.orders=[o];const row=demoTradeRecords()[0];
+  if(row.entryPrice!==100||row.exitPrice!==102||Math.abs(row.netPnlUsdt-1.92)>1e-9||row.sourceType!=="DONCHIAN")throw Error("trade record");});
+ check(110,"Donchian entry persists execution intent without creating an order",()=>{applyDonchian("BTCUSDT",donchianCandles(100));applyDonchian("BTCUSDT",donchianCandles(111,21,1));
+  const c=ledger.candidate[0];if(c?.sourceType!=="DONCHIAN"||ledger.orders.length)throw Error("entry intent");});
+ check(111,"Donchian exit persists execution request and advisory returns flat",()=>{applyDonchian("BTCUSDT",donchianCandles(100));applyDonchian("BTCUSDT",donchianCandles(111,21,1));applyDonchian("BTCUSDT",donchianCandles(153,21,2));
+  const s=ledger.donchian.BTCUSDT;if(s.position!=="FLAT"||!s.executionExit||s.executionExit.action!=="EXIT_LONG")throw Error("exit intent");});
  return {mode:"SYNTHETIC_BDD",total:results.length,passed:results.filter(t=>t.pass).length,
   failed:results.filter(t=>!t.pass).length,results,at:now()};
 }
@@ -955,11 +1052,11 @@ const page='<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name
 '<section><h2>環境與風控</h2><pre id="status">載入中</pre></section>'+
 '<section><h2>候選交易訊號</h2><pre id="candidates">載入中</pre></section>'+
 '<section><h2>Donchian 獨立策略提示</h2><p>15 分鐘已收盤 K 線；20 期突破提示建倉。通知明列幣別、建倉價、訊號當下 10 期反向通道停損、2R 停利；持倉另以 10 期移動通道提示平倉。不讀取 Telegram 頻道，也不會自動下單。</p><pre id="donchian">載入中</pre></section>'+
-'<section><h2>Demo 交易與對帳</h2><pre id="orders">載入中</pre></section>'+
-'<section><a href="/api/bdd">執行 BDD 測試</a> · <a href="/api/donchian">Donchian 狀態</a> · <a href="/api/audit">審計事件</a> · <a href="https://t.me/KCryptoBTC168">原始頻道</a></section>'+
+'<section><h2>Demo 交易與對帳</h2><pre id="orders">載入中</pre></section><section><h2>已平倉損益紀錄</h2><pre id="trades">載入中</pre></section>'+
+'<section><a href="/api/bdd">執行 BDD 測試</a> · <a href="/api/donchian">Donchian 狀態</a> · <a href="/api/trades">已平倉損益</a> · <a href="/api/audit">審計事件</a> · <a href="https://t.me/KCryptoBTC168">原始頻道</a></section>'+
 '<p>所有交易必須使用 Demo API 專用金鑰，並在 Railway 環境變數手動設定 DEMO_ORDER_ENABLED=true。單筆名目上限 100 USDT、僅允許一個持倉。'+
 '首次同步歷史貼文只建立基線。正式 Paper Lab 的交易資料完全獨立。</p></main>'+
-'<script>async function f(){for(let [p,id] of [["/api/status","status"],["/api/candidates","candidates"],["/api/donchian","donchian"],["/api/orders","orders"]]){try{const r=await fetch(p);document.getElementById(id).textContent=JSON.stringify(await r.json(),null,2)}catch(e){document.getElementById(id).textContent=String(e)}}}f();setInterval(f,15000)</script></html>';
+'<script>async function f(){for(let [p,id] of [["/api/status","status"],["/api/candidates","candidates"],["/api/donchian","donchian"],["/api/orders","orders"],["/api/trades","trades"]]){try{const r=await fetch(p);document.getElementById(id).textContent=JSON.stringify(await r.json(),null,2)}catch(e){document.getElementById(id).textContent=String(e)}}}f();setInterval(f,15000)</script></html>';
 const app=Bun.serve({hostname:"0.0.0.0",port:Number(Bun.env.PORT||8080),async fetch(req){
  const u=new URL(req.url);
  if(u.pathname==="/healthz")return response({ok:true,mode:"DEMO_ONLY",ready:!ledger.halted&&storageSafe});
@@ -983,8 +1080,10 @@ const app=Bun.serve({hostname:"0.0.0.0",port:Number(Bun.env.PORT||8080),async fe
    interval:DONCHIAN_INTERVAL,entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,
    takeProfitRiskReward:DONCHIAN_TAKE_PROFIT_R,stopLoss:"signal-time 10-period opposite channel",
    chartUrlTemplate:"https://www.binance.com/en/futures/{symbol}",
+   demoExecutionEnabled:DONCHIAN_EXECUTE,executionReady:DONCHIAN_EXECUTE&&!!KEY&&!!SECRET&&!ledger.halted&&storageSafe,
    symbols:DONCHIAN_SYMBOLS,lastPoll:ledger.lastDonchianPoll,error:ledger.donchianError},states:ledger.donchian});
  if(u.pathname==="/api/orders")return response(ledger.orders);
+ if(u.pathname==="/api/trades")return response(demoTradeRecords());
  if(u.pathname==="/api/audit")return response(ledger.events.slice(-300));
  if(u.pathname==="/api/bdd")return response(bdd());
  return response({error:"Not found"},404);
