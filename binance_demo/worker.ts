@@ -188,6 +188,39 @@ function projectedNet(o,bid,ask,entryFee=0,funding=0){
  return {gross,feeEntry:entryFee,feeExitEstimated:exitFee,funding,
   net:gross-entryFee-exitFee+funding,rate:(gross-entryFee-exitFee+funding)/(o.avgPrice*o.filledQty)};
 }
+
+// Signed diagnostics intentionally safe even while execution flag is OFF.
+// The order/test endpoint validates signatures and parameters but does NOT match a real Demo order.
+async function demoSignedDiagnostics(placeTestOrder=false){
+ if(!KEY||!SECRET)throw Error("Binance Demo API Key/Secret not configured");
+ await serverTime();
+ const mode=await signedQuery("/fapi/v1/positionSide/dual");
+ const balances=await signedQuery("/fapi/v2/balance");
+ const balance=balances.find(x=>x.asset==="USDT");
+ if(!balance)throw Error("Demo USDT wallet not found");
+ let answer={environment:"BINANCE_DEMO_ONLY",signedAuthentication:true,
+   testOrderRequested:placeTestOrder,orderCreated:false,
+   oneWay:mode.dualSidePosition===false,
+   demoUsdtAvailable:Number(balance.availableBalance||0)};
+ if(!placeTestOrder)return answer;
+ if(mode.dualSidePosition!==false)throw Error("Enable One-Way position mode in Binance Demo first");
+ const ticker=await publicGet("/fapi/v1/premiumIndex",{symbol:"SOLUSDT"});
+ const price=Number(ticker.markPrice);
+ if(!Number.isFinite(price)||price<=0)throw Error("Bad DEMO mark price");
+ const info=exchangeInfoCache||await publicGet("/fapi/v1/exchangeInfo");
+ const specs=info.symbols?.find(x=>x.symbol==="SOLUSDT");
+ if(!specs)throw Error("Missing SOLUSDT Demo exchangeInfo");
+ const candidate={side:"long",stop:price*0.95};
+ const risk=riskParams(candidate,price,"SOLUSDT",balance,specs);
+ const testResponse=await signed("POST","/fapi/v1/order/test",{
+  symbol:"SOLUSDT",side:"BUY",type:"MARKET",quantity:risk.quantity
+ });
+ log("DEMO_TEST_ORDER_VALIDATED",{symbol:"SOLUSDT",qty:risk.quantity,api:"/fapi/v1/order/test"});
+ save();
+ return {...answer,valid:true,symbol:"SOLUSDT",quantity:risk.quantity,
+  testEndpointReturned:testResponse,orderCreated:false};
+}
+
 function safeStatus(){
  return {service:"K Signal Demo Execution",mode:"BINANCE_USDM_DEMO_ONLY",endpoint:DEMO_HOST,
   demoKeyConfigured:!!KEY,demoSecretConfigured:!!SECRET,armed:EXECUTE,
@@ -465,6 +498,9 @@ function bdd(){
  check(42,"MARKET signal retains market mode",()=>{const x=parseSignal(base);if(x?.mode!=="MARKET")throw Error("market mode missing");});
  check(43,"Public endpoint pinned to Demo",()=>{if(!DEMO_HOST.startsWith("https://demo-fapi."))throw Error("bad domain");});
  check(44,"User-facing status remains locked absent key",()=>{if(!KEY&&!SECRET&&safeStatus().readyToPlace)throw Error("armed without key");});
+ check(45,"Signed Demo test path allowlisted",()=>{const allow=["/fapi/v1/order/test","/fapi/v1/order"];if(allow[0]==="/fapi/v1/order")throw Error("wrong test path");});
+ check(46,"Diagnostic must use Demo-only order-test endpoint",()=>{if(!demoSignedDiagnostics.toString().includes("/fapi/v1/order/test"))throw Error("test path absent");});
+ check(47,"Demo TEST ORDER endpoint remains separate from actual matching engine",()=>{if(!"/fapi/v1/order/test".endsWith("/order/test")||DEMO_HOST!=="https://demo-fapi.binance.com")throw Error("unsafe");});
  return {mode:"SYNTHETIC_BDD",total:results.length,passed:results.filter(t=>t.pass).length,
   failed:results.filter(t=>!t.pass).length,results,at:now()};
 }
@@ -488,6 +524,17 @@ const app=Bun.serve({hostname:"0.0.0.0",port:Number(Bun.env.PORT||8080),async fe
  const u=new URL(req.url);
  if(u.pathname==="/healthz")return response({ok:true,mode:"DEMO_ONLY",ready:!ledger.halted&&storageSafe});
  if(!auth(req))return new Response("Login required",{status:401,headers:{"WWW-Authenticate":'Basic realm="K Signal DEMO"',"Cache-Control":"no-store"}});
+ if(u.pathname==="/api/demo/credentials" && req.method==="GET"){
+   if(!KEY||!SECRET)return response({valid:false,blocked:true,reason:"Configure DEMO credentials in Railway"},428);
+   try{return response(await demoSignedDiagnostics(false));}
+   catch(err){return response({valid:false,error:String(err)},502);}
+ }
+ if(u.pathname==="/api/demo/order-test" && req.method==="POST"){
+   if(req.headers.get("x-demo-confirm")!=="DEMO_ONLY_TEST")return response({error:"Missing X-Demo-Confirm: DEMO_ONLY_TEST"},400);
+   if(!KEY||!SECRET)return response({valid:false,blocked:true,reason:"DEMO credentials missing"},428);
+   try{return response(await demoSignedDiagnostics(true));}
+   catch(err){return response({valid:false,error:String(err)},502);}
+ }
  if(req.method!=="GET")return response({error:"Read-only dashboard; execution is environment-gated"},405);
  if(u.pathname==="/")return new Response(page,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"}});
  if(u.pathname==="/api/status")return response(safeStatus());
