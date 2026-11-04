@@ -45,7 +45,7 @@ GET /healthz = 200 {"ok":true,"mode":"DEMO_ONLY","ready":true}
 deployed worker bytes=64675; local worker bytes=64675; exact match=true
 ```
 
-The first live poll established a baseline for all four symbols and intentionally emitted no stale Donchian alert. No outbound alert was naturally triggered during the bounded deployment check, so actual outbound Donchian delivery remains unverified. No matched Demo order was created.
+The first live poll established a baseline for all four symbols and intentionally emitted no stale Donchian alert. On 2026-11-04 an explicit one-time test first rejected the obsolete `@twappleon` target because the configured chat resolved to a different username. After user confirmation, the bot verified the configured recipient as `@twjavaleon` and sent a clearly labeled non-signal Donchian test message. Railway recorded `DEMO_TELEGRAM_SENT` and `status=SENT`, `attempts=0`; Telegram Desktop visibly displayed the same message. The one-time harness was removed immediately. Restored deployment `564c8b41-a8b0-406f-a0c6-3543ceb36e73` passed 97/97, health returned 200, and deployed source again exactly matched git. Natural breakout-triggered delivery remains unobserved. No matched Demo order was created.
 
 Railway v1.1 deployment on 2026-11-04:
 ```
