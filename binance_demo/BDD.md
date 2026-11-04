@@ -22,7 +22,7 @@
 - long/short signal-time 10-bar stop calculation and fixed 2R take-profit calculation;
 - fixed stop/take-profit exit reasons and trigger prices;
 - entry/exit messages explicitly containing pair, direction, entry, stop, target and exit reason.
-- matching pair-specific Binance Futures K-line URLs plus the view-only/non-ordering disclosure.
+- matching pair-specific TradingView perpetual-contract 15m URLs plus the view-only/non-ordering disclosure.
 - source-tagged Donchian entry candidates with stop, 2R target and bounded reference deviation;
 - an independent Donchian execution gate that cannot arm Telegram-channel candidates;
 - deterministic Donchian exit requests and disabled-intent recording;
@@ -158,11 +158,11 @@ Feature: Independent Donchian timing alerts
    When a closed candle reaches its stop loss or 2R take profit
    Then send an exit alert with the original levels, exit price and exact reason
 
- Scenario: Signal includes its chart
+ Scenario: Signal includes its accessible chart
    Given a Donchian entry or exit signal for ETHUSDT
    When the notification is rendered
-   Then it includes https://www.binance.com/en/futures/ETHUSDT
-   And tells the user to select 15m
+   Then it includes https://www.tradingview.com/chart/?symbol=BINANCE%3AETHUSDT.P&interval=15
+   And opens the perpetual-contract chart at 15m
    And states that the link is view-only and not a Demo order entry point
 
  Scenario: Telegram channel polling fails
