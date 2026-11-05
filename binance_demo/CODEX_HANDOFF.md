@@ -39,6 +39,8 @@ Reporting separation rule: the dashboard must keep `Telegram 訊號 Paper 帳本
 
 Telegram chart rule: every Telegram Paper trade row must expose a read-only pair-specific TradingView perpetual-contract link at 15m. This reporting link must not change order state, PnL or either Demo execution gate.
 
+Telegram pagination rule: the dashboard shows Telegram Paper trade history at 10 rows per page inside the existing latest-100 UI window, with bounded previous/next controls and page status. Pagination is client-side presentation only and must not truncate persistent data or CSV export.
+
 Closed-history rule: a Donchian Paper position leaving the open table must remain durable in `donchianPaper` and appear in the sanitized latest-100 `Donchian Paper 平倉紀錄` table. Include simulated entry/exit, exit reason, fees, net PnL and close time; exclude internal IDs, credentials and exchange-order identities.
 
 Price-reporting rule: strategy signals use closed candles only for the applicable Legacy 15m or active 1h interval. Open Donchian Paper rows and unrealized PnL must use Binance Demo public mark prices with an observation timestamp, labelled `即時標記價`; never label a closed-candle value as current price.
@@ -54,6 +56,8 @@ Replacement-strategy rule: new entries use `DONCHIAN_1H_20_10_EMA200_ATR14_2X_2R
 **Codex v1.9 replacement strategy:** new entries now use `DONCHIAN_1H_20_10_EMA200_ATR14_2X_2R`; all 11 completed Legacy 15m records remain auditable and no Legacy position was open at the live cutover. Demo deployment `95f58e85-3866-4c43-b9fc-c2bbc122e58c` passed 122/122 and Paper deployment `3fee43ee-3846-416d-b7fd-8326c81708bb` passed 159/159. The initial Paper deployment `dbaa39b9-cd39-4b3c-b661-48fe65aefbf3` failed 157/159 because two UI BDD assertions still expected the old Donchian heading; the assertions were corrected and the next deployment succeeded. Demo and Paper deployed source hashes matched their checked-in workers exactly, with no staged Railway changes. Runtime kept credentials unconfigured and both order gates false; actual Demo orders remained 0. Screenshot: `artifacts/donchian-1h-ema-atr-replacement-20261105.png`.
 
 **Codex v2.0 Telegram Paper chart links:** every Telegram Paper record now has a pair-specific TradingView perpetual `15m K線` link. Paper deployment `964d637d-b95e-4f6a-b512-4f43309199fd` passed 160/160; health passed, deployed source matched git and no staged changes remained. Live UI verified BTCUSDT pending and SOLUSDT closed links. This was reporting-only: Paper state and both Demo gates were unchanged. Screenshot: `artifacts/telegram-paper-chart-links-20261105.png`.
+
+**Codex v2.1 Telegram Paper pagination:** the Telegram Paper record table now shows 10 rows per page with bounded previous/next controls and current/total page text. Paper deployment `2bbbd04b-ac69-4235-8a77-bd9c49075020` passed 161/161; health passed and deployed source matched git exactly. Live UI displayed `第 1 / 1 頁 · 每頁 10 筆`, with both controls disabled for the current two-row dataset. Persistent ledger and CSV were not truncated. Screenshot: `artifacts/telegram-paper-pagination-20261105.png`.
 
 ## 3. Immediate Codex tasks (P0)
 1. **Review architecture and safety:** keep production and Demo host entirely segregated. Ensure no path or config can direct signed orders to production. Prefer source-controlled modular implementation and automated tests over monolithic inline Function, but preserve deployment compatibility.

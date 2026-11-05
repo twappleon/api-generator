@@ -288,6 +288,15 @@ Feature: Telegram Paper report chart access
    Then show a `K線` column
    And link that symbol to its TradingView perpetual-contract chart at 15m
    But do not change the trade state or submit any order
+
+Feature: Telegram Paper record pagination
+ Scenario: Trade history is paged in groups of ten
+   Given Telegram Paper has more than 10 trade records
+   When Paper Monitor renders the trade history
+   Then show exactly 10 records per page
+   And provide previous and next controls with the current and total page number
+   And disable navigation beyond the first or last page
+   But retain at most the existing latest 100 displayed records
 ```
 
 Railway evidence (2026-11-04): Demo BDD 116/116 and Paper BDD 155/155 passed. The Paper-first dashboard and notification wording were verified; the live Donchian Paper ledger held 3 positions, equity 9,995.44 USDT and unrealized PnL -4.56 USDT. No Demo order was created.
@@ -301,6 +310,8 @@ Live-mark evidence (2026-11-04): Demo deployment `4c8bc804-d73b-46f0-87ea-da0c25
 Replacement-strategy evidence (2026-11-05): Demo deployment `95f58e85-3866-4c43-b9fc-c2bbc122e58c` passed 122/122 and Paper deployment `3fee43ee-3846-416d-b7fd-8326c81708bb` passed 159/159. Live runtime identified BTC/ETH/SOL/ZEC as flat and baselined on closed 1h candles, so it did not backfill stale entries. The Paper page displayed the filtered 1h rules, independent account B, and 11 durable closed records labelled `Legacy 15m`. Initial Paper deployment `dbaa39b9-cd39-4b3c-b661-48fe65aefbf3` failed 157/159 because BDD154 and BDD156 still expected the old heading; the checks were corrected and the next rollout passed. Both deployed sources matched git exactly; both Demo gates remained false and no Demo order was placed.
 
 Telegram-chart evidence (2026-11-05): Paper deployment `964d637d-b95e-4f6a-b512-4f43309199fd` passed 160/160. Live UI rendered a `K線` column with BTCUSDT and SOLUSDT TradingView perpetual links at 15m for pending and closed rows respectively. Health returned 200, deployed source matched git exactly, and no staged change or trade-state mutation occurred.
+
+Telegram-pagination evidence (2026-11-05): Paper deployment `2bbbd04b-ac69-4235-8a77-bd9c49075020` passed 161/161. Live UI rendered `上一頁`, `第 1 / 1 頁 · 每頁 10 筆` and `下一頁`; both controls were disabled because only two records currently exist. Health returned 200, deployed source matched git exactly, and the persistent ledger plus CSV export remained unchanged.
 
 ## Integration pending (not passed)
 Demo API key signed auth, non-matching test-order POST, matched Donchian MARKET entry/exit, partial fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and realized net PnL, natural breakout-triggered execution, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. User approval for virtual-fund Donchian execution was granted on 2026-11-04, but credentials and signed dry-run evidence are still missing; keep `DEMO_DONCHIAN_ORDER_ENABLED=false` until those checks pass.
