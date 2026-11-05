@@ -26,10 +26,16 @@ const SLIP=0.0002;
 const LIMIT_TTL=24*60*60*1000;
 const RECONCILE_NOT_FOUND_LIMIT=3;
 const ALLOWED = new Set(["BTCUSDT","ETHUSDT","SOLUSDT","ZECUSDT"]);
+const LEGACY_DONCHIAN_STRATEGY="DONCHIAN_15M_20_10_2R";
+const ACTIVE_DONCHIAN_STRATEGY="DONCHIAN_1H_20_10_EMA200_ATR14_2X_2R";
 const DONCHIAN_INTERVAL="15m";
 const DONCHIAN_ENTRY_PERIOD=20;
 const DONCHIAN_EXIT_PERIOD=10;
 const DONCHIAN_TAKE_PROFIT_R=2;
+const ACTIVE_DONCHIAN_INTERVAL="1h";
+const ACTIVE_DONCHIAN_EMA_PERIOD=200;
+const ACTIVE_DONCHIAN_ATR_PERIOD=14;
+const ACTIVE_DONCHIAN_ATR_MULTIPLIER=2;
 const DONCHIAN_ENTRY_MAX_DEVIATION=0.005;
 const DONCHIAN_SYMBOLS=[...ALLOWED];
 const SIGNED_PATHS = new Set(["/fapi/v1/order","/fapi/v1/order/test","/fapi/v1/account",
@@ -51,6 +57,16 @@ if(existsSync(PATH)){
  ledger={...blank(),...loaded,schema:4,
    donchian:loaded.donchian&&typeof loaded.donchian==="object"?loaded.donchian:{}};
 }
+for(const [symbol,state] of Object.entries(ledger.donchian)){
+ if(state?.position&&state.position!=="FLAT"){
+  state.strategyVersion||=LEGACY_DONCHIAN_STRATEGY;state.interval||=DONCHIAN_INTERVAL;
+ }else if(state){
+  state.strategyVersion=ACTIVE_DONCHIAN_STRATEGY;state.interval=ACTIVE_DONCHIAN_INTERVAL;state.lastCandleCloseTime=null;
+ }
+ const openPaper=ledger.donchianPaper.findLast?.(x=>x.symbol===symbol&&x.status==="OPEN");
+ if(openPaper){openPaper.strategyVersion||=state.strategyVersion;openPaper.interval||=state.interval;}
+}
+for(const row of ledger.donchianPaper){row.strategyVersion||=LEGACY_DONCHIAN_STRATEGY;row.interval||=DONCHIAN_INTERVAL;}
 let storageSafe=true, synthetic=false;
 function markPersistenceFailure(error){
  storageSafe=false;ledger.halted=true;ledger.haltReason="PERSISTENCE_FAILURE";
@@ -237,16 +253,53 @@ function evaluateDonchian(candles,positionOrState="FLAT"){
  if(position==="SHORT"&&current.close>upper)return {action:"EXIT_SHORT",upper,lower,price:current.close,reason:"CHANNEL_EXIT",triggerLevel:upper,closeTime:current.closeTime};
  return null;
 }
+function emaSeries(values,period){
+ if(values.length<period+1)return null;
+ const k=2/(period+1);let ema=values.slice(0,period).reduce((a,b)=>a+b,0)/period,previous=ema;
+ for(let i=period;i<values.length;i++){previous=ema;ema=values[i]*k+ema*(1-k);}
+ return {current:ema,previous};
+}
+function atrValue(candles,period){
+ if(candles.length<period+1)return null;
+ const rows=candles.slice(-(period+1));let total=0;
+ for(let i=1;i<rows.length;i++)total+=Math.max(rows[i].high-rows[i].low,Math.abs(rows[i].high-rows[i-1].close),Math.abs(rows[i].low-rows[i-1].close));
+ return total/period;
+}
+function evaluateFilteredDonchian(candles,positionOrState="FLAT"){
+ const current=candles.at(-1),advisory=typeof positionOrState==="string"?{position:positionOrState}:positionOrState;
+ if(!current)return null;
+ const position=advisory?.position||"FLAT",required=Math.max(ACTIVE_DONCHIAN_EMA_PERIOD+1,DONCHIAN_ENTRY_PERIOD+1,ACTIVE_DONCHIAN_ATR_PERIOD+1);
+ if(candles.length<required)return null;
+ const ema=emaSeries(candles.map(x=>x.close),ACTIVE_DONCHIAN_EMA_PERIOD),atr=atrValue(candles,ACTIVE_DONCHIAN_ATR_PERIOD);
+ if(!ema||!Number.isFinite(atr)||atr<=0)return null;
+ const period=position==="FLAT"?DONCHIAN_ENTRY_PERIOD:DONCHIAN_EXIT_PERIOD;
+ const prior=candles.slice(-(period+1),-1),upper=Math.max(...prior.map(x=>x.high)),lower=Math.min(...prior.map(x=>x.low));
+ const common={upper,lower,price:current.close,closeTime:current.closeTime,ema200:ema.current,atr14:atr,
+  interval:ACTIVE_DONCHIAN_INTERVAL,strategyVersion:ACTIVE_DONCHIAN_STRATEGY};
+ if(position==="FLAT"){
+  const risk=atr*ACTIVE_DONCHIAN_ATR_MULTIPLIER;
+  if(current.close>upper&&current.close>ema.current)return {...common,action:"ENTER_LONG",stopLoss:current.close-risk,takeProfit:current.close+DONCHIAN_TAKE_PROFIT_R*risk,riskReward:DONCHIAN_TAKE_PROFIT_R,reason:"ENTRY_BREAKOUT_EMA_FILTERED"};
+  if(current.close<lower&&current.close<ema.current)return {...common,action:"ENTER_SHORT",stopLoss:current.close+risk,takeProfit:current.close-DONCHIAN_TAKE_PROFIT_R*risk,riskReward:DONCHIAN_TAKE_PROFIT_R,reason:"ENTRY_BREAKOUT_EMA_FILTERED"};
+ }
+ if(position==="LONG"&&Number.isFinite(advisory.takeProfit)&&current.close>=advisory.takeProfit)return {...common,action:"EXIT_LONG",reason:"TAKE_PROFIT_2R",triggerLevel:advisory.takeProfit};
+ if(position==="LONG"&&Number.isFinite(advisory.stopLoss)&&current.close<=advisory.stopLoss)return {...common,action:"EXIT_LONG",reason:"STOP_LOSS",triggerLevel:advisory.stopLoss};
+ if(position==="SHORT"&&Number.isFinite(advisory.takeProfit)&&current.close<=advisory.takeProfit)return {...common,action:"EXIT_SHORT",reason:"TAKE_PROFIT_2R",triggerLevel:advisory.takeProfit};
+ if(position==="SHORT"&&Number.isFinite(advisory.stopLoss)&&current.close>=advisory.stopLoss)return {...common,action:"EXIT_SHORT",reason:"STOP_LOSS",triggerLevel:advisory.stopLoss};
+ if(position==="LONG"&&current.close<lower)return {...common,action:"EXIT_LONG",reason:"CHANNEL_EXIT",triggerLevel:lower};
+ if(position==="SHORT"&&current.close>upper)return {...common,action:"EXIT_SHORT",reason:"CHANNEL_EXIT",triggerLevel:upper};
+ return null;
+}
 function donchianPrice(value){
  if(value===null||value===undefined||!Number.isFinite(Number(value)))return "未設定";
  return Number(value).toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:8});
 }
 function donchianPair(symbol){return symbol.endsWith("USDT")?symbol.slice(0,-4)+"/USDT":symbol;}
-function donchianChartUrl(symbol){return "https://www.tradingview.com/chart/?symbol=BINANCE%3A"+encodeURIComponent(symbol)+".P&interval=15";}
+function donchianChartUrl(symbol,interval=DONCHIAN_INTERVAL){return "https://www.tradingview.com/chart/?symbol=BINANCE%3A"+encodeURIComponent(symbol)+".P&interval="+(interval==="1h"?"60":"15");}
 function paperOpen(symbol,s){
  const id=symbol+":"+s.entryTime;if(ledger.donchianPaper.some(x=>x.id===id))return;
  const long=s.position==="LONG",fill=s.entryPrice*(long?1+SLIP:1-SLIP),qty=100/fill;
  ledger.donchianPaper.push({id,symbol,side:s.position,status:"OPEN",referenceEntry:s.entryPrice,entryPrice:fill,qty,
+  strategyVersion:s.strategyVersion||LEGACY_DONCHIAN_STRATEGY,interval:s.interval||DONCHIAN_INTERVAL,
   stopLoss:s.stopLoss,takeProfit:s.takeProfit,entryTime:s.entryTime,feeEntry:fill*qty*FEE_FALLBACK,feeExit:0,grossPnl:0,netPnl:0,exitPrice:null,exitTime:null,exitReason:null});
  if(!synthetic)save();
 }
@@ -263,19 +316,19 @@ function paperReport(){
 }
 function paperClosedRecords(){
  return ledger.donchianPaper.filter(x=>x.status==="CLOSED").slice(-100).reverse().map(x=>({
-  symbol:x.symbol,side:x.side,referenceEntry:x.referenceEntry,entryPrice:x.entryPrice,exitPrice:x.exitPrice,
+  symbol:x.symbol,side:x.side,strategyVersion:x.strategyVersion,interval:x.interval,referenceEntry:x.referenceEntry,entryPrice:x.entryPrice,exitPrice:x.exitPrice,
   stopLoss:x.stopLoss,takeProfit:x.takeProfit,entryTime:x.entryTime,exitTime:x.exitTime,exitReason:x.exitReason,
   grossPnl:x.grossPnl,fees:Number(x.feeEntry||0)+Number(x.feeExit||0),netPnl:x.netPnl,
-  chartUrl:donchianChartUrl(x.symbol),status:"PAPER_CLOSED"}));
+  chartUrl:donchianChartUrl(x.symbol,x.interval),status:"PAPER_CLOSED"}));
 }
 function donchianExecutionCandidate(symbol,event,enabled=DONCHIAN_EXECUTE){
  const long=event.action==="ENTER_LONG",reference=Number(event.price);
  return {id:"DONCHIAN_"+symbol+"_"+event.closeTime,symbol,side:long?"long":"short",mode:"MARKET",
   entryLow:reference*(1-DONCHIAN_ENTRY_MAX_DEVIATION),entryHigh:reference*(1+DONCHIAN_ENTRY_MAX_DEVIATION),
-  stop:Number(event.stopLoss),strategyTarget:Number(event.takeProfit),strategy:"DONCHIAN_20_10_2R",
+  stop:Number(event.stopLoss),strategyTarget:Number(event.takeProfit),strategy:event.strategyVersion||LEGACY_DONCHIAN_STRATEGY,
   sourceType:"DONCHIAN",sourceTime:new Date(event.closeTime).toISOString(),receivedAt:now(),
   status:enabled?"CANDIDATE":"BLOCKED_DONCHIAN_EXECUTION_DISABLED",
-  url:donchianChartUrl(symbol),reason:enabled?"AWAITING_DEMO_RISK_CHECK":"DONCHIAN_EXECUTION_DISABLED"};
+  url:donchianChartUrl(symbol,event.interval||DONCHIAN_INTERVAL),reason:enabled?"AWAITING_DEMO_RISK_CHECK":"DONCHIAN_EXECUTION_DISABLED"};
 }
 function donchianExitRequest(symbol,event,enabled=DONCHIAN_EXECUTE){return {
  id:"DONCHIAN_EXIT_"+symbol+"_"+event.closeTime,symbol,side:event.action==="EXIT_LONG"?"long":"short",
@@ -285,19 +338,20 @@ function executionAllowed(candidate,channelEnabled=CHANNEL_EXECUTE,donchianEnabl
  return candidate?.sourceType==="DONCHIAN"?donchianEnabled:channelEnabled;
 }
 function donchianNotification(symbol,event,state,previousPosition){
- const p=donchianPrice,pair=donchianPair(symbol),closed=new Date(event.closeTime).toISOString();
+ const p=donchianPrice,pair=donchianPair(symbol),closed=new Date(event.closeTime).toISOString(),interval=event.interval||state.interval||DONCHIAN_INTERVAL;
+ const active=event.strategyVersion===ACTIVE_DONCHIAN_STRATEGY||state.strategyVersion===ACTIVE_DONCHIAN_STRATEGY;
  if(event.action==="ENTER_LONG"||event.action==="ENTER_SHORT"){
   const long=event.action==="ENTER_LONG",risk=Math.abs(event.price-event.stopLoss),riskPct=risk/event.price*100;
   return "DONCHIAN PAPER\n🚨 "+(long?"多方建倉提示":"空方建倉提示")+
    "\n\n幣別："+pair+"（"+symbol+"）\n方向："+(long?"做多 LONG":"做空 SHORT")+
-   "\n週期："+DONCHIAN_INTERVAL+"（已收盤 K 線）"+
+   "\n策略："+(active?"1H Donchian + EMA200 + ATR":"Legacy 15m Donchian")+"\n週期："+interval+"（已收盤 K 線）"+
    "\n\n建倉參考價："+p(event.price)+
-   "\n停損參考價："+p(event.stopLoss)+"（固定於訊號產生時的 10 期"+(long?"下軌":"上軌")+"）"+
+   "\n停損參考價："+p(event.stopLoss)+(active?"（2 × ATR14）":"（固定於訊號產生時的 10 期"+(long?"下軌":"上軌")+"）")+
    "\n停利參考價："+p(event.takeProfit)+"（2R，報酬風險比 2:1）"+
    "\n每單位風險："+p(risk)+"（"+riskPct.toFixed(3)+"%）"+
-   "\n\n觸發條件：15m 收盤"+(long?"突破 20 期上軌 ":"跌破 20 期下軌 ")+p(long?event.upper:event.lower)+
-   "\n移動平倉：15m 收盤"+(long?"跌破 10 期下軌":"突破 10 期上軌")+
-   "\nTradingView K線（15m）："+donchianChartUrl(symbol)+
+   "\n\n觸發條件："+interval+" 收盤"+(long?"突破 20 期上軌 ":"跌破 20 期下軌 ")+p(long?event.upper:event.lower)+(active?"，且位於 EMA200 "+(long?"上方":"下方")+"（EMA200 "+p(event.ema200)+"；ATR14 "+p(event.atr14)+"）":"")+
+   "\n移動平倉："+interval+" 收盤"+(long?"跌破 10 期下軌":"突破 10 期上軌")+
+   "\nTradingView K線（"+interval+"）："+donchianChartUrl(symbol,interval)+
    "\nK 線收盤："+closed+
    "\n\n✅ 已建立 Paper 模擬持倉；不會送出 Binance Demo 或正式交易訂單，與 Telegram 頻道訊號無關。";
  }
@@ -306,31 +360,32 @@ function donchianNotification(symbol,event,state,previousPosition){
  const reason={TAKE_PROFIT_2R:"到達 2R 停利",STOP_LOSS:"到達固定停損",CHANNEL_EXIT:"觸發 10 期移動通道平倉"}[event.reason]||event.reason;
  return "DONCHIAN PAPER\n🔔 "+(long?"多方平倉提示":"空方平倉提示")+
   "\n\n幣別："+pair+"（"+symbol+"）\n方向："+(long?"平多 EXIT LONG":"平空 EXIT SHORT")+
-  "\n週期："+DONCHIAN_INTERVAL+"（已收盤 K 線）"+
+  "\n策略："+(active?"1H Donchian + EMA200 + ATR":"Legacy 15m Donchian")+"\n週期："+interval+"（已收盤 K 線）"+
   "\n\n原建倉參考價："+p(state.entryPrice)+"\n本次平倉參考價："+p(event.price)+
   "\n原停損參考價："+p(state.stopLoss)+"\n原停利參考價："+p(state.takeProfit)+
   (pnl===null?"":"\n提示區間報酬："+(pnl>=0?"+":"")+pnl.toFixed(3)+"%")+
   "\n平倉原因："+reason+(Number.isFinite(event.triggerLevel)?"（觸發價 "+p(event.triggerLevel)+"）":"")+
-  "\nTradingView K線（15m）："+donchianChartUrl(symbol)+
+  "\nTradingView K線（"+interval+"）："+donchianChartUrl(symbol,interval)+
   "\nK 線收盤："+closed+
   "\n\n✅ 已結算 Paper 模擬持倉；不會送出 Binance Demo 或正式交易訂單，與 Telegram 頻道訊號無關。";
 }
-function applyDonchian(symbol,candles){
+function applyDonchian(symbol,candles,strategyVersion=LEGACY_DONCHIAN_STRATEGY){
  if(!ALLOWED.has(symbol)||!candles.length)return null;
  const latest=candles.at(-1),state=ledger.donchian[symbol]||{position:"FLAT",lastCandleCloseTime:null,
-   entryPrice:null,entryTime:null,lastAction:null};
+   entryPrice:null,entryTime:null,lastAction:null,strategyVersion,interval:strategyVersion===ACTIVE_DONCHIAN_STRATEGY?ACTIVE_DONCHIAN_INTERVAL:DONCHIAN_INTERVAL};
  if(state.lastCandleCloseTime===null){
   state.lastCandleCloseTime=latest.closeTime;state.lastObservedClose=latest.close;
   ledger.donchian[symbol]=state;save();return null; // baseline only; never alert stale history
  }
  if(latest.closeTime<=state.lastCandleCloseTime)return null;
- const event=evaluateDonchian(candles,state);
+ const event=strategyVersion===ACTIVE_DONCHIAN_STRATEGY?evaluateFilteredDonchian(candles,state):evaluateDonchian(candles,state);
  state.lastCandleCloseTime=latest.closeTime;state.lastObservedClose=latest.close;
  if(event){
   const previousPosition=state.position;
   if(event.action==="ENTER_LONG"||event.action==="ENTER_SHORT"){
    state.position=event.action==="ENTER_LONG"?"LONG":"SHORT";
    state.entryPrice=event.price;state.entryTime=new Date(event.closeTime).toISOString();
+   state.strategyVersion=strategyVersion;state.interval=strategyVersion===ACTIVE_DONCHIAN_STRATEGY?ACTIVE_DONCHIAN_INTERVAL:DONCHIAN_INTERVAL;
    state.stopLoss=event.stopLoss;state.takeProfit=event.takeProfit;
    paperOpen(symbol,state);
    const candidate=donchianExecutionCandidate(symbol,event);
@@ -342,19 +397,25 @@ function applyDonchian(symbol,candles){
    demoExecutionEnabled:DONCHIAN_EXECUTE});
   enqueue("donchian:"+symbol+":"+event.closeTime+":"+event.action,
     donchianNotification(symbol,event,state,previousPosition));
-  if(event.action.startsWith("EXIT")){state.entryPrice=null;state.entryTime=null;state.stopLoss=null;state.takeProfit=null;}
+  if(event.action.startsWith("EXIT")){state.entryPrice=null;state.entryTime=null;state.stopLoss=null;state.takeProfit=null;
+   if(strategyVersion===LEGACY_DONCHIAN_STRATEGY){state.strategyVersion=ACTIVE_DONCHIAN_STRATEGY;state.interval=ACTIVE_DONCHIAN_INTERVAL;state.lastCandleCloseTime=null;}}
  }
  ledger.donchian[symbol]=state;save();return event;
 }
 async function pollDonchian(){
  const observed=Date.now()+serverOffset;
  const [rows,markRows]=await Promise.all([Promise.all(DONCHIAN_SYMBOLS.map(async symbol=>{
-  const raw=await publicGet("/fapi/v1/klines",{symbol,interval:DONCHIAN_INTERVAL,limit:DONCHIAN_ENTRY_PERIOD+12});
+  const state=ledger.donchian[symbol],legacy=state?.position&&state.position!=="FLAT"&&state.strategyVersion!==ACTIVE_DONCHIAN_STRATEGY;
+  const strategyVersion=legacy?LEGACY_DONCHIAN_STRATEGY:ACTIVE_DONCHIAN_STRATEGY;
+  const interval=legacy?DONCHIAN_INTERVAL:ACTIVE_DONCHIAN_INTERVAL;
+  const limit=legacy?DONCHIAN_ENTRY_PERIOD+12:ACTIVE_DONCHIAN_EMA_PERIOD+32;
+  const raw=await publicGet("/fapi/v1/klines",{symbol,interval,limit});
   if(!Array.isArray(raw))throw Error("Invalid Donchian kline response for "+symbol);
   const candles=raw.map(k=>({openTime:Number(k[0]),high:Number(k[2]),low:Number(k[3]),close:Number(k[4]),closeTime:Number(k[6])}))
     .filter(k=>[k.openTime,k.high,k.low,k.close,k.closeTime].every(Number.isFinite)&&k.closeTime<observed);
-  if(candles.length<DONCHIAN_ENTRY_PERIOD+1)throw Error("Insufficient closed Donchian candles for "+symbol);
-  return {symbol,candles};
+  const required=legacy?DONCHIAN_ENTRY_PERIOD+1:ACTIVE_DONCHIAN_EMA_PERIOD+1;
+  if(candles.length<required)throw Error("Insufficient closed Donchian candles for "+symbol+" "+interval);
+  return {symbol,candles,strategyVersion,interval};
  })),publicGet("/fapi/v1/premiumIndex",{})]);
  if(!Array.isArray(markRows))throw Error("Invalid Donchian mark-price response");
  const markAt=now();
@@ -363,11 +424,11 @@ async function pollDonchian(){
   if(!Number.isFinite(price)||price<=0)throw Error("Invalid Donchian mark price for "+symbol);
   ledger.donchianMarks[symbol]={price,observedAt:markAt,source:"BINANCE_DEMO_MARK_PRICE"};
  }
- for(const row of rows)applyDonchian(row.symbol,row.candles);
+ for(const row of rows)applyDonchian(row.symbol,row.candles,row.strategyVersion);
  ledger.lastDonchianPoll=now();ledger.donchianError=null;save();
  if(Date.now()-lastDonchianLogAt>600000){
-  console.info("DONCHIAN_PUBLIC_CONNECTED",JSON.stringify({host:DEMO_HOST,interval:DONCHIAN_INTERVAL,
-    symbols:rows.map(row=>row.symbol),lastClosed:Object.fromEntries(rows.map(row=>[row.symbol,row.candles.at(-1).closeTime]))}));
+  console.info("DONCHIAN_PUBLIC_CONNECTED",JSON.stringify({host:DEMO_HOST,activeStrategy:ACTIVE_DONCHIAN_STRATEGY,
+    symbols:Object.fromEntries(rows.map(row=>[row.symbol,{interval:row.interval,lastClosed:row.candles.at(-1).closeTime}]))}));
   lastDonchianLogAt=Date.now();
  }
 }
@@ -480,10 +541,11 @@ function donchianStats(){
  const open=orders.filter(x=>!x.actualSettlement&&!['CLOSED','CANCELED','REJECTED','EXPIRED'].includes(String(x.status))).length;
  const last=events.at(-1)||null;
  const advisoryPositions=Object.entries(ledger.donchian).filter(([,s])=>s?.position&&s.position!=="FLAT").map(([symbol,s])=>{paperOpen(symbol,s);const t=ledger.donchianPaper.findLast(x=>x.symbol===symbol&&x.status==="OPEN"),quote=ledger.donchianMarks[symbol],mark=Number(quote?.price||s.lastObservedClose||s.entryPrice),exit=mark*(s.position==="LONG"?1-SLIP:1+SLIP),paperPnl=t?((t.side==="LONG"?exit-t.entryPrice:t.entryPrice-exit)*t.qty-t.feeEntry-exit*t.qty*FEE_FALLBACK):null;return {
-  symbol,side:s.position,entryPrice:s.entryPrice,stopLoss:s.stopLoss,takeProfit:s.takeProfit,
+  symbol,side:s.position,strategyVersion:s.strategyVersion||LEGACY_DONCHIAN_STRATEGY,interval:s.interval||DONCHIAN_INTERVAL,entryPrice:s.entryPrice,stopLoss:s.stopLoss,takeProfit:s.takeProfit,
   entryTime:s.entryTime,lastPrice:mark,lastPriceAt:quote?.observedAt||null,lastPriceSource:quote?.source||"LAST_CLOSED_15M_CANDLE",
-  signalClosePrice:s.lastObservedClose,chartUrl:donchianChartUrl(symbol),status:"PAPER_OPEN",paperPnl};});
- return {schemaVersion:1,ledger:"BINANCE_DEMO_DONCHIAN",mode:"DEMO_ONLY",strategy:"DONCHIAN_20_10_2R",
+  signalClosePrice:s.lastObservedClose,chartUrl:donchianChartUrl(symbol,s.interval),status:"PAPER_OPEN",paperPnl};});
+ return {schemaVersion:1,ledger:"BINANCE_DEMO_DONCHIAN",mode:"DEMO_ONLY",strategy:ACTIVE_DONCHIAN_STRATEGY,
+  legacyStrategy:LEGACY_DONCHIAN_STRATEGY,activeParameters:{interval:ACTIVE_DONCHIAN_INTERVAL,entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,emaPeriod:ACTIVE_DONCHIAN_EMA_PERIOD,atrPeriod:ACTIVE_DONCHIAN_ATR_PERIOD,atrMultiplier:ACTIVE_DONCHIAN_ATR_MULTIPLIER,riskReward:DONCHIAN_TAKE_PROFIT_R},
   updatedAt:now(),executionEnabled:DONCHIAN_EXECUTE,credentialsConfigured:!!KEY&&!!SECRET,
   signals:{total:events.length,entries:events.filter(x=>String(x.detail?.action).startsWith("ENTER")).length,
    exits:events.filter(x=>String(x.detail?.action).startsWith("EXIT")).length,last:last?{at:last.at,...last.detail}:null},
@@ -551,9 +613,10 @@ function safeStatus(){
   exchangeConnected:!!ledger.lastGoodAccount,
   backoffUntil:ledger.demoBackoffUntil?new Date(ledger.demoBackoffUntil).toISOString():null,
   managedOpen:ledger.orders.filter(o=>!["CLOSED","CLOSED_UNFILLED"].includes(o.status)).length,
-  donchian:{independentFromTelegramChannel:true,interval:DONCHIAN_INTERVAL,
+  donchian:{independentFromTelegramChannel:true,strategy:ACTIVE_DONCHIAN_STRATEGY,interval:ACTIVE_DONCHIAN_INTERVAL,
    entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,takeProfitRiskReward:DONCHIAN_TAKE_PROFIT_R,
-   stopLoss:"signal-time 10-period opposite channel",chartUrlTemplate:"https://www.tradingview.com/chart/?symbol=BINANCE%3A{symbol}.P&interval=15",symbols:DONCHIAN_SYMBOLS,
+   emaPeriod:ACTIVE_DONCHIAN_EMA_PERIOD,atrPeriod:ACTIVE_DONCHIAN_ATR_PERIOD,atrMultiplier:ACTIVE_DONCHIAN_ATR_MULTIPLIER,
+   stopLoss:"signal-time 2 x ATR14",chartUrlTemplate:"https://www.tradingview.com/chart/?symbol=BINANCE%3A{symbol}.P&interval=60",symbols:DONCHIAN_SYMBOLS,
    demoExecutionEnabled:DONCHIAN_EXECUTE,executionReady:DONCHIAN_EXECUTE&&!!KEY&&!!SECRET&&!ledger.halted&&storageSafe,
    lastPoll:ledger.lastDonchianPoll,error:ledger.donchianError},
   limit:{notionalUsdt:INITIAL_NOTIONAL,maxOpen:MAX_OPEN,maxAccountRiskFraction:MAX_LOSS,netTpFraction:TP_NET}};
@@ -931,187 +994,195 @@ function bdd(){
   finally{ledger=old;synthetic=prev;}
  };
  const base={id:101,text:"#SOL 市價 100-102附近多 止損 95",time:now()};
- check(1,"Demo host cannot be configured to production",()=>{if(DEMO_HOST!=="https://demo-fapi.binance.com")throw Error("host");});
- check(2,"Default execution lock when no keys",()=>{if(!KEY||!SECRET){if(EXECUTE&&KEY&&SECRET)throw Error("unsafe")};});
- check(3,"Long signal parser",()=>{let x=parseSignal(base);if(x?.side!=="long"||x.symbol!=="SOLUSDT")throw Error("parse");});
- check(4,"Short signal parser",()=>{let x=parseSignal({...base,text:"#SOL 掛單 101-102附近空 止損 105"});if(x?.side!=="short")throw Error("parse");});
- check(5,"Missing stop blocks signal",()=>{if(parseSignal({...base,text:"#SOL 市價 100-102附近多"}))throw Error("allowed");});
- check(6,"Unknown symbol ignored",()=>{if(parseSignal({...base,text:"#NOTREAL 市價 100-102附近多 止損 95"}))throw Error("allowed");});
- check(7,"Comment not entry",()=>{if(parseSignal({...base,text:"#BTC 市場可能上漲"}))throw Error("allowed");});
- check(8,"Wrong stop direction ignored",()=>{if(parseSignal({...base,text:"#SOL 市價 100-102附近多 止損 110"}))throw Error("allowed");});
- check(9,"HTML telegram ids",()=>{let h='<div data-post="KCryptoBTC168/100"><div class="tgme_widget_message_text js-message_text">hello</div></div>';
+ check(1,"BDD1",()=>{if(DEMO_HOST!=="https://demo-fapi.binance.com")throw Error("host");});
+ check(2,"BDD2",()=>{if(!KEY||!SECRET){if(EXECUTE&&KEY&&SECRET)throw Error("unsafe")};});
+ check(3,"BDD3",()=>{let x=parseSignal(base);if(x?.side!=="long"||x.symbol!=="SOLUSDT")throw Error("parse");});
+ check(4,"BDD4",()=>{let x=parseSignal({...base,text:"#SOL 掛單 101-102附近空 止損 105"});if(x?.side!=="short")throw Error("parse");});
+ check(5,"BDD5",()=>{if(parseSignal({...base,text:"#SOL 市價 100-102附近多"}))throw Error("allowed");});
+ check(6,"BDD6",()=>{if(parseSignal({...base,text:"#NOTREAL 市價 100-102附近多 止損 95"}))throw Error("allowed");});
+ check(7,"BDD7",()=>{if(parseSignal({...base,text:"#BTC 市場可能上漲"}))throw Error("allowed");});
+ check(8,"BDD8",()=>{if(parseSignal({...base,text:"#SOL 市價 100-102附近多 止損 110"}))throw Error("allowed");});
+ check(9,"BDD9",()=>{let h='<div data-post="KCryptoBTC168/100"><div class="tgme_widget_message_text js-message_text">hello</div></div>';
  if(parseHTML(h)[0]?.id!==100)throw Error("HTML");});
- check(10,"Bootstrap no historical trades",()=>{ledger.baseline=false;captureCandidates([base]);if(ledger.candidate.length)throw Error("history");});
- check(11,"Fresh new signal captured once",()=>{ledger.baseline=false;captureCandidates([base]);captureCandidates([base,{...base,id:102}]);captureCandidates([{...base,id:102}]);
+ check(10,"BDD10",()=>{ledger.baseline=false;captureCandidates([base]);if(ledger.candidate.length)throw Error("history");});
+ check(11,"BDD11",()=>{ledger.baseline=false;captureCandidates([base]);captureCandidates([base,{...base,id:102}]);captureCandidates([{...base,id:102}]);
  if(ledger.candidate.length!==1)throw Error("duplicates");});
- check(12,"Stale signal ignored",()=>{ledger.baseline=false;captureCandidates([base]);captureCandidates([{...base,id:102,time:new Date(Date.now()-3600000).toISOString()}]);
+ check(12,"BDD12",()=>{ledger.baseline=false;captureCandidates([base]);captureCandidates([{...base,id:102,time:new Date(Date.now()-3600000).toISOString()}]);
  if(ledger.candidate.length)throw Error("stale");});
- check(13,"Deterministic client ID",()=>{if(idFor({id:109},"ENTRY")!==idFor({id:109},"ENTRY"))throw Error("key");});
- check(14,"Client order ID bounded",()=>{if(idFor({id:123456789},"ENTRY").length>36)throw Error("length");});
+ check(13,"BDD13",()=>{if(idFor({id:109},"ENTRY")!==idFor({id:109},"ENTRY"))throw Error("key");});
+ check(14,"BDD14",()=>{if(idFor({id:123456789},"ENTRY").length>36)throw Error("length");});
  const spec={filters:[{filterType:"MARKET_LOT_SIZE",stepSize:"0.01",minQty:"0.01"},
  {filterType:"PRICE_FILTER",tickSize:"0.01"},{filterType:"MIN_NOTIONAL",notional:"5"}]};
  const candidate={...parseSignal(base),stop:95};
- check(15,"Lot rounding down",()=>{const v=riskParams(candidate,100,"SOLUSDT",{availableBalance:"1000"},spec);if(v.quantity*100>100.01)throw Error("notional");});
- check(16,"Low balance fails closed",()=>{try{riskParams(candidate,100,"SOLUSDT",{availableBalance:"0"},spec);throw Error("not blocked")}
+ check(15,"BDD15",()=>{const v=riskParams(candidate,100,"SOLUSDT",{availableBalance:"1000"},spec);if(v.quantity*100>100.01)throw Error("notional");});
+ check(16,"BDD16",()=>{try{riskParams(candidate,100,"SOLUSDT",{availableBalance:"0"},spec);throw Error("not blocked")}
  catch(e){if(String(e).includes("not blocked"))throw e;}});
- check(17,"Bad lot step fails",()=>{try{riskParams(candidate,100,"SOLUSDT",{availableBalance:"1000"},{filters:[]});throw Error("not blocked")}
+ check(17,"BDD17",()=>{try{riskParams(candidate,100,"SOLUSDT",{availableBalance:"1000"},{filters:[]});throw Error("not blocked")}
  catch(e){if(String(e).includes("not blocked"))throw e;}});
- check(18,"Low nominal below exchange min fails",()=>{try{riskParams(candidate,100,"SOLUSDT",{availableBalance:"2"},spec);throw Error("not blocked")}
+ check(18,"BDD18",()=>{try{riskParams(candidate,100,"SOLUSDT",{availableBalance:"2"},spec);throw Error("not blocked")}
  catch(e){if(String(e).includes("not blocked"))throw e;}});
- check(19,"Long stop normalized down",()=>{let v=riskParams({...candidate,stop:95.005},100,"SOLUSDT",{availableBalance:"1000"},spec);if(v.stopPrice>95.005)throw Error("round");});
- check(20,"Short stop normalized up",()=>{let v=riskParams({...candidate,side:"short",stop:105.005},100,"SOLUSDT",{availableBalance:"1000"},spec);if(v.stopPrice<105.005)throw Error("round");});
- check(21,"Projected net long profit signed",()=>{let x=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0);if(x.net<=0)throw Error("net");});
- check(22,"Projected net short profit signed",()=>{let x=projectedNet({side:"short",avgPrice:100,filledQty:1},98,98.1,0.04,0);if(x.net<=0)throw Error("net");});
- check(23,"Fee reduces net",()=>{let a=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0,0);
+ check(19,"BDD19",()=>{let v=riskParams({...candidate,stop:95.005},100,"SOLUSDT",{availableBalance:"1000"},spec);if(v.stopPrice>95.005)throw Error("round");});
+ check(20,"BDD20",()=>{let v=riskParams({...candidate,side:"short",stop:105.005},100,"SOLUSDT",{availableBalance:"1000"},spec);if(v.stopPrice<105.005)throw Error("round");});
+ check(21,"BDD21",()=>{let x=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0);if(x.net<=0)throw Error("net");});
+ check(22,"BDD22",()=>{let x=projectedNet({side:"short",avgPrice:100,filledQty:1},98,98.1,0.04,0);if(x.net<=0)throw Error("net");});
+ check(23,"BDD23",()=>{let a=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0,0);
  let b=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,1,0);if(b.net>=a.net)throw Error("fee");});
- check(24,"Funding reduces net",()=>{let a=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0,0);
+ check(24,"BDD24",()=>{let a=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0,0);
  let b=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0,-1);if(b.net>=a.net)throw Error("funding");});
- check(25,"Exact 1% threshold uses >= semantics",()=>{let x=projectedNet({side:"long",avgPrice:100,filledQty:1},101,101,0,0);if(x.rate>=.01)throw Error("fees ignored");});
- check(26,"No unpaired notification",()=>{enqueue("x","TEST");if(ledger.outbox.length)throw Error("leaked");});
- check(27,"No mock test writes",()=>{save();if(ledger.events.length)throw Error("write");});
- check(28,"Status always identifies demo",()=>{if(safeStatus().mode!=="BINANCE_USDM_DEMO_ONLY")throw Error("mode");});
- check(29,"Unknown order not filled",()=>{let x={status:"SUBMIT_UNKNOWN",stopConfirmed:false,filledQty:0};
+ check(25,"BDD25",()=>{let x=projectedNet({side:"long",avgPrice:100,filledQty:1},101,101,0,0);if(x.rate>=.01)throw Error("fees ignored");});
+ check(26,"BDD26",()=>{enqueue("x","TEST");if(ledger.outbox.length)throw Error("leaked");});
+ check(27,"BDD27",()=>{save();if(ledger.events.length)throw Error("write");});
+ check(28,"BDD28",()=>{if(safeStatus().mode!=="BINANCE_USDM_DEMO_ONLY")throw Error("mode");});
+ check(29,"BDD29",()=>{let x={status:"SUBMIT_UNKNOWN",stopConfirmed:false,filledQty:0};
  recordOrderStatus(x,{status:"NEW",executedQty:"0",avgPrice:"0"});if(x.status!=="ORDER_PENDING")throw Error("state");});
- check(30,"Partial fill triggers protection",()=>{let x={status:"ORDER_PENDING",stopConfirmed:false,filledQty:0};
+ check(30,"BDD30",()=>{let x={status:"ORDER_PENDING",stopConfirmed:false,filledQty:0};
  recordOrderStatus(x,{status:"PARTIALLY_FILLED",executedQty:"0.2",avgPrice:"100"});if(x.status!=="NEEDS_STOP")throw Error("state");});
- check(31,"Filled order reflects exchange quantity",()=>{let x={status:"ORDER_PENDING",stopConfirmed:false};
+ check(31,"BDD31",()=>{let x={status:"ORDER_PENDING",stopConfirmed:false};
  recordOrderStatus(x,{status:"FILLED",executedQty:"0.4",avgPrice:"101"});if(x.filledQty!==.4||x.avgPrice!==101)throw Error("fill");});
- check(32,"Canceled zero-fill order terminal",()=>{let x={status:"ORDER_PENDING",stopConfirmed:false};
+ check(32,"BDD32",()=>{let x={status:"ORDER_PENDING",stopConfirmed:false};
  recordOrderStatus(x,{status:"CANCELED",executedQty:"0",avgPrice:"0"});if(x.status!=="CLOSED_UNFILLED")throw Error("cancel");});
- check(33,"Corrupt exchange fill rejected",()=>{let x={status:"ORDER_PENDING",stopConfirmed:false};
+ check(33,"BDD33",()=>{let x={status:"ORDER_PENDING",stopConfirmed:false};
  try{recordOrderStatus(x,{status:"FILLED",executedQty:"NaN",avgPrice:"50"});throw Error("not blocked")}
  catch(e){if(String(e).includes("not blocked"))throw e;}});
- check(34,"Risk never uses real exchange host",()=>{if(DEMO_HOST.includes("://fapi.binance.com"))throw Error("production");});
- check(35,"Single open position guard",()=>{if(MAX_OPEN!==1)throw Error("multiple");});
- check(36,"Notional ceiling 100 USDT",()=>{if(INITIAL_NOTIONAL>100)throw Error("notional");});
- check(37,"No credential values in status",()=>{if(JSON.stringify(safeStatus()).includes(SECRET)&&SECRET)throw Error("secret");});
- check(38,"Signed order non-executable without secret",()=>{if(KEY===""&&SECRET!==""&&safeStatus().readyToPlace)throw Error("keys");});
- check(39,"No direct submission from BDD",()=>{if(ledger.orders.length!==0)throw Error("order");});
- check(40,"Audit does not include secret",()=>{if(JSON.stringify(ledger).includes(SECRET)&&SECRET)throw Error("secret");});
- check(41,"LIMIT signal retains limit execution mode",()=>{const x=parseSignal({...base,text:"#SOL 掛單 100-102附近多 止損 95"});if(x?.mode!=="LIMIT")throw Error("limit mode missing");});
- check(42,"MARKET signal retains market mode",()=>{const x=parseSignal(base);if(x?.mode!=="MARKET")throw Error("market mode missing");});
- check(43,"Public endpoint pinned to Demo",()=>{if(!DEMO_HOST.startsWith("https://demo-fapi."))throw Error("bad domain");});
- check(44,"User-facing status remains locked absent key",()=>{if(!KEY&&!SECRET&&safeStatus().readyToPlace)throw Error("armed without key");});
- check(45,"Signed Demo test path allowlisted",()=>{const allow=["/fapi/v1/order/test","/fapi/v1/order"];if(allow[0]==="/fapi/v1/order")throw Error("wrong test path");});
- check(46,"Diagnostic must use Demo-only order-test endpoint",()=>{if(!demoSignedDiagnostics.toString().includes("/fapi/v1/order/test"))throw Error("test path absent");});
- check(47,"Demo TEST ORDER endpoint remains separate from actual matching engine",()=>{if(!"/fapi/v1/order/test".endsWith("/order/test")||DEMO_HOST!=="https://demo-fapi.binance.com")throw Error("unsafe");});
- check(48,"Partial fill preserves exchange remainder",()=>{let x={symbol:"SOLUSDT",clientOrderId:"A",qty:1,stopConfirmed:false};
+ check(34,"BDD34",()=>{if(DEMO_HOST.includes("://fapi.binance.com"))throw Error("production");});
+ check(35,"BDD35",()=>{if(MAX_OPEN!==1)throw Error("multiple");});
+ check(36,"BDD36",()=>{if(INITIAL_NOTIONAL>100)throw Error("notional");});
+ check(37,"BDD37",()=>{if(JSON.stringify(safeStatus()).includes(SECRET)&&SECRET)throw Error("secret");});
+ check(38,"BDD38",()=>{if(KEY===""&&SECRET!==""&&safeStatus().readyToPlace)throw Error("keys");});
+ check(39,"BDD39",()=>{if(ledger.orders.length!==0)throw Error("order");});
+ check(40,"BDD40",()=>{if(JSON.stringify(ledger).includes(SECRET)&&SECRET)throw Error("secret");});
+ check(41,"BDD41",()=>{const x=parseSignal({...base,text:"#SOL 掛單 100-102附近多 止損 95"});if(x?.mode!=="LIMIT")throw Error("limit mode missing");});
+ check(42,"BDD42",()=>{const x=parseSignal(base);if(x?.mode!=="MARKET")throw Error("market mode missing");});
+ check(43,"BDD43",()=>{if(!DEMO_HOST.startsWith("https://demo-fapi."))throw Error("bad domain");});
+ check(44,"BDD44",()=>{if(!KEY&&!SECRET&&safeStatus().readyToPlace)throw Error("armed without key");});
+ check(45,"BDD45",()=>{const allow=["/fapi/v1/order/test","/fapi/v1/order"];if(allow[0]==="/fapi/v1/order")throw Error("wrong test path");});
+ check(46,"BDD46",()=>{if(!demoSignedDiagnostics.toString().includes("/fapi/v1/order/test"))throw Error("test path absent");});
+ check(47,"BDD47",()=>{if(!"/fapi/v1/order/test".endsWith("/order/test")||DEMO_HOST!=="https://demo-fapi.binance.com")throw Error("unsafe");});
+ check(48,"BDD48",()=>{let x={symbol:"SOLUSDT",clientOrderId:"A",qty:1,stopConfirmed:false};
   recordOrderStatus(x,{symbol:"SOLUSDT",clientOrderId:"A",status:"PARTIALLY_FILLED",origQty:"1",executedQty:"0.4",avgPrice:"100"});
   if(x.status!=="NEEDS_STOP"||x.remainingQty!==0.6||x.entryTerminal)throw Error("partial state");});
- check(49,"Canceled partial fill remains a protected position workflow",()=>{let x={symbol:"SOLUSDT",clientOrderId:"A",qty:1,stopConfirmed:false};
+ check(49,"BDD49",()=>{let x={symbol:"SOLUSDT",clientOrderId:"A",qty:1,stopConfirmed:false};
   recordOrderStatus(x,{symbol:"SOLUSDT",clientOrderId:"A",status:"CANCELED",origQty:"1",executedQty:"0.4",avgPrice:"100"});
   if(x.status!=="NEEDS_STOP"||!x.entryTerminal)throw Error("partial cancel lost fill");});
- check(50,"Exchange active order status classifier",()=>{for(const x of ["NEW","PARTIALLY_FILLED","PENDING_CANCEL"])if(!isOrderActive(x))throw Error(x);});
- check(51,"Exchange terminal order status classifier",()=>{for(const x of ["FILLED","CANCELED","EXPIRED","EXPIRED_IN_MATCH","REJECTED"])if(!isOrderTerminal(x))throw Error(x);});
- check(52,"POST 503 is unknown execution and transient",()=>{const x=failureFlags("POST",503,0);if(!x.unknown||!x.transient||x.auth)throw Error("flags");});
- check(53,"GET 503 is transient but never an execution outcome",()=>{const x=failureFlags("GET",503,0);if(x.unknown||!x.transient)throw Error("flags");});
- check(54,"Binance auth rejection is classified",()=>{if(!failureFlags("GET",400,-2015).auth||!failureFlags("POST",401,0).auth)throw Error("auth");});
- check(55,"Rate limit is transient with fail-closed backoff",()=>{const x=failureFlags("GET",429,0);if(!x.transient||x.unknown)throw Error("429");
+ check(50,"BDD50",()=>{for(const x of ["NEW","PARTIALLY_FILLED","PENDING_CANCEL"])if(!isOrderActive(x))throw Error(x);});
+ check(51,"BDD51",()=>{for(const x of ["FILLED","CANCELED","EXPIRED","EXPIRED_IN_MATCH","REJECTED"])if(!isOrderTerminal(x))throw Error(x);});
+ check(52,"BDD52",()=>{const x=failureFlags("POST",503,0);if(!x.unknown||!x.transient||x.auth)throw Error("flags");});
+ check(53,"BDD53",()=>{const x=failureFlags("GET",503,0);if(x.unknown||!x.transient)throw Error("flags");});
+ check(54,"BDD54",()=>{if(!failureFlags("GET",400,-2015).auth||!failureFlags("POST",401,0).auth)throw Error("auth");});
+ check(55,"BDD55",()=>{const x=failureFlags("GET",429,0);if(!x.transient||x.unknown)throw Error("429");
   noteBackoff({...x,status:429});if(!(ledger.demoBackoffUntil>Date.now()))throw Error("no backoff");});
- check(56,"Confirmed active stop validates exchange identity",()=>{const x={symbol:"SOLUSDT",stopClientId:"STOP",status:"NEEDS_STOP"};
+ check(56,"BDD56",()=>{const x={symbol:"SOLUSDT",stopClientId:"STOP",status:"NEEDS_STOP"};
   if(!recordAlgoStatus(x,{symbol:"SOLUSDT",clientAlgoId:"STOP",algoId:9,algoType:"CONDITIONAL",orderType:"STOP_MARKET",closePosition:true,algoStatus:"NEW"})||x.stopAlgoId!==9)throw Error("stop");});
- check(57,"Canceled exchange stop is not considered protection",()=>{const x={symbol:"SOLUSDT",stopClientId:"STOP"};
+ check(57,"BDD57",()=>{const x={symbol:"SOLUSDT",stopClientId:"STOP"};
   if(recordAlgoStatus(x,{symbol:"SOLUSDT",clientAlgoId:"STOP",algoType:"CONDITIONAL",orderType:"STOP_MARKET",closePosition:true,algoStatus:"CANCELED"}))throw Error("canceled protected");});
- check(58,"Stop response client ID mismatch fails closed",()=>{try{recordAlgoStatus({symbol:"SOLUSDT",stopClientId:"STOP"},{symbol:"SOLUSDT",clientAlgoId:"OTHER"});throw Error("accepted")}
+ check(58,"BDD58",()=>{try{recordAlgoStatus({symbol:"SOLUSDT",stopClientId:"STOP"},{symbol:"SOLUSDT",clientAlgoId:"OTHER"});throw Error("accepted")}
   catch(e){if(String(e).includes("accepted"))throw e;}});
- check(59,"Stop response must be close-all STOP_MARKET",()=>{try{recordAlgoStatus({symbol:"SOLUSDT",stopClientId:"STOP"},{symbol:"SOLUSDT",clientAlgoId:"STOP",algoType:"CONDITIONAL",orderType:"LIMIT",closePosition:false});throw Error("accepted")}
+ check(59,"BDD59",()=>{try{recordAlgoStatus({symbol:"SOLUSDT",stopClientId:"STOP"},{symbol:"SOLUSDT",clientAlgoId:"STOP",algoType:"CONDITIONAL",orderType:"LIMIT",closePosition:false});throw Error("accepted")}
   catch(e){if(String(e).includes("accepted"))throw e;}});
- check(60,"Actual settlement includes owned fees and funding",()=>{const x=actualSettlement({orderId:1,tpOrderId:2},[
+ check(60,"BDD60",()=>{const x=actualSettlement({orderId:1,tpOrderId:2},[
    {orderId:1,realizedPnl:"0",commission:"0.04"},{orderId:2,realizedPnl:"1.2",commission:"0.05"}],
    [{income:"-0.01"}]);if(Math.abs(x.net-1.10)>1e-9||x.tradeCount!==2)throw Error("settlement");});
- check(61,"Actual settlement excludes unrelated exchange fills",()=>{const x=actualSettlement({orderId:1},[
+ check(61,"BDD61",()=>{const x=actualSettlement({orderId:1},[
    {orderId:1,realizedPnl:"0",commission:"0.04"},{orderId:999,realizedPnl:"50",commission:"2"}],[]);
    if(x.tradeCount!==1||x.grossRealized!==0||x.commission!==0.04)throw Error("foreign fill");});
- check(62,"Stale LIMIT is cancelable at exactly 24 hours",()=>{if(!shouldCancelEntry({mode:"LIMIT",exchangeStatus:"NEW",submittedAt:new Date(0).toISOString()},LIMIT_TTL))throw Error("ttl");});
- check(63,"LIMIT is not canceled before 24 hours",()=>{if(shouldCancelEntry({mode:"LIMIT",exchangeStatus:"NEW",submittedAt:new Date(0).toISOString()},LIMIT_TTL-1))throw Error("early");});
- check(64,"MARKET order never enters stale LIMIT cancellation",()=>{if(shouldCancelEntry({mode:"MARKET",exchangeStatus:"NEW",submittedAt:new Date(0).toISOString()},LIMIT_TTL*2))throw Error("market cancel");});
- check(65,"Unmanaged account-wide position is detected",()=>{if(!hasUnmanagedPosition([{symbol:"BTCUSDT",positionSide:"BOTH",positionAmt:"0.01"}],[]))throw Error("external");});
- check(66,"Managed One-Way position passes ownership check",()=>{if(hasUnmanagedPosition([{symbol:"SOLUSDT",positionSide:"BOTH",positionAmt:"1"}],[{symbol:"SOLUSDT",status:"PROTECTED"}]))throw Error("owned");});
- check(67,"Hedge-mode position always fails closed",()=>{if(!hasUnmanagedPosition([{symbol:"SOLUSDT",positionSide:"LONG",positionAmt:"1"}],[{symbol:"SOLUSDT",status:"PROTECTED"}]))throw Error("hedge");});
- check(68,"Algo create/query path is explicitly allowlisted",()=>{if(!SIGNED_PATHS.has("/fapi/v1/algoOrder")||!SIGNED_PATHS.has("/fapi/v1/openAlgoOrders"))throw Error("algo path");});
- check(69,"Production order host cannot appear in signed path list",()=>{if([...SIGNED_PATHS].some(x=>x.includes("binance.com")))throw Error("host injection");});
- check(70,"Stop and TP use distinct deterministic IDs",()=>{const c={id:123};if(idFor(c,"STOP")===idFor(c,"TP")||idFor(c,"ENTRY")===idFor(c,"STOP"))throw Error("collision");});
- check(71,"Remote entry symbol mismatch is rejected",()=>{try{recordOrderStatus({symbol:"SOLUSDT",clientOrderId:"A",qty:1},{symbol:"BTCUSDT",clientOrderId:"A",status:"NEW",origQty:"1",executedQty:"0"});throw Error("accepted")}
+ check(62,"BDD62",()=>{if(!shouldCancelEntry({mode:"LIMIT",exchangeStatus:"NEW",submittedAt:new Date(0).toISOString()},LIMIT_TTL))throw Error("ttl");});
+ check(63,"BDD63",()=>{if(shouldCancelEntry({mode:"LIMIT",exchangeStatus:"NEW",submittedAt:new Date(0).toISOString()},LIMIT_TTL-1))throw Error("early");});
+ check(64,"BDD64",()=>{if(shouldCancelEntry({mode:"MARKET",exchangeStatus:"NEW",submittedAt:new Date(0).toISOString()},LIMIT_TTL*2))throw Error("market cancel");});
+ check(65,"BDD65",()=>{if(!hasUnmanagedPosition([{symbol:"BTCUSDT",positionSide:"BOTH",positionAmt:"0.01"}],[]))throw Error("external");});
+ check(66,"BDD66",()=>{if(hasUnmanagedPosition([{symbol:"SOLUSDT",positionSide:"BOTH",positionAmt:"1"}],[{symbol:"SOLUSDT",status:"PROTECTED"}]))throw Error("owned");});
+ check(67,"BDD67",()=>{if(!hasUnmanagedPosition([{symbol:"SOLUSDT",positionSide:"LONG",positionAmt:"1"}],[{symbol:"SOLUSDT",status:"PROTECTED"}]))throw Error("hedge");});
+ check(68,"BDD68",()=>{if(!SIGNED_PATHS.has("/fapi/v1/algoOrder")||!SIGNED_PATHS.has("/fapi/v1/openAlgoOrders"))throw Error("algo path");});
+ check(69,"BDD69",()=>{if([...SIGNED_PATHS].some(x=>x.includes("binance.com")))throw Error("host injection");});
+ check(70,"BDD70",()=>{const c={id:123};if(idFor(c,"STOP")===idFor(c,"TP")||idFor(c,"ENTRY")===idFor(c,"STOP"))throw Error("collision");});
+ check(71,"BDD71",()=>{try{recordOrderStatus({symbol:"SOLUSDT",clientOrderId:"A",qty:1},{symbol:"BTCUSDT",clientOrderId:"A",status:"NEW",origQty:"1",executedQty:"0"});throw Error("accepted")}
   catch(e){if(String(e).includes("accepted"))throw e;}});
- check(72,"Remote entry client ID mismatch is rejected",()=>{try{recordOrderStatus({symbol:"SOLUSDT",clientOrderId:"A",qty:1},{symbol:"SOLUSDT",clientOrderId:"B",status:"NEW",origQty:"1",executedQty:"0"});throw Error("accepted")}
+ check(72,"BDD72",()=>{try{recordOrderStatus({symbol:"SOLUSDT",clientOrderId:"A",qty:1},{symbol:"SOLUSDT",clientOrderId:"B",status:"NEW",origQty:"1",executedQty:"0"});throw Error("accepted")}
   catch(e){if(String(e).includes("accepted"))throw e;}});
- check(73,"Exchange cannot report fill above original quantity",()=>{try{recordOrderStatus({symbol:"SOLUSDT",clientOrderId:"A",qty:1},{symbol:"SOLUSDT",clientOrderId:"A",status:"FILLED",origQty:"1",executedQty:"1.1"});throw Error("accepted")}
+ check(73,"BDD73",()=>{try{recordOrderStatus({symbol:"SOLUSDT",clientOrderId:"A",qty:1},{symbol:"SOLUSDT",clientOrderId:"A",status:"FILLED",origQty:"1",executedQty:"1.1"});throw Error("accepted")}
   catch(e){if(String(e).includes("accepted"))throw e;}});
- check(74,"Positive funding increases projected net",()=>{let a=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0);
+ check(74,"BDD74",()=>{let a=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0);
   let b=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0.1);if(b.net<=a.net)throw Error("funding");});
- check(75,"Schema v4 contains durable reconciliation and Donchian Paper fields",()=>{const x=blank();if(x.schema!==4||x.demoBackoffUntil!==0||!Array.isArray(x.orders)||!x.donchian||!Array.isArray(x.donchianPaper))throw Error("schema");});
- check(76,"Test-order diagnostic pins One-Way position side",()=>{if(DIAGNOSTIC_POSITION_SIDE!=="BOTH")throw Error("position side");});
- check(77,"Execution stays false unless an exact lowercase scoped flag is true",()=>{if(Bun.env.DEMO_ORDER_ENABLED!=="true"&&Bun.env.DEMO_DONCHIAN_ORDER_ENABLED!=="true"&&EXECUTE)throw Error("unsafe env parsing");});
- check(78,"Local BDD path override can never coexist with execution",()=>{if(LOCAL_BDD_ONLY&&EXECUTE)throw Error("unsafe local mode");});
- check(79,"Persistence fault transitions service to durable fail-closed halt",()=>{const previous=storageSafe;
+ check(75,"BDD75",()=>{const x=blank();if(x.schema!==4||x.demoBackoffUntil!==0||!Array.isArray(x.orders)||!x.donchian||!Array.isArray(x.donchianPaper))throw Error("schema");});
+ check(76,"BDD76",()=>{if(DIAGNOSTIC_POSITION_SIDE!=="BOTH")throw Error("position side");});
+ check(77,"BDD77",()=>{if(Bun.env.DEMO_ORDER_ENABLED!=="true"&&Bun.env.DEMO_DONCHIAN_ORDER_ENABLED!=="true"&&EXECUTE)throw Error("unsafe env parsing");});
+ check(78,"BDD78",()=>{if(LOCAL_BDD_ONLY&&EXECUTE)throw Error("unsafe local mode");});
+ check(79,"BDD79",()=>{const previous=storageSafe;
   try{markPersistenceFailure("synthetic disk readonly");if(storageSafe||!ledger.halted||ledger.haltReason!=="PERSISTENCE_FAILURE")throw Error("not halted");}
   finally{storageSafe=previous;}});
- check(80,"Every Telegram trade notification is visibly Demo-prefixed",()=>{if(!tagDemoNotice("order update").startsWith("BINANCE DEMO\n")||tagDemoNotice("Binance DEMO ok").toUpperCase().split("BINANCE DEMO").length!==2)throw Error("prefix");});
+ check(80,"BDD80",()=>{if(!tagDemoNotice("order update").startsWith("BINANCE DEMO\n")||tagDemoNotice("Binance DEMO ok").toUpperCase().split("BINANCE DEMO").length!==2)throw Error("prefix");});
  const limitSpec={filters:[{filterType:"LOT_SIZE",stepSize:"0.01",minQty:"0.01"},
   {filterType:"MARKET_LOT_SIZE",stepSize:"0.3",minQty:"0.3"},
   {filterType:"PRICE_FILTER",tickSize:"0.1",minPrice:"1",maxPrice:"1000"},
   {filterType:"MIN_NOTIONAL",notional:"5"}]};
- check(81,"Long LIMIT price rounds down to exchange tick",()=>{const x=riskParams({...candidate,mode:"LIMIT",entryLow:100.07,entryHigh:101},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);if(x.limitPrice!==100)throw Error("limit tick");});
- check(82,"Short LIMIT price rounds up to exchange tick",()=>{const x=riskParams({...candidate,mode:"LIMIT",side:"short",entryLow:99,entryHigh:100.07,stop:105},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);if(x.limitPrice!==100.1)throw Error("limit tick");});
- check(83,"LIMIT sizing uses LOT_SIZE rather than MARKET_LOT_SIZE",()=>{const x=riskParams({...candidate,mode:"LIMIT",entryLow:100,entryHigh:101},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);if(x.quantity!==0.5||Math.abs(x.quantity/0.3-Math.round(x.quantity/0.3))<1e-9)throw Error("lot step");});
- check(84,"Stop outside exchange price filter is rejected",()=>{try{riskParams({...candidate,stop:0.5},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);throw Error("accepted")}
+ check(81,"BDD81",()=>{const x=riskParams({...candidate,mode:"LIMIT",entryLow:100.07,entryHigh:101},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);if(x.limitPrice!==100)throw Error("limit tick");});
+ check(82,"BDD82",()=>{const x=riskParams({...candidate,mode:"LIMIT",side:"short",entryLow:99,entryHigh:100.07,stop:105},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);if(x.limitPrice!==100.1)throw Error("limit tick");});
+ check(83,"BDD83",()=>{const x=riskParams({...candidate,mode:"LIMIT",entryLow:100,entryHigh:101},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);if(x.quantity!==0.5||Math.abs(x.quantity/0.3-Math.round(x.quantity/0.3))<1e-9)throw Error("lot step");});
+ check(84,"BDD84",()=>{try{riskParams({...candidate,stop:0.5},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);throw Error("accepted")}
   catch(e){if(String(e).includes("accepted"))throw e;}});
- check(85,"Non-USDT commission cannot be mislabeled as USDT net PnL",()=>{try{actualSettlement({orderId:1,tpOrderId:2},[{orderId:1,commission:"0.1",commissionAsset:"BNB"}],[]);throw Error("accepted")}
+ check(85,"BDD85",()=>{try{actualSettlement({orderId:1,tpOrderId:2},[{orderId:1,commission:"0.1",commissionAsset:"BNB"}],[]);throw Error("accepted")}
   catch(e){if(String(e).includes("accepted"))throw e;}});
  const donchianCandles=(lastClose,count=21,offset=0)=>Array.from({length:count},(_,i)=>({
   high:i===count-1?Math.max(110,lastClose):110,low:i===count-1?Math.min(90,lastClose):90,
   close:i===count-1?lastClose:100,closeTime:(offset+i+1)*900000
  }));
- check(86,"Donchian 20-period upper breakout signals long entry",()=>{if(evaluateDonchian(donchianCandles(111))?.action!=="ENTER_LONG")throw Error("long");});
- check(87,"Donchian 20-period lower breakout signals short entry",()=>{if(evaluateDonchian(donchianCandles(89))?.action!=="ENTER_SHORT")throw Error("short");});
- check(88,"Donchian inside-channel close emits no entry",()=>{if(evaluateDonchian(donchianCandles(100)))throw Error("false entry");});
- check(89,"Donchian long uses 10-period lower channel exit",()=>{if(evaluateDonchian(donchianCandles(89),"LONG")?.action!=="EXIT_LONG")throw Error("long exit");});
- check(90,"Donchian short uses 10-period upper channel exit",()=>{if(evaluateDonchian(donchianCandles(111),"SHORT")?.action!=="EXIT_SHORT")throw Error("short exit");});
- check(91,"Donchian boundary touch is not a breakout",()=>{if(evaluateDonchian(donchianCandles(110))||evaluateDonchian(donchianCandles(90)))throw Error("boundary");});
- check(92,"Donchian refuses insufficient closed candles",()=>{if(evaluateDonchian(donchianCandles(111,20)))throw Error("short history");});
- check(93,"First Donchian poll only creates a baseline",()=>{const x=applyDonchian("BTCUSDT",donchianCandles(111));if(x||ledger.donchian.BTCUSDT.position!=="FLAT"||ledger.orders.length)throw Error("stale alert");});
- check(94,"Donchian entry state is independent of exchange orders",()=>{applyDonchian("BTCUSDT",donchianCandles(100));
+ const filteredCandles=(lastClose,earlyClose=100,count=202)=>Array.from({length:count},(_,i)=>{
+  const recent=i>=count-21,close=i===count-1?lastClose:(recent?100:earlyClose);
+  return {high:i===count-1?Math.max(101,lastClose):(recent?101:earlyClose+1),low:i===count-1?Math.min(99,lastClose):(recent?99:earlyClose-1),close,closeTime:(i+1)*3600000};
+ });
+ check(86,"BDD86",()=>{if(evaluateDonchian(donchianCandles(111))?.action!=="ENTER_LONG")throw Error("long");});
+ check(87,"BDD87",()=>{if(evaluateDonchian(donchianCandles(89))?.action!=="ENTER_SHORT")throw Error("short");});
+ check(88,"BDD88",()=>{if(evaluateDonchian(donchianCandles(100)))throw Error("false entry");});
+ check(89,"BDD89",()=>{if(evaluateDonchian(donchianCandles(89),"LONG")?.action!=="EXIT_LONG")throw Error("long exit");});
+ check(90,"BDD90",()=>{if(evaluateDonchian(donchianCandles(111),"SHORT")?.action!=="EXIT_SHORT")throw Error("short exit");});
+ check(91,"BDD91",()=>{if(evaluateDonchian(donchianCandles(110))||evaluateDonchian(donchianCandles(90)))throw Error("boundary");});
+ check(92,"BDD92",()=>{if(evaluateDonchian(donchianCandles(111,20)))throw Error("short history");});
+ check(93,"BDD93",()=>{const x=applyDonchian("BTCUSDT",donchianCandles(111));if(x||ledger.donchian.BTCUSDT.position!=="FLAT"||ledger.orders.length)throw Error("stale alert");});
+ check(94,"BDD94",()=>{applyDonchian("BTCUSDT",donchianCandles(100));
   const x=applyDonchian("BTCUSDT",donchianCandles(111,21,1));if(x?.action!=="ENTER_LONG"||ledger.donchian.BTCUSDT.position!=="LONG"||ledger.orders.length)throw Error("coupled");});
- check(95,"Duplicate closed Donchian candle is idempotent",()=>{applyDonchian("BTCUSDT",donchianCandles(100));
+ check(95,"BDD95",()=>{applyDonchian("BTCUSDT",donchianCandles(100));
   const candles=donchianCandles(111,21,1);applyDonchian("BTCUSDT",candles);if(applyDonchian("BTCUSDT",candles))throw Error("duplicate");});
- check(96,"Donchian exit returns advisory state to flat",()=>{applyDonchian("BTCUSDT",donchianCandles(100));
+ check(96,"BDD96",()=>{applyDonchian("BTCUSDT",donchianCandles(100));
   applyDonchian("BTCUSDT",donchianCandles(111,21,1));const x=applyDonchian("BTCUSDT",donchianCandles(89,21,2));
   if(x?.action!=="EXIT_LONG"||ledger.donchian.BTCUSDT.position!=="FLAT"||ledger.donchian.BTCUSDT.entryPrice!==null)throw Error("exit state");});
- check(97,"Status declares Donchian independent from Telegram channel",()=>{const x=safeStatus().donchian;if(!x.independentFromTelegramChannel||x.interval!=="15m"||x.entryPeriod!==20||x.exitPeriod!==10)throw Error("status");});
- check(98,"Donchian long entry exposes fixed stop and 2R take profit",()=>{const x=evaluateDonchian(donchianCandles(111));if(x.stopLoss!==90||x.takeProfit!==153||x.riskReward!==2)throw Error("long levels");});
- check(99,"Donchian short entry exposes fixed stop and 2R take profit",()=>{const x=evaluateDonchian(donchianCandles(89));if(x.stopLoss!==110||x.takeProfit!==47||x.riskReward!==2)throw Error("short levels");});
- check(100,"Donchian long position exits at fixed 2R take profit",()=>{const x=evaluateDonchian(donchianCandles(153),{position:"LONG",stopLoss:90,takeProfit:153});if(x?.action!=="EXIT_LONG"||x.reason!=="TAKE_PROFIT_2R")throw Error("long tp");});
- check(101,"Donchian short position exits at fixed stop loss",()=>{const x=evaluateDonchian(donchianCandles(111),{position:"SHORT",stopLoss:110,takeProfit:47});if(x?.action!=="EXIT_SHORT"||x.reason!=="STOP_LOSS")throw Error("short sl");});
- check(102,"Donchian entry notification clearly names pair entry stop and target",()=>{const x=evaluateDonchian(donchianCandles(111));const m=donchianNotification("BTCUSDT",x,{},"FLAT");
+ check(97,"BDD97",()=>{const x=safeStatus().donchian;if(!x.independentFromTelegramChannel||x.strategy!==ACTIVE_DONCHIAN_STRATEGY||x.interval!=="1h"||x.entryPeriod!==20||x.exitPeriod!==10||x.emaPeriod!==200||x.atrPeriod!==14)throw Error("status");});
+ check(98,"BDD98",()=>{const x=evaluateDonchian(donchianCandles(111));if(x.stopLoss!==90||x.takeProfit!==153||x.riskReward!==2)throw Error("long levels");});
+ check(99,"BDD99",()=>{const x=evaluateDonchian(donchianCandles(89));if(x.stopLoss!==110||x.takeProfit!==47||x.riskReward!==2)throw Error("short levels");});
+ check(100,"BDD100",()=>{const x=evaluateDonchian(donchianCandles(153),{position:"LONG",stopLoss:90,takeProfit:153});if(x?.action!=="EXIT_LONG"||x.reason!=="TAKE_PROFIT_2R")throw Error("long tp");});
+ check(101,"BDD101",()=>{const x=evaluateDonchian(donchianCandles(111),{position:"SHORT",stopLoss:110,takeProfit:47});if(x?.action!=="EXIT_SHORT"||x.reason!=="STOP_LOSS")throw Error("short sl");});
+ check(102,"BDD102",()=>{const x=evaluateDonchian(donchianCandles(111));const m=donchianNotification("BTCUSDT",x,{},"FLAT");
   if(!m.includes("幣別：BTC/USDT（BTCUSDT）")||!m.includes("建倉參考價：111")||!m.includes("停損參考價：90")||!m.includes("停利參考價：153")||!m.includes("2R"))throw Error("entry message");});
- check(103,"Donchian exit notification preserves original levels and exit reason",()=>{const state={entryPrice:111,stopLoss:90,takeProfit:153};const event=evaluateDonchian(donchianCandles(153),{position:"LONG",...state});const m=donchianNotification("BTCUSDT",event,state,"LONG");
+ check(103,"BDD103",()=>{const state={entryPrice:111,stopLoss:90,takeProfit:153};const event=evaluateDonchian(donchianCandles(153),{position:"LONG",...state});const m=donchianNotification("BTCUSDT",event,state,"LONG");
   if(!m.includes("本次平倉參考價：153")||!m.includes("原停損參考價：90")||!m.includes("原停利參考價：153")||!m.includes("到達 2R 停利"))throw Error("exit message");});
- check(104,"Donchian notifications include the matching TradingView 15m K-line link",()=>{const x=evaluateDonchian(donchianCandles(111));const m=donchianNotification("ETHUSDT",x,{},"FLAT");
+ check(104,"BDD104",()=>{const x=evaluateDonchian(donchianCandles(111));const m=donchianNotification("ETHUSDT",x,{},"FLAT");
   if(!m.includes("TradingView K線（15m）：https://www.tradingview.com/chart/?symbol=BINANCE%3AETHUSDT.P&interval=15")||!m.includes("不會送出 Binance Demo 或正式交易訂單"))throw Error("chart link");});
- check(105,"Donchian execution candidate carries entry stop target and source",()=>{const event=evaluateDonchian(donchianCandles(111));const c=donchianExecutionCandidate("BTCUSDT",event,true);
+ check(105,"BDD105",()=>{const event=evaluateDonchian(donchianCandles(111));const c=donchianExecutionCandidate("BTCUSDT",event,true);
   if(c.status!=="CANDIDATE"||c.sourceType!=="DONCHIAN"||c.side!=="long"||c.stop!==90||c.strategyTarget!==153||c.entryLow>=111||c.entryHigh<=111)throw Error("candidate");});
- check(106,"Disabled Donchian execution records a blocked intent",()=>{const event=evaluateDonchian(donchianCandles(89));const c=donchianExecutionCandidate("BTCUSDT",event,false);
+ check(106,"BDD106",()=>{const event=evaluateDonchian(donchianCandles(89));const c=donchianExecutionCandidate("BTCUSDT",event,false);
   if(c.status!=="BLOCKED_DONCHIAN_EXECUTION_DISABLED"||c.reason!=="DONCHIAN_EXECUTION_DISABLED")throw Error("not blocked");});
- check(107,"Donchian execution flag cannot arm Telegram channel candidates",()=>{if(executionAllowed({sourceType:"TELEGRAM_CHANNEL"},false,true)||!executionAllowed({sourceType:"DONCHIAN"},false,true))throw Error("scope leak");});
- check(108,"Donchian exit creates a deterministic execution request",()=>{const event=evaluateDonchian(donchianCandles(153),{position:"LONG",stopLoss:90,takeProfit:153});const r=donchianExitRequest("BTCUSDT",event,true);
+ check(107,"BDD107",()=>{if(executionAllowed({sourceType:"TELEGRAM_CHANNEL"},false,true)||!executionAllowed({sourceType:"DONCHIAN"},false,true))throw Error("scope leak");});
+ check(108,"BDD108",()=>{const event=evaluateDonchian(donchianCandles(153),{position:"LONG",stopLoss:90,takeProfit:153});const r=donchianExitRequest("BTCUSDT",event,true);
   if(r.status!=="PENDING"||r.side!=="long"||r.reason!=="TAKE_PROFIT_2R"||!r.id.includes("BTCUSDT"))throw Error("exit request");});
- check(109,"Actual Demo settlement records weighted entry exit and net PnL",()=>{const o={orderId:1,tpOrderId:2,clientOrderId:"KSDTEST",sourceId:"D1",sourceType:"DONCHIAN",strategy:"DONCHIAN_20_10_2R",symbol:"BTCUSDT",side:"long",status:"CLOSED",filledQty:1};
+ check(109,"BDD109",()=>{const o={orderId:1,tpOrderId:2,clientOrderId:"KSDTEST",sourceId:"D1",sourceType:"DONCHIAN",strategy:LEGACY_DONCHIAN_STRATEGY,symbol:"BTCUSDT",side:"long",status:"CLOSED",filledQty:1};
   o.actualSettlement=actualSettlement(o,[{orderId:1,price:"100",qty:"1",realizedPnl:"0",commission:"0.04",commissionAsset:"USDT"},{orderId:2,price:"102",qty:"1",realizedPnl:"2",commission:"0.04",commissionAsset:"USDT"}],[]);ledger.orders=[o];const row=demoTradeRecords()[0];
   if(row.entryPrice!==100||row.exitPrice!==102||Math.abs(row.netPnlUsdt-1.92)>1e-9||row.sourceType!=="DONCHIAN")throw Error("trade record");});
- check(110,"Donchian entry persists execution intent without creating an order",()=>{applyDonchian("BTCUSDT",donchianCandles(100));applyDonchian("BTCUSDT",donchianCandles(111,21,1));
+ check(110,"BDD110",()=>{applyDonchian("BTCUSDT",donchianCandles(100));applyDonchian("BTCUSDT",donchianCandles(111,21,1));
   const c=ledger.candidate[0];if(c?.sourceType!=="DONCHIAN"||ledger.orders.length)throw Error("entry intent");});
- check(111,"Donchian exit persists execution request and advisory returns flat",()=>{applyDonchian("BTCUSDT",donchianCandles(100));applyDonchian("BTCUSDT",donchianCandles(111,21,1));applyDonchian("BTCUSDT",donchianCandles(153,21,2));
+ check(111,"BDD111",()=>{applyDonchian("BTCUSDT",donchianCandles(100));applyDonchian("BTCUSDT",donchianCandles(111,21,1));applyDonchian("BTCUSDT",donchianCandles(153,21,2));
   const s=ledger.donchian.BTCUSDT;if(s.position!=="FLAT"||!s.executionExit||s.executionExit.action!=="EXIT_LONG")throw Error("exit intent");});
- check(112,"Donchian statistics include only Donchian settlements",()=>{const settlement={entryAvgPrice:100,exitAvgPrice:102,exitQty:1,grossRealized:2,commission:.08,funding:0,net:1.92,settledAt:now()};
+ check(112,"BDD112",()=>{const settlement={entryAvgPrice:100,exitAvgPrice:102,exitQty:1,grossRealized:2,commission:.08,funding:0,net:1.92,settledAt:now()};
   ledger.orders=[{sourceType:"DONCHIAN",clientOrderId:"D",symbol:"BTCUSDT",side:"long",status:"CLOSED",actualSettlement:settlement},{sourceType:"TELEGRAM_CHANNEL",clientOrderId:"T",symbol:"SOLUSDT",side:"long",status:"CLOSED",actualSettlement:{...settlement,net:99}}];
   const x=donchianStats();if(x.performance.closedTrades!==1||x.performance.netPnlUsdt!==1.92||x.orders.closed!==1)throw Error("cross-source leak");});
- check(113,"Donchian statistics expose no order identity or credentials",()=>{const raw=JSON.stringify(donchianStats());if(raw.includes("clientOrderId")||raw.includes("orderId")||raw.includes(APP_PASSWORD))throw Error("sensitive stats");});
- check(114,"Open Donchian advisory exposes report levels and Paper position",()=>{ledger.donchian.SOLUSDT={position:"LONG",entryPrice:93.96,stopLoss:86.46,takeProfit:108.96,entryTime:now(),lastObservedClose:93.96};
+ check(113,"BDD113",()=>{const raw=JSON.stringify(donchianStats());if(raw.includes("clientOrderId")||raw.includes("orderId")||raw.includes(APP_PASSWORD))throw Error("sensitive stats");});
+ check(114,"BDD114",()=>{ledger.donchian.SOLUSDT={position:"LONG",entryPrice:93.96,stopLoss:86.46,takeProfit:108.96,entryTime:now(),lastObservedClose:93.96};
   const s=donchianStats(),x=s.advisoryPositions[0];if(x.symbol!=="SOLUSDT"||x.entryPrice!==93.96||x.stopLoss!==86.46||x.takeProfit!==108.96||x.status!=="PAPER_OPEN"||s.paper.openPositions!==1)throw Error("paper detail");});
- check(115,"Donchian Paper closes and records fee-adjusted PnL",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:100};ledger.donchian.BTCUSDT=s;paperOpen("BTCUSDT",s);paperClose("BTCUSDT",{price:110,closeTime:Date.now(),reason:"TAKE_PROFIT_2R"});const x=ledger.donchianPaper[0];if(x.status!=="CLOSED"||x.netPnl>=x.grossPnl||paperReport().closedTrades!==1)throw Error("paper close");});
- check(116,"Donchian notifications are Paper-labelled and never claim Demo execution",()=>{const x=evaluateDonchian(donchianCandles(111)),m=donchianNotification("SOLUSDT",x,{},"FLAT");if(!m.startsWith("DONCHIAN PAPER")||!m.includes("已建立 Paper 模擬持倉")||m.includes("BINANCE DEMO\n"))throw Error("paper label");});
- check(117,"Donchian Paper closed records remain available after the position leaves the open table",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:100};ledger.donchian.ETHUSDT=s;paperOpen("ETHUSDT",s);paperClose("ETHUSDT",{price:110,closeTime:Date.now(),reason:"TAKE_PROFIT_2R"});const x=donchianStats().closedPaperPositions[0];if(x.symbol!=="ETHUSDT"||x.status!=="PAPER_CLOSED"||x.netPnl<=0||!x.exitTime||!x.chartUrl||"id" in x||"orderId" in x||"clientOrderId" in x)throw Error("closed Paper record");});
- check(118,"Donchian Paper unrealized PnL uses public mark price without changing closed-candle strategy state",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:101};ledger.donchian.SOLUSDT=s;ledger.donchianMarks.SOLUSDT={price:105,observedAt:now(),source:"BINANCE_DEMO_MARK_PRICE"};paperOpen("SOLUSDT",s);const x=donchianStats().advisoryPositions[0];if(x.lastPrice!==105||x.signalClosePrice!==101||x.lastPriceSource!=="BINANCE_DEMO_MARK_PRICE"||x.paperPnl<4)throw Error("mark price reporting");});
+ check(115,"BDD115",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:100};ledger.donchian.BTCUSDT=s;paperOpen("BTCUSDT",s);paperClose("BTCUSDT",{price:110,closeTime:Date.now(),reason:"TAKE_PROFIT_2R"});const x=ledger.donchianPaper[0];if(x.status!=="CLOSED"||x.netPnl>=x.grossPnl||paperReport().closedTrades!==1)throw Error("paper close");});
+ check(116,"BDD116",()=>{const x=evaluateDonchian(donchianCandles(111)),m=donchianNotification("SOLUSDT",x,{},"FLAT");if(!m.startsWith("DONCHIAN PAPER")||!m.includes("已建立 Paper 模擬持倉")||m.includes("BINANCE DEMO\n"))throw Error("paper label");});
+ check(117,"BDD117",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:100};ledger.donchian.ETHUSDT=s;paperOpen("ETHUSDT",s);paperClose("ETHUSDT",{price:110,closeTime:Date.now(),reason:"TAKE_PROFIT_2R"});const x=donchianStats().closedPaperPositions[0];if(x.symbol!=="ETHUSDT"||x.status!=="PAPER_CLOSED"||x.netPnl<=0||!x.exitTime||!x.chartUrl||"id" in x||"orderId" in x||"clientOrderId" in x)throw Error("closed Paper record");});
+ check(118,"BDD118",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:101};ledger.donchian.SOLUSDT=s;ledger.donchianMarks.SOLUSDT={price:105,observedAt:now(),source:"BINANCE_DEMO_MARK_PRICE"};paperOpen("SOLUSDT",s);const x=donchianStats().advisoryPositions[0];if(x.lastPrice!==105||x.signalClosePrice!==101||x.lastPriceSource!=="BINANCE_DEMO_MARK_PRICE"||x.paperPnl<4)throw Error("mark price reporting");});
+ check(119,"BDD119",()=>{const x=evaluateFilteredDonchian(filteredCandles(105));const risk=x?.price-x?.stopLoss;if(x?.action!=="ENTER_LONG"||!(x.price>x.ema200)||Math.abs(risk-2*x.atr14)>1e-9||Math.abs(x.takeProfit-x.price-2*risk)>1e-9||x.interval!=="1h")throw Error("filtered long");});
+ check(120,"BDD120",()=>{if(evaluateFilteredDonchian(filteredCandles(105,120)))throw Error("EMA filter bypassed");});
+ check(121,"BDD121",()=>{const s={position:"LONG",strategyVersion:LEGACY_DONCHIAN_STRATEGY,interval:"15m",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:100};ledger.donchian.BTCUSDT=s;paperOpen("BTCUSDT",s);const x=donchianStats().advisoryPositions[0];if(x.strategyVersion!==LEGACY_DONCHIAN_STRATEGY||x.interval!=="15m")throw Error("legacy changed");});
+ check(122,"BDD122",()=>{const x=evaluateFilteredDonchian(filteredCandles(105)),s={strategyVersion:ACTIVE_DONCHIAN_STRATEGY,interval:"1h"},m=donchianNotification("BTCUSDT",x,s,"FLAT");if(!m.includes("1H Donchian + EMA200 + ATR")||!m.includes("2 × ATR14")||!m.includes("interval=60"))throw Error("active notice");});
  return {mode:"SYNTHETIC_BDD",total:results.length,passed:results.filter(t=>t.pass).length,
   failed:results.filter(t=>!t.pass).length,results,at:now()};
 }
@@ -1126,7 +1197,7 @@ const page='<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name
 '<main><h1>K Signal — Binance Demo Trading</h1><p class="tag">DEMO ONLY · 不連正式 Binance · 不使用真實資金</p>'+
 '<section><h2>環境與風控</h2><pre id="status">載入中</pre></section>'+
 '<section><h2>候選交易訊號</h2><pre id="candidates">載入中</pre></section>'+
-'<section><h2>Donchian 獨立策略提示</h2><p>15 分鐘已收盤 K 線；20 期突破提示建倉。通知明列幣別、建倉價、訊號當下 10 期反向通道停損、2R 停利；持倉另以 10 期移動通道提示平倉。不讀取 Telegram 頻道，也不會自動下單。</p><pre id="donchian">載入中</pre></section>'+
+'<section><h2>1H Donchian + EMA200 + ATR Paper 策略</h2><p>新建倉使用 1 小時已收盤 K 線：20 期突破、EMA200 方向過濾、2×ATR14 固定停損、2R 停利與 10 期通道平倉。既有 Legacy 15m Paper 持倉依原規則結束；不讀取 Telegram 頻道，也不會自動下單。</p><pre id="donchian">載入中</pre></section>'+
 '<section><h2>Demo 交易與對帳</h2><pre id="orders">載入中</pre></section><section><h2>已平倉損益紀錄</h2><pre id="trades">載入中</pre></section>'+
 '<section><a href="/api/bdd">執行 BDD 測試</a> · <a href="/api/donchian">Donchian 狀態</a> · <a href="/api/trades">已平倉損益</a> · <a href="/api/audit">審計事件</a> · <a href="https://t.me/KCryptoBTC168">原始頻道</a></section>'+
 '<p>所有交易必須使用 Demo API 專用金鑰，並在 Railway 環境變數手動設定 DEMO_ORDER_ENABLED=true。單筆名目上限 100 USDT、僅允許一個持倉。'+
@@ -1157,9 +1228,11 @@ const app=Bun.serve({hostname:"0.0.0.0",port:Number(Bun.env.PORT||8080),async fe
  if(u.pathname==="/api/status")return response(safeStatus());
  if(u.pathname==="/api/candidates")return response(ledger.candidate);
  if(u.pathname==="/api/donchian")return response({strategy:{independentFromTelegramChannel:true,
-   interval:DONCHIAN_INTERVAL,entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,
-   takeProfitRiskReward:DONCHIAN_TAKE_PROFIT_R,stopLoss:"signal-time 10-period opposite channel",
-   chartUrlTemplate:"https://www.tradingview.com/chart/?symbol=BINANCE%3A{symbol}.P&interval=15",
+   name:ACTIVE_DONCHIAN_STRATEGY,interval:ACTIVE_DONCHIAN_INTERVAL,entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,
+   emaPeriod:ACTIVE_DONCHIAN_EMA_PERIOD,atrPeriod:ACTIVE_DONCHIAN_ATR_PERIOD,atrMultiplier:ACTIVE_DONCHIAN_ATR_MULTIPLIER,
+   takeProfitRiskReward:DONCHIAN_TAKE_PROFIT_R,stopLoss:"signal-time 2 x ATR14",
+   chartUrlTemplate:"https://www.tradingview.com/chart/?symbol=BINANCE%3A{symbol}.P&interval=60",
+   legacyOpenPositionsRemainOn:LEGACY_DONCHIAN_STRATEGY,
    demoExecutionEnabled:DONCHIAN_EXECUTE,executionReady:DONCHIAN_EXECUTE&&!!KEY&&!!SECRET&&!ledger.halted&&storageSafe,
    symbols:DONCHIAN_SYMBOLS,lastPoll:ledger.lastDonchianPoll,error:ledger.donchianError},states:ledger.donchian});
  if(u.pathname==="/api/orders")return response(ledger.orders);

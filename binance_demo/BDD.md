@@ -263,6 +263,23 @@ Feature: Donchian statistics in Paper Monitor
    And calculate unrealized Paper PnL from that mark price
    And label it `即時標記價` with its observation time
    But do not use the live mark price to trigger a Donchian entry or exit
+
+Feature: Replacement Paper strategy
+ Scenario: New entry uses the filtered 1-hour strategy
+   Given at least 201 closed 1-hour candles
+   When the latest close breaks the prior 20-period channel
+   Then allow a long entry only above EMA200
+   And allow a short entry only below EMA200
+   And fix the stop at 2 times ATR14 from the signal close
+   And fix the target at 2R
+   And retain the 10-period channel exit
+
+ Scenario: Existing 15-minute position is grandfathered
+   Given an open Paper position created by `DONCHIAN_15M_20_10_2R`
+   When the replacement strategy is deployed
+   Then keep its original 15-minute strategy identity and exit rules
+   And do not force-close, re-enter or rewrite its Paper record
+   And use the new 1-hour strategy only after that symbol becomes flat
 ```
 
 Railway evidence (2026-11-04): Demo BDD 116/116 and Paper BDD 155/155 passed. The Paper-first dashboard and notification wording were verified; the live Donchian Paper ledger held 3 positions, equity 9,995.44 USDT and unrealized PnL -4.56 USDT. No Demo order was created.
@@ -272,6 +289,8 @@ Ledger-separation evidence (2026-11-04): Paper deployment `2e7b9c94-895b-4263-89
 Closed-history evidence (2026-11-04): Demo deployment `79f436ab-7803-4cc2-88b0-98bf79873d91` passed 117/117 and Paper deployment `3a4c8ca1-d06c-494f-b49f-dd79e3a22729` passed 157/157. A natural ETHUSDT `CHANNEL_EXIT` remained visible after leaving the open table, with reference 2,330.44, simulated entry 2,330.91, simulated exit 2,313.05, fees 0.08 USDT, net PnL -0.85 USDT and close time. Both deployed sources matched git; Demo credentials remained unconfigured and both order gates stayed false.
 
 Live-mark evidence (2026-11-04): Demo deployment `4c8bc804-d73b-46f0-87ea-da0c2517955c` passed 118/118 and Paper deployment `1a3af553-d80a-456b-a688-d72151cf5c5e` passed 158/158. Railway successfully read the Binance Demo public premium-index feed. The live table labelled `即時標記價` and `行情時間`, showing BTCUSDT 79,224.30, ETHUSDT 2,373.16 and SOLUSDT 95.02 at `2026-11-04T14:58:40.313Z`; deployed sources matched git. The local host's direct public-endpoint attempt timed out and is recorded as a failed local network check, not a pass.
+
+Replacement-strategy evidence (2026-11-05): Demo deployment `95f58e85-3866-4c43-b9fc-c2bbc122e58c` passed 122/122 and Paper deployment `3fee43ee-3846-416d-b7fd-8326c81708bb` passed 159/159. Live runtime identified BTC/ETH/SOL/ZEC as flat and baselined on closed 1h candles, so it did not backfill stale entries. The Paper page displayed the filtered 1h rules, independent account B, and 11 durable closed records labelled `Legacy 15m`. Initial Paper deployment `dbaa39b9-cd39-4b3c-b661-48fe65aefbf3` failed 157/159 because BDD154 and BDD156 still expected the old heading; the checks were corrected and the next rollout passed. Both deployed sources matched git exactly; both Demo gates remained false and no Demo order was placed.
 
 ## Integration pending (not passed)
 Demo API key signed auth, non-matching test-order POST, matched Donchian MARKET entry/exit, partial fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and realized net PnL, natural breakout-triggered execution, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. User approval for virtual-fund Donchian execution was granted on 2026-11-04, but credentials and signed dry-run evidence are still missing; keep `DEMO_DONCHIAN_ORDER_ENABLED=false` until those checks pass.
