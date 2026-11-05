@@ -280,6 +280,14 @@ Feature: Replacement Paper strategy
    Then keep its original 15-minute strategy identity and exit rules
    And do not force-close, re-enter or rewrite its Paper record
    And use the new 1-hour strategy only after that symbol becomes flat
+
+Feature: Telegram Paper report chart access
+ Scenario: Every Telegram Paper trade has a market chart
+   Given a Telegram Paper pending, open or closed trade has a supported symbol
+   When Paper Monitor renders the trade record
+   Then show a `K線` column
+   And link that symbol to its TradingView perpetual-contract chart at 15m
+   But do not change the trade state or submit any order
 ```
 
 Railway evidence (2026-11-04): Demo BDD 116/116 and Paper BDD 155/155 passed. The Paper-first dashboard and notification wording were verified; the live Donchian Paper ledger held 3 positions, equity 9,995.44 USDT and unrealized PnL -4.56 USDT. No Demo order was created.
@@ -291,6 +299,8 @@ Closed-history evidence (2026-11-04): Demo deployment `79f436ab-7803-4cc2-88b0-9
 Live-mark evidence (2026-11-04): Demo deployment `4c8bc804-d73b-46f0-87ea-da0c2517955c` passed 118/118 and Paper deployment `1a3af553-d80a-456b-a688-d72151cf5c5e` passed 158/158. Railway successfully read the Binance Demo public premium-index feed. The live table labelled `即時標記價` and `行情時間`, showing BTCUSDT 79,224.30, ETHUSDT 2,373.16 and SOLUSDT 95.02 at `2026-11-04T14:58:40.313Z`; deployed sources matched git. The local host's direct public-endpoint attempt timed out and is recorded as a failed local network check, not a pass.
 
 Replacement-strategy evidence (2026-11-05): Demo deployment `95f58e85-3866-4c43-b9fc-c2bbc122e58c` passed 122/122 and Paper deployment `3fee43ee-3846-416d-b7fd-8326c81708bb` passed 159/159. Live runtime identified BTC/ETH/SOL/ZEC as flat and baselined on closed 1h candles, so it did not backfill stale entries. The Paper page displayed the filtered 1h rules, independent account B, and 11 durable closed records labelled `Legacy 15m`. Initial Paper deployment `dbaa39b9-cd39-4b3c-b661-48fe65aefbf3` failed 157/159 because BDD154 and BDD156 still expected the old heading; the checks were corrected and the next rollout passed. Both deployed sources matched git exactly; both Demo gates remained false and no Demo order was placed.
+
+Telegram-chart evidence (2026-11-05): Paper deployment `964d637d-b95e-4f6a-b512-4f43309199fd` passed 160/160. Live UI rendered a `K線` column with BTCUSDT and SOLUSDT TradingView perpetual links at 15m for pending and closed rows respectively. Health returned 200, deployed source matched git exactly, and no staged change or trade-state mutation occurred.
 
 ## Integration pending (not passed)
 Demo API key signed auth, non-matching test-order POST, matched Donchian MARKET entry/exit, partial fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and realized net PnL, natural breakout-triggered execution, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. User approval for virtual-fund Donchian execution was granted on 2026-11-04, but credentials and signed dry-run evidence are still missing; keep `DEMO_DONCHIAN_ORDER_ENABLED=false` until those checks pass.

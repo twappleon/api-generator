@@ -1586,6 +1586,7 @@ test("BDD156",()=>{assert(page.includes("Telegram 訊號 Paper 帳本")&&page.in
 test("BDD157",()=>{const remote={schemaVersion:1,ledger:"BINANCE_DEMO_DONCHIAN",performance:{},paper:{closedTrades:1},closedPaperPositions:[{symbol:"BTCUSDT",status:"PAPER_CLOSED",netPnl:2}]};const x=mergeDonchianStats({},remote,{error:null});assert(x.donchianDemo.closedPositions.length===1&&page.includes("Donchian Paper 平倉紀錄")&&page.includes("dClosedPositions"),"closed Paper history missing");});
 test("BDD158",()=>{assert(page.includes("即時標記價")&&page.includes("行情時間")&&!page.includes("<th>現價</th>"),"mark price label missing");});
 test("BDD159",()=>{assert(page.includes("1H Donchian + EMA200 + ATR")&&page.includes("新建倉策略")&&page.includes("Legacy 15m"),"strategy replacement not labelled");});
+test("BDD160",()=>{assert(page.includes("Telegram Paper 模擬交易紀錄")&&page.includes("<th>K線</th>")&&page.includes("telegramChartUrl")&&page.includes("15m K線"),"Telegram Paper chart link missing");});
 
 const failed=results.filter(x=>!x.pass);
 return {
@@ -1641,7 +1642,7 @@ const page = [
 "<div class='section'><h2>Telegram Paper 資金曲線</h2><small>每分鐘快照，只代表獨立帳本 A</small></div>",
 "<div class='panel'><svg class='chart' id='chart' viewBox='0 0 900 210' preserveAspectRatio='none'></svg></div>",
 "<div class='section'><h2>Telegram Paper 模擬交易紀錄</h2><a href='/api/orders.csv' target='_blank'>匯出 CSV</a></div>",
-"<div class='panel'><table><thead><tr><th>原始訊號</th><th>幣種</th><th>方向</th><th>狀態</th><th>進場區間</th><th>進場 / 出場</th><th>淨損益</th></tr></thead><tbody id='trades'><tr><td colspan='7'>載入中...</td></tr></tbody></table></div>",
+"<div class='panel'><table><thead><tr><th>原始訊號</th><th>幣種</th><th>方向</th><th>狀態</th><th>進場區間</th><th>進場 / 出場</th><th>淨損益</th><th>K線</th></tr></thead><tbody id='trades'><tr><td colspan='8'>載入中...</td></tr></tbody></table></div>",
 "<div class='section'><h2>每日損益</h2><small>UTC 日期</small></div>",
 "<div class='panel'><table><thead><tr><th>日期</th><th>交易數</th><th>勝場</th><th>已實現損益</th></tr></thead><tbody id='daily'><tr><td colspan='4'>尚無已平倉交易</td></tr></tbody></table></div>",
 "<footer>來源：<a href='https://t.me/KCryptoBTC168' target='_blank'>KCryptoBTC168</a> 公開預覽 · 記錄不可代表頻道長期實盤績效 · 市價/掛單填單僅按 15 秒輪詢中實際取得的 Binance 標記價格判斷 · 無槓桿或真實下單。</footer>",
@@ -1650,6 +1651,7 @@ const page = [
 "const fmt=(n,d=2)=>Number(n||0).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});",
 "const pnl=n=>'<span class=\"'+(n>=0?'positive':'negative')+'\">'+(n>=0?'+':'')+fmt(n)+'</span>';",
 "const clean=s=>String(s??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));",
+"const telegramChartUrl=symbol=>'https://www.tradingview.com/chart/?symbol=BINANCE%3A'+encodeURIComponent(String(symbol||''))+'.P&interval=15';",
 "async function tick(){try{",
 "const [r,o,s]=await Promise.all(['/api/report','/api/orders','/api/status'].map(u=>fetch(u).then(x=>x.json())));",
 "$('equity').textContent=fmt(r.equity)+' USDT';$('return').innerHTML=pnl(r.netReturnPct)+'%';",
@@ -1666,7 +1668,7 @@ const page = [
 "const ps=d.positions||[];$('dPositions').innerHTML=ps.length?ps.map(x=>'<tr><td>'+clean(x.symbol)+'</td><td>'+clean(x.side)+'</td><td><span class=\"tag\">'+strategyName(x)+'</span></td><td><span class=\"tag\">Paper 模擬持倉</span></td><td>'+fmt(x.entryPrice)+'</td><td>'+fmt(x.lastPrice)+'</td><td>'+clean(x.lastPriceAt||'—')+'</td><td>'+fmt(x.stopLoss)+'</td><td>'+fmt(x.takeProfit)+'</td><td>'+pnl(x.paperPnl||0)+'</td><td>'+clean(x.entryTime||'—')+'</td><td><a target=\"_blank\" href=\"'+clean(x.chartUrl)+'\">'+clean(x.interval||'15m')+' K線</a></td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Paper 持倉</td></tr>';",
 "const cs=d.closedPositions||[];$('dClosedPositions').innerHTML=cs.length?cs.map(x=>'<tr><td>'+clean(x.symbol)+'</td><td>'+clean(x.side)+'</td><td><span class=\"tag\">'+strategyName(x)+'</span></td><td><span class=\"tag\">已平倉</span></td><td>'+fmt(x.referenceEntry)+'</td><td>'+fmt(x.entryPrice)+'</td><td>'+fmt(x.exitPrice)+'</td><td>'+clean(x.exitReason||'—')+'</td><td>'+fmt(x.fees||0)+'</td><td>'+pnl(x.netPnl||0)+'</td><td>'+clean(x.exitTime||'—')+'</td><td><a target=\"_blank\" href=\"'+clean(x.chartUrl)+'\">'+clean(x.interval||'15m')+' K線</a></td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Donchian Paper 平倉紀錄</td></tr>';",
 "$('status').textContent='● 訊號：'+(s.channelError?'讀取異常':'正常')+' | 首次建立基線：'+(s.initialized?'完成':'等待中')+' | 最後訊號輪詢 '+(s.lastChannelPollAt||'—')+' | 已記錄貼文 '+s.messagesCaptured+' | 最後行情 '+(s.lastPricePollAt||'—')+(s.channelError?' | '+s.channelError:'')+(s.priceError?' | 行情錯誤：'+s.priceError:'');",
-"$('trades').innerHTML=o.length?o.slice().reverse().slice(0,100).map(x=>'<tr><td><a href=\"https://t.me/KCryptoBTC168/'+x.messageId+'\" target=\"_blank\">#'+x.messageId+'</a></td><td>'+clean(x.symbol)+'</td><td>'+clean(x.side)+'</td><td><span class=\"tag\">'+clean(x.status)+'</span></td><td>'+fmt(x.entryLow)+' – '+fmt(x.entryHigh)+'</td><td>'+(x.entryPrice?fmt(x.entryPrice):'—')+' / '+(x.exitPrice?fmt(x.exitPrice):'—')+'</td><td>'+((x.status==='closed')?pnl(x.netPnl):'—')+'</td></tr>').join(''):'<tr><td colspan=\"7\">目前沒有有效的新交易訊號；不倒填歷史成交。</td></tr>';",
+"$('trades').innerHTML=o.length?o.slice().reverse().slice(0,100).map(x=>'<tr><td><a href=\"https://t.me/KCryptoBTC168/'+x.messageId+'\" target=\"_blank\">#'+x.messageId+'</a></td><td>'+clean(x.symbol)+'</td><td>'+clean(x.side)+'</td><td><span class=\"tag\">'+clean(x.status)+'</span></td><td>'+fmt(x.entryLow)+' – '+fmt(x.entryHigh)+'</td><td>'+(x.entryPrice?fmt(x.entryPrice):'—')+' / '+(x.exitPrice?fmt(x.exitPrice):'—')+'</td><td>'+((x.status==='closed')?pnl(x.netPnl):'—')+'</td><td><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"'+telegramChartUrl(x.symbol)+'\">15m K線</a></td></tr>').join(''):'<tr><td colspan=\"8\">目前沒有有效的新交易訊號；不倒填歷史成交。</td></tr>';",
 "const days=Object.entries(r.daily).sort((a,b)=>b[0].localeCompare(a[0]));",
 "$('daily').innerHTML=days.length?days.map(([k,v])=>'<tr><td>'+k+'</td><td>'+v.trades+'</td><td>'+v.wins+'</td><td>'+pnl(v.pnl)+'</td></tr>').join(''):'<tr><td colspan=\"4\">尚無已平倉交易</td></tr>';",
 "const points=r.snapshots.length?r.snapshots.map(v=>v.equity):[10000];",
