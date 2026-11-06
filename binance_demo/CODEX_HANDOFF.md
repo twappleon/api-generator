@@ -41,6 +41,10 @@ Telegram chart rule: every Telegram Paper trade row must expose a read-only pair
 
 Telegram pagination rule: the dashboard shows Telegram Paper trade history at 10 rows per page inside the existing latest-100 UI window, with bounded previous/next controls and page status. Pagination is client-side presentation only and must not truncate persistent data or CSV export.
 
+Public-report rule: Paper Monitor's dashboard plus sanitized status/report/orders, Telegram delivery summary and CSV are public without Basic Auth. Keep Telegram pairing setup, self-test, raw captured messages and raw quote diagnostics protected. Never expose pairing codes, setup URLs, bot tokens, private chat identifiers or internal errors in the public Telegram summary.
+
+RWD rule: at phone widths, cards use one column and every report table is rendered as labelled row cards; pagination must wrap inside the viewport. Desktop tables remain unchanged.
+
 Closed-history rule: a Donchian Paper position leaving the open table must remain durable in `donchianPaper` and appear in the sanitized latest-100 `Donchian Paper 平倉紀錄` table. Include simulated entry/exit, exit reason, fees, net PnL and close time; exclude internal IDs, credentials and exchange-order identities.
 
 Price-reporting rule: strategy signals use closed candles only for the applicable Legacy 15m or active 1h interval. Open Donchian Paper rows and unrealized PnL must use Binance Demo public mark prices with an observation timestamp, labelled `即時標記價`; never label a closed-candle value as current price.
@@ -58,6 +62,8 @@ Replacement-strategy rule: new entries use `DONCHIAN_1H_20_10_EMA200_ATR14_2X_2R
 **Codex v2.0 Telegram Paper chart links:** every Telegram Paper record now has a pair-specific TradingView perpetual `15m K線` link. Paper deployment `964d637d-b95e-4f6a-b512-4f43309199fd` passed 160/160; health passed, deployed source matched git and no staged changes remained. Live UI verified BTCUSDT pending and SOLUSDT closed links. This was reporting-only: Paper state and both Demo gates were unchanged. Screenshot: `artifacts/telegram-paper-chart-links-20261105.png`.
 
 **Codex v2.1 Telegram Paper pagination:** the Telegram Paper record table now shows 10 rows per page with bounded previous/next controls and current/total page text. Paper deployment `2bbbd04b-ac69-4235-8a77-bd9c49075020` passed 161/161; health passed and deployed source matched git exactly. Live UI displayed `第 1 / 1 頁 · 每頁 10 筆`, with both controls disabled for the current two-row dataset. Persistent ledger and CSV were not truncated. Screenshot: `artifacts/telegram-paper-pagination-20261105.png`.
+
+**Codex v2.2 public RWD report:** the dashboard and sanitized read-only APIs no longer require credentials, while pairing setup, self-test, raw messages and raw quotes remain protected. Paper deployment `8a00d689-11d6-4bd8-984c-d399f66b3f4e` passed 163/163; all expected anonymous 200/401 boundaries, health and source parity were verified. At 390×844 the page used one-column cards and labelled mobile record cards. Initial rollout `8b4a8ea9-5a17-4773-9594-4ec1a31669a7` failed 162/163 because BDD148 still expected Telegram status itself to be private; the test now verifies only a sanitized summary is public and sensitive setup fields remain absent. Screenshots: `artifacts/public-rwd-mobile-top-20261106.png`, `artifacts/public-rwd-mobile-records-20261106.png`.
 
 ## 3. Immediate Codex tasks (P0)
 1. **Review architecture and safety:** keep production and Demo host entirely segregated. Ensure no path or config can direct signed orders to production. Prefer source-controlled modular implementation and automated tests over monolithic inline Function, but preserve deployment compatibility.

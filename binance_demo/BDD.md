@@ -297,6 +297,21 @@ Feature: Telegram Paper record pagination
    And provide previous and next controls with the current and total page number
    And disable navigation beyond the first or last page
    But retain at most the existing latest 100 displayed records
+
+Feature: Public responsive Paper dashboard
+ Scenario: A visitor opens the report without credentials
+   Given the request has no Authorization header
+   When it requests the dashboard, sanitized status/report/orders, Telegram delivery summary or CSV
+   Then return the read-only resource without a login challenge
+   But keep Telegram setup, self-test, raw messages and raw quotes behind Basic Auth
+   And never expose a pairing code, Telegram setup URL, token or private chat identifier
+
+ Scenario: A phone opens the report
+   Given the viewport width is 760 pixels or less
+   When the dashboard is rendered
+   Then use one-column summary cards
+   And render each table row as a labelled mobile card
+   And wrap pagination controls inside the viewport
 ```
 
 Railway evidence (2026-11-04): Demo BDD 116/116 and Paper BDD 155/155 passed. The Paper-first dashboard and notification wording were verified; the live Donchian Paper ledger held 3 positions, equity 9,995.44 USDT and unrealized PnL -4.56 USDT. No Demo order was created.
@@ -312,6 +327,8 @@ Replacement-strategy evidence (2026-11-05): Demo deployment `95f58e85-3866-4c43-
 Telegram-chart evidence (2026-11-05): Paper deployment `964d637d-b95e-4f6a-b512-4f43309199fd` passed 160/160. Live UI rendered a `K線` column with BTCUSDT and SOLUSDT TradingView perpetual links at 15m for pending and closed rows respectively. Health returned 200, deployed source matched git exactly, and no staged change or trade-state mutation occurred.
 
 Telegram-pagination evidence (2026-11-05): Paper deployment `2bbbd04b-ac69-4235-8a77-bd9c49075020` passed 161/161. Live UI rendered `上一頁`, `第 1 / 1 頁 · 每頁 10 筆` and `下一頁`; both controls were disabled because only two records currently exist. Health returned 200, deployed source matched git exactly, and the persistent ledger plus CSV export remained unchanged.
+
+Public-RWD evidence (2026-11-06): Paper deployment `8a00d689-11d6-4bd8-984c-d399f66b3f4e` passed 163/163. Anonymous `/`, report, orders, Telegram summary and CSV returned 200; Telegram setup, self-test, raw messages and raw quotes returned 401. The public Telegram response excludes pairing/setup/error/token fields. A 390×844 browser viewport visibly rendered one-column summary cards, labelled mobile trade cards, responsive pagination and labelled daily rows without a login prompt. Initial rollout `8b4a8ea9-5a17-4773-9594-4ec1a31669a7` failed BDD148 at 162/163 because its legacy expectation required Telegram status to remain private; the corrected test asserts sanitized-public status plus protected setup.
 
 ## Integration pending (not passed)
 Demo API key signed auth, non-matching test-order POST, matched Donchian MARKET entry/exit, partial fills, Algo stop create/query/trigger/cancel, live 429/5xx/timeout reconciliation, wallet/account-wide position alignment, actual fees/funding and realized net PnL, natural breakout-triggered execution, real read-only-volume fault injection, process restart recovery, fast-market behavior and 7–30 day stability. User approval for virtual-fund Donchian execution was granted on 2026-11-04, but credentials and signed dry-run evidence are still missing; keep `DEMO_DONCHIAN_ORDER_ENABLED=false` until those checks pass.

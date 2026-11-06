@@ -152,6 +152,11 @@ paired:!!t.chatId, pairedAt:t.boundAt||null, botUsername:t.botUsername||null,
 queued:notices.filter(x=>x.status!=="delivered").length, delivered:t.delivered||0,
 lastSentAt:t.lastSentAt||null, lastError:t.error||null };
 }
+function publicTelegramStatus() {
+const s=telegramStatus();
+return {targetUsername:s.targetUsername,paired:s.paired,botUsername:s.botUsername,
+queued:s.queued,delivered:s.delivered,lastSentAt:s.lastSentAt};
+}
 function telegramSetup() {
 const status=telegramStatus();
 if(!status.botTokenConfigured || status.paired) return status;
@@ -1309,27 +1314,27 @@ const r=route(new Request("http://localhost/healthz"));
 assert(r.status===200 && r.headers.get("Cache-Control")==="no-store","health endpoint not healthy");
 });
 test("BDD113",()=>{
-for(const path of ["/","/api/report","/api/selftest","/api/orders","/api/orders.csv"]){
-assert(route(new Request("http://localhost"+path)).status===401,"unauthorized: "+path);
-}
+for(const path of ["/","/api/report","/api/orders","/api/orders.csv","/api/status","/api/telegram/status"])
+assert(route(new Request("http://localhost"+path)).status===200,"public report inaccessible: "+path);
+for(const path of ["/api/selftest","/api/telegram/setup","/api/messages","/api/quotes"])
+assert(route(new Request("http://localhost"+path)).status===401,"protected route exposed: "+path);
 });
 test("BDD114",()=>{
-const r=route(new Request("http://localhost/api/report",{headers:{Authorization:"Basic invalidbase64%%%"} }));
+const r=route(new Request("http://localhost/api/messages",{headers:{Authorization:"Basic invalidbase64%%%"} }));
 assert(r.status===401,"malformed Basic was accepted");
 });
 test("BDD115",()=>{
 const h="Basic "+btoa("viewer:not-the-secret");
-assert(route(new Request("http://localhost/api/report",{headers:{Authorization:h}})).status===401,
+assert(route(new Request("http://localhost/api/telegram/setup",{headers:{Authorization:h}})).status===401,
 "wrong password allowed");
 });
 test("BDD116",()=>{
 const h="Basic "+btoa("viewer:"+password);
-assert(route(new Request("http://localhost/api/report",{headers:{Authorization:h}})).status===200,
-"authenticated report inaccessible");
+assert(route(new Request("http://localhost/api/messages",{headers:{Authorization:h}})).status===200,
+"authenticated management data inaccessible");
 });
 test("BDD117",()=>{
-const h="Basic "+btoa("viewer:"+password);
-assert(route(new Request("http://localhost/api/report",{method:"POST",headers:{Authorization:h}})).status===405,
+assert(route(new Request("http://localhost/api/report",{method:"POST"})).status===405,
 "POST accepted on read-only API");
 });
 test("BDD118",()=>{
@@ -1338,14 +1343,12 @@ assert(route(new Request("http://localhost/api/unknown",{headers:{Authorization:
 "unknown API route did not 404");
 });
 test("BDD119",()=>{
-const h="Basic "+btoa("viewer:"+password);
-const r=route(new Request("http://localhost/api/report",{headers:{Authorization:h}}));
+const r=route(new Request("http://localhost/api/report"));
 assert(r.status===200 && (r.headers.get("Content-Type")||"").includes("application/json"),
 "report content type wrong");
 });
 test("BDD120",()=>{
-const h="Basic "+btoa("viewer:"+password);
-const r=route(new Request("http://localhost/api/orders.csv",{headers:{Authorization:h}}));
+const r=route(new Request("http://localhost/api/orders.csv"));
 assert(r.status===200 && (r.headers.get("Content-Type")||"").includes("text/csv") &&
 (r.headers.get("Content-Disposition")||"").includes("filename="),"CSV download headers missing");
 });
@@ -1526,9 +1529,11 @@ assert(!pairingMatches({from:{username:TG_TARGET},chat:{type:"group"},text:"/sta
 "group chat paired");
 });
 test("BDD148",()=>{
-assert(route(new Request("http://localhost/api/telegram/status")).status===401 &&
-route(new Request("http://localhost/api/telegram/setup")).status===401,
-"telegram binding endpoints not protected");
+const publicStatus=publicTelegramStatus();
+assert(route(new Request("http://localhost/api/telegram/status")).status===200 &&
+route(new Request("http://localhost/api/telegram/setup")).status===401 &&
+!["pairingCode","startUrl","chatId","lastError","botTokenConfigured","pairedAt"].some(k=>k in publicStatus),
+"public Telegram summary or protected setup boundary invalid");
 });
 test("BDD149",()=>{
 state.telegram.chatId="123456789";
@@ -1588,6 +1593,8 @@ test("BDD158",()=>{assert(page.includes("即時標記價")&&page.includes("行�
 test("BDD159",()=>{assert(page.includes("1H Donchian + EMA200 + ATR")&&page.includes("新建倉策略")&&page.includes("Legacy 15m"),"strategy replacement not labelled");});
 test("BDD160",()=>{assert(page.includes("Telegram Paper 模擬交易紀錄")&&page.includes("<th>K線</th>")&&page.includes("telegramChartUrl")&&page.includes("15m K線"),"Telegram Paper chart link missing");});
 test("BDD161",()=>{assert(page.includes("TELEGRAM_TRADE_PAGE_SIZE=10")&&page.includes("tradesPrev")&&page.includes("tradesNext")&&page.includes("每頁 10 筆")&&page.includes("renderTelegramTrades"),"Telegram Paper pagination missing");});
+test("BDD162",()=>{assert(page.includes("responsive-table")&&page.includes("data-label")&&page.includes("grid-template-columns:1fr")&&page.includes("viewport"),"mobile RWD layout missing");});
+test("BDD163",()=>{const publicPaths=["/","/api/status","/api/report","/api/orders","/api/orders.csv","/api/telegram/status"];assert(publicPaths.every(path=>route(new Request("http://localhost"+path)).status===200)&&route(new Request("http://localhost/api/telegram/setup")).status===401,"public/protected route boundary invalid");});
 
 const failed=results.filter(x=>!x.pass);
 return {
@@ -1619,7 +1626,7 @@ const page = [
 ".chart{width:100%;height:210px;display:block}footer{color:#8193b5;font-size:12px;line-height:1.7;margin-top:26px}",
 ".status{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#9fb2d8}",
 ".dot{width:8px;height:8px;border-radius:50%;background:#50d4a7;display:inline-block}",
-"@media(max-width:760px){.cards{grid-template-columns:repeat(2,1fr)}.value{font-size:23px}.wrap{padding:20px 12px}h1{font-size:22px}}",
+"@media(max-width:760px){.cards{grid-template-columns:1fr}.value{font-size:23px}.wrap{padding:16px 10px 40px}h1{font-size:22px}.ledger{padding:14px 10px 1px;border-radius:16px}.panel{padding:12px;overflow:visible}.section{align-items:flex-start;flex-wrap:wrap}.responsive-table{min-width:0;display:block}.responsive-table thead{display:none}.responsive-table tbody{display:grid;gap:12px}.responsive-table tr{display:block;border:1px solid #2b3956;border-radius:12px;padding:7px 10px;background:#0e172a}.responsive-table td{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:8px 0;border-bottom:1px solid #22304a;white-space:normal;text-align:right}.responsive-table td::before{content:attr(data-label);color:#8fa2c6;font-size:11px;font-weight:700;letter-spacing:.04em;text-align:left}.responsive-table td:last-child{border-bottom:0}.responsive-table td[colspan]{display:block;text-align:center}.responsive-table td[colspan]::before{display:none}.pager{justify-content:center;flex-wrap:wrap}}",
 "</style></head><body><div class='wrap'>",
 "<header><div><h1>K Signal Paper Lab</h1><small>Telegram 訊號監控 · Binance 標記價格 · 模擬交易績效</small></div><span class='pill'>● PAPER ONLY — 非真實下單</span></header>",
 "<div class='warning'>本系統只模擬，無任何真實交易；持倉在扣除雙向手續費（單邊 0.04%）及模擬滑價（單邊 0.02%）後，剩餘倉位淨獲利達進場名目金額的 +1% 自動全平。止損及頻道明確平倉指令仍有效；尚未計入 Funding Fee、強平與真實訂單簿深度。歷史訊號不倒填成交。</div>",
@@ -1638,15 +1645,15 @@ const page = [
 "<div class='card'><label>Demo 實際已平倉</label><div class='value' id='dActual'>—</div><div class='sub'>Demo 下單仍停用</div></div></div>",
 "<div class='warning' id='dStatus'>新建倉已替換為 1H Donchian + EMA200 + ATR；既有 Legacy 15m 持倉依原規則結束。此區不與 Telegram Paper 淨值相加，也不會送出 Binance Demo 或正式訂單。</div></div>",
 "<div class='section'><h2>Donchian Paper 模擬持倉明細</h2><small>每筆名目 100 USDT；含手續費與模擬滑價</small></div>",
-"<div class='panel'><table><thead><tr><th>幣別</th><th>方向</th><th>策略</th><th>狀態</th><th>建倉參考</th><th>即時標記價</th><th>行情時間</th><th>停損</th><th>停利</th><th>未實現損益</th><th>訊號時間</th><th>K線</th></tr></thead><tbody id='dPositions'><tr><td colspan='12'>尚無 Paper 持倉</td></tr></tbody></table></div>",
+"<div class='panel'><table class='responsive-table'><thead><tr><th>幣別</th><th>方向</th><th>策略</th><th>狀態</th><th>建倉參考</th><th>即時標記價</th><th>行情時間</th><th>停損</th><th>停利</th><th>未實現損益</th><th>訊號時間</th><th>K線</th></tr></thead><tbody id='dPositions'><tr><td colspan='12'>尚無 Paper 持倉</td></tr></tbody></table></div>",
 "<div class='section'><h2>Donchian Paper 平倉紀錄</h2><small>平倉後永久保留於獨立 Paper 帳本；最多顯示最近 100 筆</small></div>",
-"<div class='panel'><table><thead><tr><th>幣別</th><th>方向</th><th>策略</th><th>狀態</th><th>建倉參考</th><th>模擬進場</th><th>模擬出場</th><th>原因</th><th>費用</th><th>淨損益</th><th>平倉時間</th><th>K線</th></tr></thead><tbody id='dClosedPositions'><tr><td colspan='12'>尚無 Donchian Paper 平倉紀錄</td></tr></tbody></table></div>",
+"<div class='panel'><table class='responsive-table'><thead><tr><th>幣別</th><th>方向</th><th>策略</th><th>狀態</th><th>建倉參考</th><th>模擬進場</th><th>模擬出場</th><th>原因</th><th>費用</th><th>淨損益</th><th>平倉時間</th><th>K線</th></tr></thead><tbody id='dClosedPositions'><tr><td colspan='12'>尚無 Donchian Paper 平倉紀錄</td></tr></tbody></table></div>",
 "<div class='section'><h2>Telegram Paper 資金曲線</h2><small>每分鐘快照，只代表獨立帳本 A</small></div>",
 "<div class='panel'><svg class='chart' id='chart' viewBox='0 0 900 210' preserveAspectRatio='none'></svg></div>",
 "<div class='section'><h2>Telegram Paper 模擬交易紀錄</h2><a href='/api/orders.csv' target='_blank'>匯出 CSV</a></div>",
-"<div class='panel'><table><thead><tr><th>原始訊號</th><th>幣種</th><th>方向</th><th>狀態</th><th>進場區間</th><th>進場 / 出場</th><th>淨損益</th><th>K線</th></tr></thead><tbody id='trades'><tr><td colspan='8'>載入中...</td></tr></tbody></table><div class='pager'><button id='tradesPrev' type='button'>上一頁</button><span id='tradesPage'>第 1 / 1 頁 · 每頁 10 筆</span><button id='tradesNext' type='button'>下一頁</button></div></div>",
+"<div class='panel'><table class='responsive-table'><thead><tr><th>原始訊號</th><th>幣種</th><th>方向</th><th>狀態</th><th>進場區間</th><th>進場 / 出場</th><th>淨損益</th><th>K線</th></tr></thead><tbody id='trades'><tr><td colspan='8'>載入中...</td></tr></tbody></table><div class='pager'><button id='tradesPrev' type='button'>上一頁</button><span id='tradesPage'>第 1 / 1 頁 · 每頁 10 筆</span><button id='tradesNext' type='button'>下一頁</button></div></div>",
 "<div class='section'><h2>每日損益</h2><small>UTC 日期</small></div>",
-"<div class='panel'><table><thead><tr><th>日期</th><th>交易數</th><th>勝場</th><th>已實現損益</th></tr></thead><tbody id='daily'><tr><td colspan='4'>尚無已平倉交易</td></tr></tbody></table></div>",
+"<div class='panel'><table class='responsive-table'><thead><tr><th>日期</th><th>交易數</th><th>勝場</th><th>已實現損益</th></tr></thead><tbody id='daily'><tr><td colspan='4'>尚無已平倉交易</td></tr></tbody></table></div>",
 "<footer>來源：<a href='https://t.me/KCryptoBTC168' target='_blank'>KCryptoBTC168</a> 公開預覽 · 記錄不可代表頻道長期實盤績效 · 市價/掛單填單僅按 15 秒輪詢中實際取得的 Binance 標記價格判斷 · 無槓桿或真實下單。</footer>",
 "</div><script>",
 "const $=id=>document.getElementById(id);",
@@ -1655,7 +1662,7 @@ const page = [
 "const clean=s=>String(s??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));",
 "const telegramChartUrl=symbol=>'https://www.tradingview.com/chart/?symbol=BINANCE%3A'+encodeURIComponent(String(symbol||''))+'.P&interval=15';",
 "const TELEGRAM_TRADE_PAGE_SIZE=10;let telegramTradePage=1,telegramTradeRows=[];",
-"function renderTelegramTrades(){const total=Math.max(1,Math.ceil(telegramTradeRows.length/TELEGRAM_TRADE_PAGE_SIZE));telegramTradePage=Math.min(Math.max(1,telegramTradePage),total);const start=(telegramTradePage-1)*TELEGRAM_TRADE_PAGE_SIZE,rows=telegramTradeRows.slice(start,start+TELEGRAM_TRADE_PAGE_SIZE);$('trades').innerHTML=rows.length?rows.map(x=>'<tr><td><a href=\"https://t.me/KCryptoBTC168/'+x.messageId+'\" target=\"_blank\">#'+x.messageId+'</a></td><td>'+clean(x.symbol)+'</td><td>'+clean(x.side)+'</td><td><span class=\"tag\">'+clean(x.status)+'</span></td><td>'+fmt(x.entryLow)+' – '+fmt(x.entryHigh)+'</td><td>'+(x.entryPrice?fmt(x.entryPrice):'—')+' / '+(x.exitPrice?fmt(x.exitPrice):'—')+'</td><td>'+((x.status==='closed')?pnl(x.netPnl):'—')+'</td><td><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"'+telegramChartUrl(x.symbol)+'\">15m K線</a></td></tr>').join(''):'<tr><td colspan=\"8\">目前沒有有效的新交易訊號；不倒填歷史成交。</td></tr>';$('tradesPage').textContent='第 '+telegramTradePage+' / '+total+' 頁 · 每頁 10 筆';$('tradesPrev').disabled=telegramTradePage<=1;$('tradesNext').disabled=telegramTradePage>=total;}",
+"function renderTelegramTrades(){const total=Math.max(1,Math.ceil(telegramTradeRows.length/TELEGRAM_TRADE_PAGE_SIZE));telegramTradePage=Math.min(Math.max(1,telegramTradePage),total);const start=(telegramTradePage-1)*TELEGRAM_TRADE_PAGE_SIZE,rows=telegramTradeRows.slice(start,start+TELEGRAM_TRADE_PAGE_SIZE);$('trades').innerHTML=rows.length?rows.map(x=>'<tr><td data-label=\"原始訊號\"><a href=\"https://t.me/KCryptoBTC168/'+x.messageId+'\" target=\"_blank\">#'+x.messageId+'</a></td><td data-label=\"幣種\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"狀態\"><span class=\"tag\">'+clean(x.status)+'</span></td><td data-label=\"進場區間\">'+fmt(x.entryLow)+' – '+fmt(x.entryHigh)+'</td><td data-label=\"進場 / 出場\">'+(x.entryPrice?fmt(x.entryPrice):'—')+' / '+(x.exitPrice?fmt(x.exitPrice):'—')+'</td><td data-label=\"淨損益\">'+((x.status==='closed')?pnl(x.netPnl):'—')+'</td><td data-label=\"K線\"><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"'+telegramChartUrl(x.symbol)+'\">15m K線</a></td></tr>').join(''):'<tr><td colspan=\"8\">目前沒有有效的新交易訊號；不倒填歷史成交。</td></tr>';$('tradesPage').textContent='第 '+telegramTradePage+' / '+total+' 頁 · 每頁 10 筆';$('tradesPrev').disabled=telegramTradePage<=1;$('tradesNext').disabled=telegramTradePage>=total;}",
 "function moveTelegramTradePage(delta){telegramTradePage+=delta;renderTelegramTrades();}",
 "$('tradesPrev').addEventListener('click',()=>moveTelegramTradePage(-1));$('tradesNext').addEventListener('click',()=>moveTelegramTradePage(1));",
 "async function tick(){try{",
@@ -1671,33 +1678,29 @@ const page = [
 "$('dWin').textContent=d.available?Number(pp.openPositions||0)+' / '+Number(pp.closedTrades||0):'—';$('dPnl').innerHTML=d.available?'已實現 '+pnl(pp.realizedPnl||0)+' / 未實現 '+pnl(pp.unrealizedPnl||0):'損益 —';",
 "$('dPaperEquity').textContent=d.available?fmt(pp.equity)+' USDT':'—';$('dActual').textContent=d.available?Number(dp.closedTrades||0):'—';",
 "const strategyName=x=>String(x.strategyVersion||'').includes('1H_')?'1H EMA+ATR':'Legacy 15m';",
-"const ps=d.positions||[];$('dPositions').innerHTML=ps.length?ps.map(x=>'<tr><td>'+clean(x.symbol)+'</td><td>'+clean(x.side)+'</td><td><span class=\"tag\">'+strategyName(x)+'</span></td><td><span class=\"tag\">Paper 模擬持倉</span></td><td>'+fmt(x.entryPrice)+'</td><td>'+fmt(x.lastPrice)+'</td><td>'+clean(x.lastPriceAt||'—')+'</td><td>'+fmt(x.stopLoss)+'</td><td>'+fmt(x.takeProfit)+'</td><td>'+pnl(x.paperPnl||0)+'</td><td>'+clean(x.entryTime||'—')+'</td><td><a target=\"_blank\" href=\"'+clean(x.chartUrl)+'\">'+clean(x.interval||'15m')+' K線</a></td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Paper 持倉</td></tr>';",
-"const cs=d.closedPositions||[];$('dClosedPositions').innerHTML=cs.length?cs.map(x=>'<tr><td>'+clean(x.symbol)+'</td><td>'+clean(x.side)+'</td><td><span class=\"tag\">'+strategyName(x)+'</span></td><td><span class=\"tag\">已平倉</span></td><td>'+fmt(x.referenceEntry)+'</td><td>'+fmt(x.entryPrice)+'</td><td>'+fmt(x.exitPrice)+'</td><td>'+clean(x.exitReason||'—')+'</td><td>'+fmt(x.fees||0)+'</td><td>'+pnl(x.netPnl||0)+'</td><td>'+clean(x.exitTime||'—')+'</td><td><a target=\"_blank\" href=\"'+clean(x.chartUrl)+'\">'+clean(x.interval||'15m')+' K線</a></td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Donchian Paper 平倉紀錄</td></tr>';",
+"const ps=d.positions||[];$('dPositions').innerHTML=ps.length?ps.map(x=>'<tr><td data-label=\"幣別\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"策略\"><span class=\"tag\">'+strategyName(x)+'</span></td><td data-label=\"狀態\"><span class=\"tag\">Paper 模擬持倉</span></td><td data-label=\"建倉參考\">'+fmt(x.entryPrice)+'</td><td data-label=\"即時標記價\">'+fmt(x.lastPrice)+'</td><td data-label=\"行情時間\">'+clean(x.lastPriceAt||'—')+'</td><td data-label=\"停損\">'+fmt(x.stopLoss)+'</td><td data-label=\"停利\">'+fmt(x.takeProfit)+'</td><td data-label=\"未實現損益\">'+pnl(x.paperPnl||0)+'</td><td data-label=\"訊號時間\">'+clean(x.entryTime||'—')+'</td><td data-label=\"K線\"><a target=\"_blank\" href=\"'+clean(x.chartUrl)+'\">'+clean(x.interval||'15m')+' K線</a></td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Paper 持倉</td></tr>';",
+"const cs=d.closedPositions||[];$('dClosedPositions').innerHTML=cs.length?cs.map(x=>'<tr><td data-label=\"幣別\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"策略\"><span class=\"tag\">'+strategyName(x)+'</span></td><td data-label=\"狀態\"><span class=\"tag\">已平倉</span></td><td data-label=\"建倉參考\">'+fmt(x.referenceEntry)+'</td><td data-label=\"模擬進場\">'+fmt(x.entryPrice)+'</td><td data-label=\"模擬出場\">'+fmt(x.exitPrice)+'</td><td data-label=\"原因\">'+clean(x.exitReason||'—')+'</td><td data-label=\"費用\">'+fmt(x.fees||0)+'</td><td data-label=\"淨損益\">'+pnl(x.netPnl||0)+'</td><td data-label=\"平倉時間\">'+clean(x.exitTime||'—')+'</td><td data-label=\"K線\"><a target=\"_blank\" href=\"'+clean(x.chartUrl)+'\">'+clean(x.interval||'15m')+' K線</a></td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Donchian Paper 平倉紀錄</td></tr>';",
 "$('status').textContent='● 訊號：'+(s.channelError?'讀取異常':'正常')+' | 首次建立基線：'+(s.initialized?'完成':'等待中')+' | 最後訊號輪詢 '+(s.lastChannelPollAt||'—')+' | 已記錄貼文 '+s.messagesCaptured+' | 最後行情 '+(s.lastPricePollAt||'—')+(s.channelError?' | '+s.channelError:'')+(s.priceError?' | 行情錯誤：'+s.priceError:'');",
 "telegramTradeRows=o.slice().reverse().slice(0,100);renderTelegramTrades();",
 "const days=Object.entries(r.daily).sort((a,b)=>b[0].localeCompare(a[0]));",
-"$('daily').innerHTML=days.length?days.map(([k,v])=>'<tr><td>'+k+'</td><td>'+v.trades+'</td><td>'+v.wins+'</td><td>'+pnl(v.pnl)+'</td></tr>').join(''):'<tr><td colspan=\"4\">尚無已平倉交易</td></tr>';",
+"$('daily').innerHTML=days.length?days.map(([k,v])=>'<tr><td data-label=\"日期\">'+k+'</td><td data-label=\"交易數\">'+v.trades+'</td><td data-label=\"勝場\">'+v.wins+'</td><td data-label=\"已實現損益\">'+pnl(v.pnl)+'</td></tr>').join(''):'<tr><td colspan=\"4\">尚無已平倉交易</td></tr>';",
 "const points=r.snapshots.length?r.snapshots.map(v=>v.equity):[10000];",
 "const low=Math.min(...points)-1,high=Math.max(...points)+1,span=Math.max(2,high-low);",
 "let poly=points.map((v,i)=>(points.length===1?0:i/(points.length-1)*900).toFixed(2)+','+(195-(v-low)/span*175).toFixed(2)).join(' ');",
 "$('chart').innerHTML='<line x1=\"0\" y1=\"195\" x2=\"900\" y2=\"195\" stroke=\"#3a4969\"/><polyline points=\"'+poly+'\" fill=\"none\" stroke=\"#62d6b6\" stroke-width=\"2.5\" vector-effect=\"non-scaling-stroke\"/>';",
 "}catch(e){$('status').textContent='● 儀表板讀取失敗：'+e.message}}",
 "tick();setInterval(tick,30000);",
-"async function tgPanel(){try{const s=await fetch('/api/telegram/status').then(x=>x.json());const el=$('tgStatus');const a=$('tgPair');a.style.display='none';if(s.paired){el.textContent='已綁定 '+s.targetUsername+' · 已成功推播 '+s.delivered+' 則 · 待送 '+s.queued+' 則'+(s.lastError?' · 錯誤：'+s.lastError:'');return;}if(!s.botTokenConfigured){el.textContent='尚未完成配對。請先用 @BotFather 建立專用 Bot，將權杖放入 Railway 服務 Variables 的 TELEGRAM_BOT_TOKEN，勿貼在聊天中。';return;}const setup=await fetch('/api/telegram/setup').then(x=>x.json());el.textContent=setup.readyToPair?'請以 '+setup.targetUsername+' 開啟以下連結，按「Start」完成一對一安全綁定。':'Bot 已設定，正在讀取 Bot 名稱，請稍後重新整理。';if(setup.startUrl){a.href=setup.startUrl;a.style.display='inline';}}catch(err){$('tgStatus').textContent='Telegram 配對狀態讀取失敗：'+err.message;}}",
+"async function tgPanel(){try{const s=await fetch('/api/telegram/status').then(x=>x.json());const el=$('tgStatus');$('tgPair').style.display='none';if(s.paired){el.textContent='已綁定 '+s.targetUsername+' · 已成功推播 '+s.delivered+' 則 · 待送 '+s.queued+' 則';return;}el.textContent='Telegram 尚未完成配對；配對設定僅限受保護的管理端。';}catch(err){$('tgStatus').textContent='Telegram 配對狀態讀取失敗：'+err.message;}}",
 "tgPanel();setInterval(tgPanel,25000);",
 "</script></body></html>"
 ].join("\n");
 function route(req) {
 const u = new URL(req.url);
 if (u.pathname === "/healthz") return json({ ok: true, mode: "paper_only", app: "k-signal-paper-lab" });
-if (!authOk(req)) return new Response("Login required", {
-status: 401, headers: { "WWW-Authenticate": 'Basic realm="K Signal Paper Lab"',
-"Cache-Control": "no-store", "Content-Type": "text/plain" }
-});
+if (req.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
 if (u.pathname === "/" && req.method === "GET")
 return new Response(page, { headers: { "Content-Type": "text/html; charset=utf-8",
 "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
-if (req.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
 if (u.pathname === "/api/status") return json({
 mode: "PAPER_ONLY", channel: "KCryptoBTC168", initialized: state.initialized,
 lastSeenId: state.lastSeenId, lastChannelPollAt: state.lastChannelPollAt,
@@ -1705,18 +1708,22 @@ lastPricePollAt: state.lastPricePollAt, channelError: state.channelError,
 priceError: state.priceError, messagesCaptured: state.messages.length,
 ordersTracked: state.orders.length
 });
-if (u.pathname === "/api/telegram/status") return json(telegramStatus());
-if (u.pathname === "/api/telegram/setup") return json(telegramSetup());
-if (u.pathname === "/api/selftest" && req.method === "GET") return json(runBDDTests());
+if (u.pathname === "/api/telegram/status") return json(publicTelegramStatus());
 if (u.pathname === "/api/report") return json(report());
 if (u.pathname === "/api/orders") return json(state.orders);
-if (u.pathname === "/api/messages") return json(state.messages.slice(-100).reverse());
-if (u.pathname === "/api/quotes") return json(state.quotes);
 if (u.pathname === "/api/orders.csv") return new Response(csv(), {
 headers: { "Content-Type": "text/csv; charset=utf-8",
 "Content-Disposition": 'attachment; filename="k_signal_paper_trades.csv"',
 "Cache-Control": "no-store" }
 });
+if (!authOk(req)) return new Response("Login required", {
+status: 401, headers: { "WWW-Authenticate": 'Basic realm="K Signal Paper Lab Admin"',
+"Cache-Control": "no-store", "Content-Type": "text/plain" }
+});
+if (u.pathname === "/api/telegram/setup") return json(telegramSetup());
+if (u.pathname === "/api/selftest") return json(runBDDTests());
+if (u.pathname === "/api/messages") return json(state.messages.slice(-100).reverse());
+if (u.pathname === "/api/quotes") return json(state.quotes);
 return new Response("Not Found", { status: 404 });
 }
 
