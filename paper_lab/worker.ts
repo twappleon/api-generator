@@ -1741,6 +1741,33 @@ html.includes('rel="noopener noreferrer"')&&
 !html.includes("#null"),"valid Telegram/TradingView links or price range regressed");
 });
 
+// Test the actual embedded browser helper with hostile and legitimate upstream URLs.
+function donchianChartForBDD(chartUrl){
+const begin=page.indexOf("<script>"),finish=page.indexOf("</script>",begin);
+const inline=page.slice(begin+8,finish);
+const start=inline.indexOf("const donchianChartCell="),end=inline.indexOf("const TELEGRAM_TRADE_PAGE_SIZE",start);
+assert(start>=0&&end>start,"Donchian chart renderer missing");
+return new Function("x",inline.slice(start,end)+"return donchianChartCell(x);")({chartUrl});
+}
+test("BDD176",()=>{
+for(const bad of ["javascript:alert(1)","data:text/html,<script>alert(1)</script>",
+"https://evil.example/chart/?symbol=BINANCE%3ABTCUSDT.P&interval=60",
+"https://www.tradingview.com/other/?symbol=BINANCE%3ABTCUSDT.P&interval=60",
+"https://www.tradingview.com/chart/?symbol=BINANCE%3A.P&interval=60",
+"https://www.tradingview.com/chart/?symbol=BINANCE%3ABTCUSDT.P&interval=1",
+"https://www.tradingview.com/chart/?symbol=BINANCE%3ABTCUSDT.P&interval=60&redirect=javascript:alert(1)"]){
+const html=donchianChartForBDD(bad);
+assert(!html.includes("<a ")&&!html.includes("href=")&&html.includes("行情連結不可用"),"untrusted Donchian chart URL generated a clickable link");
+}
+});
+test("BDD177",()=>{
+for(const [interval,label] of [["15","15m"],["60","1h"]]){
+const html=donchianChartForBDD("https://www.tradingview.com/chart/?symbol=BINANCE%3ABTCUSDT.P&interval="+interval);
+assert(html.includes("BINANCE%3ABTCUSDT.P&interval="+interval)&&html.includes(label+" K線")&&
+html.includes('rel="noopener noreferrer"')&&!html.includes("javascript:"),"valid Donchian chart navigation regressed");
+}
+});
+
 const failed=results.filter(x=>!x.pass);
 return {
 mode:"SYNTHETIC_BDD", isolated:true, persistentStateUnchanged:state===savedState,
@@ -1808,6 +1835,7 @@ const page = [
 "const telegramChartUrl=symbol=>'https://www.tradingview.com/chart/?symbol=BINANCE%3A'+encodeURIComponent(String(symbol||''))+'.P&interval=15';",
 "const telegramSourceCell=id=>Number.isSafeInteger(id)&&id>0?'<a href=\"https://t.me/KCryptoBTC168/'+id+'\" target=\"_blank\" rel=\"noopener noreferrer\">#'+id+'</a>':'<span aria-label=\"來源訊號不可用\">—</span>';",
 "const telegramChartCell=symbol=>typeof symbol==='string'&&/^[A-Z0-9]{3,16}$/.test(symbol)?'<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"'+telegramChartUrl(symbol)+'\">15m K線</a>':'<span aria-label=\"行情連結不可用\">—</span>';",
+"const donchianChartCell=x=>{const m=String(x?.chartUrl||'').match(/^https:\\/\\/www\\.tradingview\\.com\\/chart\\/\\?symbol=BINANCE%3A([A-Z0-9]{3,16})\\.P&interval=(15|60)$/);return m?'<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"https://www.tradingview.com/chart/?symbol=BINANCE%3A'+m[1]+'.P&interval='+m[2]+'\">'+(m[2]==='60'?'1h':'15m')+' K線</a>':'<span aria-label=\"行情連結不可用\">—</span>';};",
 "const TELEGRAM_TRADE_PAGE_SIZE=10;let telegramTradePage=1,telegramTradeRows=[];const priceRange=x=>Number.isFinite(x.entryLow)&&Number.isFinite(x.entryHigh)?fmt(x.entryLow)+' – '+fmt(x.entryHigh):'—';",
 "function renderTelegramTrades(){const total=Math.max(1,Math.ceil(telegramTradeRows.length/TELEGRAM_TRADE_PAGE_SIZE));telegramTradePage=Math.min(Math.max(1,telegramTradePage),total);const start=(telegramTradePage-1)*TELEGRAM_TRADE_PAGE_SIZE,rows=telegramTradeRows.slice(start,start+TELEGRAM_TRADE_PAGE_SIZE);$('trades').innerHTML=rows.length?rows.map(x=>'<tr><td data-label=\"原始訊號\">'+telegramSourceCell(x.messageId)+'</td><td data-label=\"幣種\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"狀態\"><span class=\"tag\">'+clean(x.status)+'</span></td><td data-label=\"進場區間\">'+priceRange(x)+'</td><td data-label=\"進場 / 出場\">'+(x.entryPrice?fmt(x.entryPrice):'—')+' / '+(x.exitPrice?fmt(x.exitPrice):'—')+'</td><td data-label=\"淨損益\">'+((x.status==='closed')?pnl(x.netPnl):'—')+'</td><td data-label=\"K線\">'+telegramChartCell(x.symbol)+'</td></tr>').join(''):'<tr><td colspan=\"8\">目前沒有有效的新交易訊號；不倒填歷史成交。</td></tr>';$('tradesPage').textContent='第 '+telegramTradePage+' / '+total+' 頁 · 每頁 10 筆';$('tradesPrev').disabled=telegramTradePage<=1;$('tradesNext').disabled=telegramTradePage>=total;}",
 "function moveTelegramTradePage(delta){telegramTradePage+=delta;renderTelegramTrades();}",
@@ -1825,8 +1853,8 @@ const page = [
 "$('dWin').textContent=d.available?Number(pp.openPositions||0)+' / '+Number(pp.closedTrades||0):'—';$('dPnl').innerHTML=d.available?'已實現 '+pnl(pp.realizedPnl||0)+' / 未實現 '+pnl(pp.unrealizedPnl||0):'損益 —';",
 "$('dPaperEquity').textContent=d.available?fmt(pp.equity)+' USDT':'—';$('dActual').textContent=d.available?Number(dp.closedTrades||0):'—';",
 "const strategyName=x=>String(x.strategyVersion||'').includes('1H_')?'1H EMA+ATR':'Legacy 15m';",
-"const ps=d.positions||[];$('dPositions').innerHTML=ps.length?ps.map(x=>'<tr><td data-label=\"幣別\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"策略\"><span class=\"tag\">'+strategyName(x)+'</span></td><td data-label=\"狀態\"><span class=\"tag\">Paper 模擬持倉</span></td><td data-label=\"建倉參考\">'+fmt(x.entryPrice)+'</td><td data-label=\"即時標記價\">'+fmt(x.lastPrice)+'</td><td data-label=\"行情時間\">'+clean(x.lastPriceAt||'—')+'</td><td data-label=\"停損\">'+fmt(x.stopLoss)+'</td><td data-label=\"停利\">'+fmt(x.takeProfit)+'</td><td data-label=\"未實現損益\">'+pnl(x.paperPnl||0)+'</td><td data-label=\"訊號時間\">'+clean(x.entryTime||'—')+'</td><td data-label=\"K線\"><a target=\"_blank\" href=\"'+clean(x.chartUrl)+'\">'+clean(x.interval||'15m')+' K線</a></td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Paper 持倉</td></tr>';",
-"const cs=d.closedPositions||[];$('dClosedPositions').innerHTML=cs.length?cs.map(x=>'<tr><td data-label=\"幣別\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"策略\"><span class=\"tag\">'+strategyName(x)+'</span></td><td data-label=\"狀態\"><span class=\"tag\">已平倉</span></td><td data-label=\"建倉參考\">'+fmt(x.referenceEntry)+'</td><td data-label=\"模擬進場\">'+fmt(x.entryPrice)+'</td><td data-label=\"模擬出場\">'+fmt(x.exitPrice)+'</td><td data-label=\"原因\">'+clean(x.exitReason||'—')+'</td><td data-label=\"費用\">'+fmt(x.fees||0)+'</td><td data-label=\"淨損益\">'+pnl(x.netPnl||0)+'</td><td data-label=\"平倉時間\">'+clean(x.exitTime||'—')+'</td><td data-label=\"K線\"><a target=\"_blank\" href=\"'+clean(x.chartUrl)+'\">'+clean(x.interval||'15m')+' K線</a></td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Donchian Paper 平倉紀錄</td></tr>';",
+"const ps=d.positions||[];$('dPositions').innerHTML=ps.length?ps.map(x=>'<tr><td data-label=\"幣別\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"策略\"><span class=\"tag\">'+strategyName(x)+'</span></td><td data-label=\"狀態\"><span class=\"tag\">Paper 模擬持倉</span></td><td data-label=\"建倉參考\">'+fmt(x.entryPrice)+'</td><td data-label=\"即時標記價\">'+fmt(x.lastPrice)+'</td><td data-label=\"行情時間\">'+clean(x.lastPriceAt||'—')+'</td><td data-label=\"停損\">'+fmt(x.stopLoss)+'</td><td data-label=\"停利\">'+fmt(x.takeProfit)+'</td><td data-label=\"未實現損益\">'+pnl(x.paperPnl||0)+'</td><td data-label=\"訊號時間\">'+clean(x.entryTime||'—')+'</td><td data-label=\"K線\">'+donchianChartCell(x)+'</td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Paper 持倉</td></tr>';",
+"const cs=d.closedPositions||[];$('dClosedPositions').innerHTML=cs.length?cs.map(x=>'<tr><td data-label=\"幣別\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"策略\"><span class=\"tag\">'+strategyName(x)+'</span></td><td data-label=\"狀態\"><span class=\"tag\">已平倉</span></td><td data-label=\"建倉參考\">'+fmt(x.referenceEntry)+'</td><td data-label=\"模擬進場\">'+fmt(x.entryPrice)+'</td><td data-label=\"模擬出場\">'+fmt(x.exitPrice)+'</td><td data-label=\"原因\">'+clean(x.exitReason||'—')+'</td><td data-label=\"費用\">'+fmt(x.fees||0)+'</td><td data-label=\"淨損益\">'+pnl(x.netPnl||0)+'</td><td data-label=\"平倉時間\">'+clean(x.exitTime||'—')+'</td><td data-label=\"K線\">'+donchianChartCell(x)+'</td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Donchian Paper 平倉紀錄</td></tr>';",
 "$('status').textContent='● 訊號：'+(s.channelError?'讀取異常':'正常')+' | 首次建立基線：'+(s.initialized?'完成':'等待中')+' | 最後訊號輪詢 '+(s.lastChannelPollAt||'—')+' | 已記錄貼文 '+s.messagesCaptured+' | 最後行情 '+(s.lastPricePollAt||'—')+(s.channelError?' | '+s.channelError:'')+(s.priceError?' | 行情錯誤：'+s.priceError:'');",
 "telegramTradeRows=o.slice().reverse().slice(0,100);renderTelegramTrades();",
 "const days=Object.entries(r.daily).sort((a,b)=>b[0].localeCompare(a[0]));",
