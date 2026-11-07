@@ -742,6 +742,20 @@ let text = String(value ?? "").replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, " "
 if (!numeric && /^[\s\u200b\u2060\ufeff]*[=+\-@]/u.test(text)) text = "'" + text;
 return '"' + text.replace(/"/g, '""') + '"';
 }
+// Public CSV is anonymous: project nested exit events, never serialize raw state objects.
+// Preserve documented partial-close accounting, but drop debug/credential/unknown fields.
+function publicCsvExitEvents(events) {
+if (!Array.isArray(events)) return "[]";
+const numericKeys = ["price","qty","fractionOfRemaining","grossPnl","feeExit","allocatedEntryFee","netPnl"];
+return JSON.stringify(events.filter(e => e && typeof e === "object" && !Array.isArray(e)).map(e => {
+const row = {};
+for (const key of ["at","reason"]) if (typeof e[key] === "string") row[key] = e[key].slice(0,180);
+for (const key of numericKeys) if (typeof e[key] === "number" && Number.isFinite(e[key])) row[key] = e[key];
+if (Number.isSafeInteger(e.messageId) && e.messageId > 0) row.messageId = e.messageId;
+if (typeof e.assumedRatio === "boolean") row.assumedRatio = e.assumedRatio;
+return row;
+}));
+}
 function csv() {
 const fields = ["messageId", "symbol", "side", "kind", "status", "entryLow", "entryHigh",
 "entryPrice", "stop", "target", "qty", "exitPrice", "feeEntry", "feeExit",
@@ -749,7 +763,7 @@ const fields = ["messageId", "symbol", "side", "kind", "status", "entryLow", "en
 return [fields.join(","), ...state.orders.map(o => fields.map(k => {
 const v = k === "messageId"
 ? (Number.isSafeInteger(o[k]) && o[k] > 0 ? "https://t.me/KCryptoBTC168/" + o[k] : "")
-: (k === "exitEvents" ? JSON.stringify(o[k] || []) : (o[k] ?? ""));
+: (k === "exitEvents" ? publicCsvExitEvents(o[k]) : (o[k] ?? ""));
 return csvCell(v);
 }).join(","))].join("\n");
 }
@@ -1903,6 +1917,31 @@ const missing=mergeDonchianStats({},remote,{error:null,lastSuccessAt:null}).donc
 assert(!fresh.stale&&old.stale&&missing.stale&&fresh.signals.total===0&&
 page.includes("d.stale")&&page.includes("d.lastSuccessAt")&&page.includes("不能視為即時行情"),
 "upstream cache freshness and UI warning contract failed");
+});
+
+test("BDD186",()=>{
+state.orders=[mock({exitEvents:[{at:"2026-11-07T00:00:00Z",price:102,qty:0.5,
+fractionOfRemaining:0.5,netPnl:1.23,messageId:5002,reason:"channel_partial_take_profit",
+internalToken:"SECRET_CSV_186",debugPayload:{password:"SECRET_CSV_186"}}]})];
+const content=csv();
+assert(!content.includes("SECRET_CSV_186")&&!content.includes("debugPayload")&&
+content.includes("fractionOfRemaining")&&content.includes("5002")&&
+content.includes("channel_partial_take_profit"),
+"public CSV exposed unexpected nested fields or lost partial-close accounting");
+});
+test("BDD187",()=>{
+const projected=JSON.parse(publicCsvExitEvents([
+{at:"2026-11-07T00:00:00Z",reason:"stop_loss",price:101.25,netPnl:-2.5,
+messageId:5002,assumedRatio:true,unknown:"SECRET_CSV_187"},
+{reason:"x",price:"INVALID_PRICE",netPnl:Infinity,messageId:"=1+1",internalSecret:"SECRET_CSV_187"},
+null,"INVALID_EVENT"
+]));
+assert(projected.length===2 && projected[0].netPnl===-2.5 &&
+projected[0].messageId===5002 && projected[0].assumedRatio===true &&
+!Object.hasOwn(projected[1],"price")&&!Object.hasOwn(projected[1],"messageId")&&
+!JSON.stringify(projected).includes("SECRET_CSV_187")&&
+publicCsvExitEvents({secret:"SECRET_CSV_187"})==="[]",
+"CSV event projection accepted malformed event fields or non-arrays");
 });
 
 const failed=results.filter(x=>!x.pass);
