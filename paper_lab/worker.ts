@@ -1706,6 +1706,41 @@ page.includes("Number.isFinite(x.entryLow)&&Number.isFinite(x.entryHigh)"),
 "invalid range or missing-value UI fallback regression");
 });
 
+
+// Isolated inline-renderer BDD: execute only table functions, never timers/network.
+function renderTradeRowForBDD(row) {
+const begin=page.indexOf("<script>"),finish=page.indexOf("</script>",begin);
+assert(begin>=0&&finish>begin,"dashboard script unavailable");
+const inline=page.slice(begin+8,finish);
+const start=inline.indexOf("const telegramChartUrl="),
+end=inline.indexOf("function moveTelegramTradePage(",start);
+assert(start>=0&&end>start,"Telegram render function unavailable");
+const fragment=inline.slice(start,end);
+const run=new Function("row","fmt","clean","pnl",
+"const nodes={};const $=id=>nodes[id]||(nodes[id]={innerHTML:'',textContent:'',disabled:false});"+
+fragment+
+"\ntelegramTradeRows=[row];renderTelegramTrades();return nodes.trades.innerHTML;");
+return run(row,(n,d=2)=>Number(n||0).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d}),
+s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])),
+n=>String(n));
+}
+test("BDD174",()=>{
+state.orders=[mock({messageId:"invalid-id",symbol:"BTC<script>",entryLow:NaN,entryHigh:Infinity})];
+const html=renderTradeRowForBDD(publicOrders()[0]);
+assert(!html.includes("href=")&&!html.includes("#null")&&
+!html.includes("BINANCE%3A.P")&&html.includes("來源訊號不可用")&&
+html.includes("行情連結不可用"),"invalid trade identifiers generated clickable or deceptive links");
+});
+test("BDD175",()=>{
+state.orders=[mock({messageId:5001,symbol:"BTCUSDT",entryLow:99.5,entryHigh:101.75})];
+const html=renderTradeRowForBDD(publicOrders()[0]);
+assert(html.includes("https://t.me/KCryptoBTC168/5001")&&
+html.includes("BINANCE%3ABTCUSDT.P")&&
+html.includes("99.50 – 101.75")&&
+html.includes('rel="noopener noreferrer"')&&
+!html.includes("#null"),"valid Telegram/TradingView links or price range regressed");
+});
+
 const failed=results.filter(x=>!x.pass);
 return {
 mode:"SYNTHETIC_BDD", isolated:true, persistentStateUnchanged:state===savedState,
@@ -1771,8 +1806,10 @@ const page = [
 "const pnl=n=>'<span class=\"'+(n>=0?'positive':'negative')+'\">'+(n>=0?'+':'')+fmt(n)+'</span>';",
 "const clean=s=>String(s??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));",
 "const telegramChartUrl=symbol=>'https://www.tradingview.com/chart/?symbol=BINANCE%3A'+encodeURIComponent(String(symbol||''))+'.P&interval=15';",
+"const telegramSourceCell=id=>Number.isSafeInteger(id)&&id>0?'<a href=\"https://t.me/KCryptoBTC168/'+id+'\" target=\"_blank\" rel=\"noopener noreferrer\">#'+id+'</a>':'<span aria-label=\"來源訊號不可用\">—</span>';",
+"const telegramChartCell=symbol=>typeof symbol==='string'&&/^[A-Z0-9]{3,16}$/.test(symbol)?'<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"'+telegramChartUrl(symbol)+'\">15m K線</a>':'<span aria-label=\"行情連結不可用\">—</span>';",
 "const TELEGRAM_TRADE_PAGE_SIZE=10;let telegramTradePage=1,telegramTradeRows=[];const priceRange=x=>Number.isFinite(x.entryLow)&&Number.isFinite(x.entryHigh)?fmt(x.entryLow)+' – '+fmt(x.entryHigh):'—';",
-"function renderTelegramTrades(){const total=Math.max(1,Math.ceil(telegramTradeRows.length/TELEGRAM_TRADE_PAGE_SIZE));telegramTradePage=Math.min(Math.max(1,telegramTradePage),total);const start=(telegramTradePage-1)*TELEGRAM_TRADE_PAGE_SIZE,rows=telegramTradeRows.slice(start,start+TELEGRAM_TRADE_PAGE_SIZE);$('trades').innerHTML=rows.length?rows.map(x=>'<tr><td data-label=\"原始訊號\"><a href=\"https://t.me/KCryptoBTC168/'+x.messageId+'\" target=\"_blank\">#'+x.messageId+'</a></td><td data-label=\"幣種\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"狀態\"><span class=\"tag\">'+clean(x.status)+'</span></td><td data-label=\"進場區間\">'+priceRange(x)+'</td><td data-label=\"進場 / 出場\">'+(x.entryPrice?fmt(x.entryPrice):'—')+' / '+(x.exitPrice?fmt(x.exitPrice):'—')+'</td><td data-label=\"淨損益\">'+((x.status==='closed')?pnl(x.netPnl):'—')+'</td><td data-label=\"K線\"><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"'+telegramChartUrl(x.symbol)+'\">15m K線</a></td></tr>').join(''):'<tr><td colspan=\"8\">目前沒有有效的新交易訊號；不倒填歷史成交。</td></tr>';$('tradesPage').textContent='第 '+telegramTradePage+' / '+total+' 頁 · 每頁 10 筆';$('tradesPrev').disabled=telegramTradePage<=1;$('tradesNext').disabled=telegramTradePage>=total;}",
+"function renderTelegramTrades(){const total=Math.max(1,Math.ceil(telegramTradeRows.length/TELEGRAM_TRADE_PAGE_SIZE));telegramTradePage=Math.min(Math.max(1,telegramTradePage),total);const start=(telegramTradePage-1)*TELEGRAM_TRADE_PAGE_SIZE,rows=telegramTradeRows.slice(start,start+TELEGRAM_TRADE_PAGE_SIZE);$('trades').innerHTML=rows.length?rows.map(x=>'<tr><td data-label=\"原始訊號\">'+telegramSourceCell(x.messageId)+'</td><td data-label=\"幣種\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"狀態\"><span class=\"tag\">'+clean(x.status)+'</span></td><td data-label=\"進場區間\">'+priceRange(x)+'</td><td data-label=\"進場 / 出場\">'+(x.entryPrice?fmt(x.entryPrice):'—')+' / '+(x.exitPrice?fmt(x.exitPrice):'—')+'</td><td data-label=\"淨損益\">'+((x.status==='closed')?pnl(x.netPnl):'—')+'</td><td data-label=\"K線\">'+telegramChartCell(x.symbol)+'</td></tr>').join(''):'<tr><td colspan=\"8\">目前沒有有效的新交易訊號；不倒填歷史成交。</td></tr>';$('tradesPage').textContent='第 '+telegramTradePage+' / '+total+' 頁 · 每頁 10 筆';$('tradesPrev').disabled=telegramTradePage<=1;$('tradesNext').disabled=telegramTradePage>=total;}",
 "function moveTelegramTradePage(delta){telegramTradePage+=delta;renderTelegramTrades();}",
 "$('tradesPrev').addEventListener('click',()=>moveTelegramTradePage(-1));$('tradesNext').addEventListener('click',()=>moveTelegramTradePage(1));",
 "async function tick(){try{",
