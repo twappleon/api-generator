@@ -137,3 +137,30 @@ Scenario: BDD173 corrupted entry range must not invent zeros
 **Remaining UI edge found in synthetic rendering:** If persistent data contains invalid IDs/symbols, the current client still generates `#null` and an empty TradingView instrument link. This is not known to affect valid historical trades. Treat graceful non-clickable placeholders for malformed identifiers as a separate follow-up, without relaxing the API field allowlist.
 
 **Rollback:** Revert `worker.ts` commit `014a14f568b08dacb2e79797255c55183515cb5b` and this documentation update on the Draft branch. No Railway/data rollback applies because these edits are Git-only. Before any future deployment, run the complete suite on native Bun 1.4.4 and inspect an actual anonymous JSON/HTML/CSV response in an isolated environment; deployment still requires separate user approval.
+
+
+## 2026-11-07 supervisor v2.7 — malformed-link fallbacks in anonymous table
+
+**Observed / reproduced on source HEAD `c20505f` (before fix):** `publicOrders()` intentionally maps malformed/non-positive message IDs and nonconforming trading symbols to `null`, but `renderTelegramTrades()` interpolated them unconditionally into links. In an isolated execution of the real inline table renderer, an invalid row produced `#null` with `https://t.me/KCryptoBTC168/null`, and a clickable `BINANCE:.P` chart. This is incorrect navigation, **not evidence of an actual malformed production trade**.
+
+**PRD acceptance:** Anonymous trade rows must only show working channel and perpetual chart links when identifiers pass strict format checks. A malformed message ID/symbol becomes a non-interactive `—` with accessible text. Valid `messageId=5001`, `BTCUSDT` preserve normal source and 15-minute chart links, the previous `99.50 – 101.75` entry range, and the nine-field public API allowlist. Links opening new tabs retain `rel="noopener noreferrer"`. No order logic, actual orders, ledger, or exported CSV changes.
+
+**BDD scenarios** (executable as BDD174–175 in `worker.ts`):
+
+```gherkin
+Scenario: BDD174 invalid public identifiers do not become misleading links
+  Given a persisted trade with a malformed messageId and malformed symbol
+  When the public projection is rendered by the actual inline trade-table functions
+  Then its original-source and chart cells show non-clickable em dashes
+  And no href, #null, or empty TradingView instrument link is produced
+
+Scenario: BDD175 valid public identifiers preserve navigation and entry-range display
+  Given a projected trade with messageId 5001, symbol BTCUSDT, entry 99.50 to 101.75
+  When the inline trade-table functions render the row
+  Then Telegram post 5001 and the BINANCE BTCUSDT.P 15-minute chart remain linked
+  And new-tab links are isolated and the 99.50 – 101.75 range is unchanged
+```
+
+**Implementation:** Draft PR #8 commit `ad7e6c557f0a58db71b4a517dd7d80db8646cbf4` adds two browser-only link cell helpers and executes the genuine inline browser trade table in an isolated DOM stub. BDD174–175 guard invalid *and* valid paths. The V8 harness executed **175/175 PASS**, with `persistentStateUnchanged=true`, zero filesystem writes and zero network calls; `mkdirSync` was a no-op stub. These are source-derived isolated checks, **not native Bun, real Chromium or Railway HTTP acceptance**.
+
+**Rollback and release gate:** Revert commit `ad7e6c5` on the Draft branch if a regression appears. No production rollback is needed because nothing was deployed. Before any deployment, perform native Bun startup (175/175), anonymous HTTP/CSV checks, real phone layout review and required explicit user approval. GitHub/Vercel/Railway production and Demo trade flags were not changed during this fix.
