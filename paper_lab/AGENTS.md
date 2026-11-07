@@ -60,3 +60,10 @@ Preserve the dashboard's valid signal counts, realized/unrealized profit, equity
 Donchian upstream projections intentionally normalize corrupt/missing prices, PnL and counts to `null`. Never pass those values through `Number(n||0)`, `fmt(n)` or `pnl(n||0)` in the **external Donchian** dashboard: that fabricates a zero mark, zero stop, zero equity or flat PnL. Use source-defined `fmtObserved`, `pnlObserved` and `countObserved` and render `—` for missing data; preserve real numeric 0. The legacy Telegram Paper ledger remains unchanged.
 
 PR #8 code commit `14290ec8` implements this and BDD182–183. The patched real inline script was executed in synthetic DOM/fetch with 8/8 assertions PASS; isolated V8 regression suite passed **183/183**, `persistentStateUnchanged=true`, writes=0, network=0. **Native Bun, real browser, Railway and deployment remain NOT VERIFIED**. Keep the official Demo trade gates disabled and do not restart or modify persistent Paper data without approval. See `PUBLIC_DASHBOARD_DATA_BOUNDARY.md` §v2.7 for reproduction, accepted behavior, and rollback.
+
+
+## Supervisor 2026-11-07 — Donchian freshness must be visible (BDD184–185)
+
+The upstream stats cache intentionally retains last valid data after a fetch error. Previously `available:true` and a static dashboard notice made old valuations look current. Commit `23d2951` adds independently sanitized `lastSuccessAt` and boolean `stale` (fetch error, no valid timestamp, age >90s, or future skew >30s), and visibly warns in existing `#dStatus`. Keep cached metrics visible **only as explicitly historical**; do not conflate `available` with freshness and do not leak upstream error strings.
+
+Exact committed browser script was parsed and exercised with a mock DOM for stale/fresh states and legitimate numeric zero. BDD184–185 were executed from committed worker source: 2/2 PASS. Full 185-case native Bun startup, deployed HTTP/browser/device, live freshness and CI are **NOT VERIFIED**. Draft PR only. See `PUBLIC_DASHBOARD_DATA_BOUNDARY.md` for exact acceptance/rollback. Do not deploy, trade, change Railway secrets or persistent data without approval.
