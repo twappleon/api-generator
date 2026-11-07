@@ -1,8 +1,8 @@
 # Paper Monitor — Public read-only reporting boundary
 
-Last reviewed: 2026-11-07 (Asia/Phnom_Penh).
+Last reviewed: 2026-11-08 (Asia/Phnom_Penh).
 Scope: `paper_lab/worker.ts` within Draft PR #8.
-Status: **Draft Git-only. Existing BDD183/183 isolated V8 PASS; added Donchian stale-cache BDD184–185 targeted 2/2 PASS with simulated UI checks; full 185-test Bun/HTTP/browser E2E NOT VERIFIED; Railway NOT DEPLOYED.**
+Status: **Draft Git-only. Current BDD190/190 source-derived isolated V8 PASS with read-only synthetic stale/fresh UI checks; native Bun full suite, real HTTP/browser E2E and Railway deployment NOT VERIFIED. Prior 183/185/187 results remain historical snapshots.**
 
 ## PRD / threat model
 
