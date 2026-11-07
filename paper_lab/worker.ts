@@ -676,6 +676,8 @@ messageId:Number.isSafeInteger(o.messageId)&&o.messageId>0?o.messageId:null,
 symbol:typeof o.symbol==="string"&&/^[A-Z0-9]{3,16}$/.test(o.symbol)?o.symbol:null,
 side:["long","short"].includes(o.side)?o.side:null,
 status:typeof o.status==="string"&&/^[a-z_]{1,32}$/.test(o.status)?o.status:"unknown",
+entryLow:Number.isFinite(o.entryLow)&&o.entryLow>0?o.entryLow:null,
+entryHigh:Number.isFinite(o.entryHigh)&&o.entryHigh>0?o.entryHigh:null,
 entryPrice:Number.isFinite(o.entryPrice)?o.entryPrice:null,
 exitPrice:Number.isFinite(o.exitPrice)?o.exitPrice:null,
 netPnl:Number.isFinite(o.netPnl)?o.netPnl:null
@@ -1634,7 +1636,7 @@ pendingCloseCommands:[{text:"PRIVATE_COMMAND"}],internalKey:"PRIVATE_KEY",debugT
 const publicRows=publicOrders(),row=publicRows[0];
 assert(publicRows.length===1&&row.messageId===5001&&row.symbol==="SOLUSDT"&&
 row.entryPrice===101&&row.exitPrice===102&&row.netPnl===1.5&&
-Object.keys(row).sort().join(",")==="entryPrice,exitPrice,messageId,netPnl,side,status,symbol"&&
+Object.keys(row).sort().join(",")==="entryHigh,entryLow,entryPrice,exitPrice,messageId,netPnl,side,status,symbol"&&
 !JSON.stringify(publicRows).includes("PRIVATE_")&&
 !JSON.stringify(publicRows).includes("pendingCloseCommands"),
 "public orders returned internal Paper state");
@@ -1650,10 +1652,10 @@ status.mode==="PAPER_ONLY"&&status.ordersTracked===0,
 "public status leaked upstream error details");
 });
 test("BDD166",()=>{
-state.orders=[mock({messageId:"<script>",symbol:"BTCUSDT<script>",side:"invalid",status:"<script>",entryPrice:Infinity,netPnl:NaN})];
+state.orders=[mock({messageId:"<script>",symbol:"BTCUSDT<script>",side:"invalid",status:"<script>",entryLow:NaN,entryHigh:Infinity,entryPrice:Infinity,netPnl:NaN})];
 const row=publicOrders()[0];
 assert(row.messageId===null&&row.symbol===null&&row.side===null&&
-row.status==="unknown"&&row.entryPrice===null&&row.netPnl===null,
+row.status==="unknown"&&row.entryLow===null&&row.entryHigh===null&&row.entryPrice===null&&row.netPnl===null,
 "invalid internal values flowed into public trade rows");
 });
 test("BDD167",()=>{
@@ -1687,6 +1689,21 @@ const content=csv();
 assert(!content.includes("https://t.me/KCryptoBTC168/=")&&
 content.includes('"","SOLUSDT"')&&content.includes('"note ""unchanged"""'),
 "CSV original link input was unsafely constructed");
+});
+
+test("BDD172",()=>{
+state.orders=[mock({entryLow:99.5,entryHigh:101.75,pendingCloseCommands:[{text:"PRIVATE"}]})];
+const row=publicOrders()[0];
+assert(row.entryLow===99.5&&row.entryHigh===101.75&&
+Object.keys(row).sort().join(",")==="entryHigh,entryLow,entryPrice,exitPrice,messageId,netPnl,side,status,symbol"&&
+!JSON.stringify(row).includes("PRIVATE"),"public API no longer matches entry-range UI or leaks internal state");
+});
+test("BDD173",()=>{
+state.orders=[mock({entryLow:NaN,entryHigh:Infinity})];
+const row=publicOrders()[0];
+assert(row.entryLow===null&&row.entryHigh===null&&page.includes("priceRange(x)")&&
+page.includes("Number.isFinite(x.entryLow)&&Number.isFinite(x.entryHigh)"),
+"invalid range or missing-value UI fallback regression");
 });
 
 const failed=results.filter(x=>!x.pass);
@@ -1754,8 +1771,8 @@ const page = [
 "const pnl=n=>'<span class=\"'+(n>=0?'positive':'negative')+'\">'+(n>=0?'+':'')+fmt(n)+'</span>';",
 "const clean=s=>String(s??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));",
 "const telegramChartUrl=symbol=>'https://www.tradingview.com/chart/?symbol=BINANCE%3A'+encodeURIComponent(String(symbol||''))+'.P&interval=15';",
-"const TELEGRAM_TRADE_PAGE_SIZE=10;let telegramTradePage=1,telegramTradeRows=[];",
-"function renderTelegramTrades(){const total=Math.max(1,Math.ceil(telegramTradeRows.length/TELEGRAM_TRADE_PAGE_SIZE));telegramTradePage=Math.min(Math.max(1,telegramTradePage),total);const start=(telegramTradePage-1)*TELEGRAM_TRADE_PAGE_SIZE,rows=telegramTradeRows.slice(start,start+TELEGRAM_TRADE_PAGE_SIZE);$('trades').innerHTML=rows.length?rows.map(x=>'<tr><td data-label=\"原始訊號\"><a href=\"https://t.me/KCryptoBTC168/'+x.messageId+'\" target=\"_blank\">#'+x.messageId+'</a></td><td data-label=\"幣種\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"狀態\"><span class=\"tag\">'+clean(x.status)+'</span></td><td data-label=\"進場區間\">'+fmt(x.entryLow)+' – '+fmt(x.entryHigh)+'</td><td data-label=\"進場 / 出場\">'+(x.entryPrice?fmt(x.entryPrice):'—')+' / '+(x.exitPrice?fmt(x.exitPrice):'—')+'</td><td data-label=\"淨損益\">'+((x.status==='closed')?pnl(x.netPnl):'—')+'</td><td data-label=\"K線\"><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"'+telegramChartUrl(x.symbol)+'\">15m K線</a></td></tr>').join(''):'<tr><td colspan=\"8\">目前沒有有效的新交易訊號；不倒填歷史成交。</td></tr>';$('tradesPage').textContent='第 '+telegramTradePage+' / '+total+' 頁 · 每頁 10 筆';$('tradesPrev').disabled=telegramTradePage<=1;$('tradesNext').disabled=telegramTradePage>=total;}",
+"const TELEGRAM_TRADE_PAGE_SIZE=10;let telegramTradePage=1,telegramTradeRows=[];const priceRange=x=>Number.isFinite(x.entryLow)&&Number.isFinite(x.entryHigh)?fmt(x.entryLow)+' – '+fmt(x.entryHigh):'—';",
+"function renderTelegramTrades(){const total=Math.max(1,Math.ceil(telegramTradeRows.length/TELEGRAM_TRADE_PAGE_SIZE));telegramTradePage=Math.min(Math.max(1,telegramTradePage),total);const start=(telegramTradePage-1)*TELEGRAM_TRADE_PAGE_SIZE,rows=telegramTradeRows.slice(start,start+TELEGRAM_TRADE_PAGE_SIZE);$('trades').innerHTML=rows.length?rows.map(x=>'<tr><td data-label=\"原始訊號\"><a href=\"https://t.me/KCryptoBTC168/'+x.messageId+'\" target=\"_blank\">#'+x.messageId+'</a></td><td data-label=\"幣種\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"狀態\"><span class=\"tag\">'+clean(x.status)+'</span></td><td data-label=\"進場區間\">'+priceRange(x)+'</td><td data-label=\"進場 / 出場\">'+(x.entryPrice?fmt(x.entryPrice):'—')+' / '+(x.exitPrice?fmt(x.exitPrice):'—')+'</td><td data-label=\"淨損益\">'+((x.status==='closed')?pnl(x.netPnl):'—')+'</td><td data-label=\"K線\"><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"'+telegramChartUrl(x.symbol)+'\">15m K線</a></td></tr>').join(''):'<tr><td colspan=\"8\">目前沒有有效的新交易訊號；不倒填歷史成交。</td></tr>';$('tradesPage').textContent='第 '+telegramTradePage+' / '+total+' 頁 · 每頁 10 筆';$('tradesPrev').disabled=telegramTradePage<=1;$('tradesNext').disabled=telegramTradePage>=total;}",
 "function moveTelegramTradePage(delta){telegramTradePage+=delta;renderTelegramTrades();}",
 "$('tradesPrev').addEventListener('click',()=>moveTelegramTradePage(-1));$('tradesNext').addEventListener('click',()=>moveTelegramTradePage(1));",
 "async function tick(){try{",
