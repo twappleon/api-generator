@@ -193,3 +193,32 @@ Scenario: BDD177 valid Donchian 15m/1h chart URL remains functional
 **Repro and isolated verification:** Before the patch, the exact upstream `clean(x.chartUrl)` sink was present in two public table renderers. The new source passes JS syntax compilation, evaluates the actual embedded browser helper with blocked `javascript:`, `data:`, foreign domain and valid 15/60-min chart URLs, and completes **177/177** in a fully isolated V8 test harness, with `persistentStateUnchanged=true`, filesystem writes 0, network calls 0 and no service startup. `BDD176` and `BDD177` both PASS. **NOT VERIFIED:** native Bun boot, real Chromium click behavior, actual HTTP endpoint response, deployed Railway source and live user devices. No deployment/credential change/Telegram notification/position modification occurred.
 
 **Risk / rollback:** Git-only Draft PR #8; revert code commit `16d46ac4240c79ec3cce517c8399c35f663641a0` if needed. No production rollback is necessary because Railway has not been updated. Remains a separate launch gate: run complete BDD on Bun, inspect browser/mobile and anonymous HTTP, and obtain explicit deployment approval. Never treat HTML attribute escaping as URL-protocol validation.
+
+
+## 2026-11-07 supervisor v2.9 — public Donchian error-message boundary
+
+**Pre-change source evidence:** `mergeDonchianStats()` forwarded `donchianStatsCache.error` verbatim as `donchianDemo.error` inside the anonymous `/api/report`. `refreshDonchianStats()` populates the cache from an upstream exception string (up to 180 characters); the string can contain internal URLs, query parameters, or credentials if an upstream client embeds them in an error. This is a **potential data-exposure defect found in source**, not proof of an actual secret appearing online. The existing `/api/status` route already suppresses raw channel/price errors; the Donchian report lacked the same boundary.
+
+**PRD/security behavior:** Anonymous Donchian reporting must preserve `available`, signal/performance information and the user-friendly `統計整合未設定` distinction, but must not return raw upstream exception text. On any other error publish only `Donchian 統計服務暫時無法取得`. On healthy integration publish `error:null`. Do not change polling, Demo order gates, persisted Paper ledger, or Telegram notifications.
+
+**Executable BDD:**
+
+```gherkin
+Scenario: BDD178 public Donchian error does not expose upstream connection information
+  Given a valid upstream schema but a cache error containing a URL token and Authorization header
+  When the anonymous report is constructed with mergeDonchianStats
+  Then its Donchian error is a generic localized message
+  And no PRIVATE_ token or Authorization text appears in the JSON
+
+Scenario: BDD179 healthy and not-configured Donchian integration retain their distinct states
+  Given either missing integration configuration or a healthy valid upstream response
+  When the anonymous Donchian report is constructed
+  Then missing configuration is labelled 統計整合未設定 and available is false
+  And healthy integration has available true and error null
+```
+
+**Implementation / regression:** `paper_lab/worker.ts` commit `c9a46a36a7679f495507ad67dbc8c8a03f9f544d` changes the anonymous error projection only. The actual extracted `mergeDonchianStats()` was executed with three synthetic states (credential-looking error, missing configuration, healthy upstream): **3/3 targeted checks PASS**. Source contains 179 declared BDD scenarios; BDD178–179 are included but **full Bun 179/179 and real HTTP/browser tests are NOT VERIFIED**. Do not mistake a static BDD count or targeted V8 check for native Bun startup success. The older V8 177/177 result applies only to the prior commit.
+
+**Residual scope:** `remote.performance`, `remote.paper` and position arrays are still forwarded from the validated upstream schema; nested field confidentiality requires a separate allowlist review before releasing these Git-only changes. CSV detailed export privacy, native Bun and actual anonymous HTTP are also outstanding. This change does not purport to solve those separate boundaries.
+
+**Rollback:** Revert `c9a46a36` on Draft PR #8. No production rollback is needed because the Git branch is not auto-deployed. No Railway source, credentials, persisted positions, Telegram or live trading flags were changed.
