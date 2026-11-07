@@ -72,3 +72,8 @@ Exact committed browser script was parsed and exercised with a mock DOM for stal
 ## Supervisor review 2026-11-08 — anonymous CSV event projection
 
 Source reproduction confirmed raw `JSON.stringify(o.exitEvents)` in public `/api/orders.csv` can reveal arbitrary extra nested fields from persisted records. Draft-only commit `162c1460` changes the CSV event column to a typed allowlist (`publicCsvExitEvents()`) while preserving partial-close economics and BDD111 semantics. Keep BDD186–187 and earlier BDD108–111/168–171; never reintroduce raw event serialization. Source-derived V8 BDD108–110,168–171,186–187: **9/9 PASS**, **not** native Bun 187/187, real HTTP or Railway. Treat anonymous detailed CSV as a separate privacy/product boundary even after sanitization. No production deploy without approval. Revert the commit to roll back.
+
+
+## 2026-11-08 supervisor lesson — attempted polling is not a successful quote
+
+In `paper_lab/worker.ts`, `lastPricePollAt` records polling attempts even when every upstream request fails. Never infer the freshness of reported Paper mark-to-market values from that timestamp alone. Inspect actual per-symbol quote timestamps for BTC plus active orders and warn on missing, stale (>90s), invalid or future observations. Preserve the anonymous `priceStale/staleSymbolCount/trackedSymbolCount` allowlisted API and the warning that unrealized PnL may be stale. Keep BDD188–190 and `paper_lab/QUOTE_FRESHNESS.feature` synchronized; do not change trade settlement, net +1% exits, durable ledger or production configuration while improving reporting. Code commit `4313ca6e`; **190/190 synthetic V8 PASS** with no writes/network, but **native Bun/HTTP/browser NOT VERIFIED**, Railway not deployed. Git revert remains available.
