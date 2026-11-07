@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-11-07 (Asia/Phnom_Penh).
 Scope: `paper_lab/worker.ts` within Draft PR #8.
-Status: **PUBLIC API AND CSV HARDENING IMPLEMENTED IN GIT / ISOLATED HELPER AND TARGETED BDD VERIFIED / FULL BUN BDD NOT YET VERIFIED / NOT DEPLOYED**.
+Status: **PUBLIC API, CSV AND ENTRY-RANGE CONTRACT FIX IMPLEMENTED IN DRAFT GIT / 173/173 ISOLATED V8 BDD PASS / NATIVE BUN AND LIVE HTTP NOT VERIFIED / NOT DEPLOYED**.
 
 ## PRD / threat model
 
@@ -12,7 +12,7 @@ Before this change, `GET /api/orders` serialized all `state.orders` fields, incl
 
 ## Implemented, limited change
 
-- `GET /api/orders` now returns a **seven-field allowlist**: `messageId`, `symbol`, `side`, `status`, `entryPrice`, `exitPrice`, `netPnl`.
+- `GET /api/orders` now returns a **nine-field allowlist**: `messageId`, `symbol`, `side`, `status`, `entryLow`, `entryHigh`, `entryPrice`, `exitPrice`, `netPnl`.
 - The public JSON returns **only the latest 100** orders, matching the existing table UI's 100-row window. Durable state and the dedicated CSV export retain full history.
 - Public message IDs are positive safe integers; symbols, sides and statuses are constrained; price and PnL values must be finite. Malformed values become null or `unknown`.
 - `GET /api/status` retains the existing JSON keys and existing report UI behavior, but substitutes generic Chinese availability messages for raw channel/price errors.
@@ -20,7 +20,7 @@ Before this change, `GET /api/orders` serialized all `state.orders` fields, incl
 
 ### Contract tradeoff
 
-The public `/api/orders` endpoint now has a narrower schema and 100-row window; external API consumers (if any) must adapt. The in-browser dashboard only uses these seven fields. The public `/api/orders.csv` remains the separate, detailed export previously approved in v2.4; changing its public availability requires a separate privacy/product decision. Consider spreadsheet formula-injection hardening before adding arbitrary user-generated fields to CSV.
+The public `/api/orders` endpoint now has a narrower schema and 100-row window; external API consumers (if any) must adapt. The in-browser dashboard uses these nine fields; `entryLow` and `entryHigh` were mistakenly omitted by the original seven-field projection, resulting in incorrect `0.00 – 0.00` entry-range display. The public `/api/orders.csv` remains the separate, detailed export previously approved in v2.4; changing its public availability requires a separate privacy/product decision. Consider spreadsheet formula-injection hardening before adding arbitrary user-generated fields to CSV.
 
 ## BDD acceptance (synthetic, code-level)
 
@@ -29,7 +29,7 @@ Feature: Public Paper dashboard has an explicit data boundary
   Scenario: Anonymous order view excludes internal metadata
     Given a Paper trade contains pending close commands and private debug metadata
     When publicOrders builds a read-only response
-    Then the latest trade has the seven allowlisted fields only
+    Then the latest trade has the nine allowlisted fields only
     And neither the pending command nor the debug metadata appears
 
   Scenario: Upstream failures cannot expose internal strings
@@ -108,3 +108,32 @@ Scenario: BDD171 invalid message ID must not create a formula-like hyperlink
 Rollback the two worker commits associated with this change, preserving persistent volumes and Railway services. Do not touch live Paper data.
 
 Lessons: making a read-only API public requires projecting **explicit allowlisted output**, not returning an entire mutable ledger object; upstream exceptions can contain credentials or internal URLs; a GitHub commit and isolated helper tests do **not** constitute a production deployment or full BDD pass. No claims of durable assistant memory are made; this file is the durable record.
+
+
+## v2.6 Public API ↔ browser table contract correction (2026-11-07)
+
+**Self-discovered, reproduced regression:** The previous seven-field `publicOrders()` projection omitted `entryLow` and `entryHigh`, but `renderTelegramTrades()` still reads both. Using the actual committed projection in a sandbox with a 99.50–101.75 entry signal returned both fields as `undefined`. The browser `fmt(undefined)` fallback consequently rendered the **incorrect** range `0.00 – 0.00`. This is a source-level reproducible report accuracy defect; no live screenshots or reports were collected.
+
+**Changes (Draft PR #8 only):** Restore `entryLow`/`entryHigh` as **finite positive numeric** fields in the public order allowlist (nine fields total) and render an em dash when either is invalid, rather than inventing a zero range. The same projection still excludes pending close commands, debug metadata and other internal fields. `messageId` and the existing trade-price, PnL and status sanitizers remain unchanged. No change to CSV, trading rules, volume persistence or authentication.
+
+**BDD / acceptance:**
+
+```gherkin
+Scenario: BDD172 browser entry range has the same fields as its API
+  Given an incoming public Paper trade has entryLow 99.50 and entryHigh 101.75
+  When it is projected for the anonymous dashboard
+  Then the payload contains both positive finite prices
+  And the nine-field schema does not leak pending close commands
+
+Scenario: BDD173 corrupted entry range must not invent zeros
+  Given a Paper trade has a NaN entryLow and Infinity entryHigh
+  When the public dashboard renders it
+  Then both API fields are null
+  And the entry-range cell displays an em dash rather than 0.00 – 0.00
+```
+
+**Verification evidence:** Source-derived comparison between the actual table renderer and API output initially found **two missing fields** (`entryLow`, `entryHigh`). After the patch, the nine renderer-used `x.*` fields match the nine allowlisted JSON fields; the updated projection, numeric validation and browser `priceRange` helper were executed with valid and invalid synthetic orders. The HTML page's embedded browser JavaScript parses, and a synthetic DOM rendering test showed **`99.50 – 101.75`** for the valid order and **`—`** for malformed values. The entire `runBDDTests()` suite passed **173/173** with `persistentStateUnchanged=true` using sandboxed V8 stubs. Its stubs recorded **zero filesystem writes and zero network calls**. This remains **not a native Bun startup, real browser or HTTP integration test**; the two new BDD scenarios themselves are code-level synthetic checks. Production Railway was not modified.
+
+**Remaining UI edge found in synthetic rendering:** If persistent data contains invalid IDs/symbols, the current client still generates `#null` and an empty TradingView instrument link. This is not known to affect valid historical trades. Treat graceful non-clickable placeholders for malformed identifiers as a separate follow-up, without relaxing the API field allowlist.
+
+**Rollback:** Revert `worker.ts` commit `014a14f568b08dacb2e79797255c55183515cb5b` and this documentation update on the Draft branch. No Railway/data rollback applies because these edits are Git-only. Before any future deployment, run the complete suite on native Bun 1.4.4 and inspect an actual anonymous JSON/HTML/CSV response in an isolated environment; deployment still requires separate user approval.
