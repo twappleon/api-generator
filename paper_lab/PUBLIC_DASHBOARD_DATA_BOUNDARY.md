@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-11-07 (Asia/Phnom_Penh).
 Scope: `paper_lab/worker.ts` within Draft PR #8.
-Status: **PUBLIC API, CSV AND ENTRY-RANGE CONTRACT FIX IMPLEMENTED IN DRAFT GIT / 173/173 ISOLATED V8 BDD PASS / NATIVE BUN AND LIVE HTTP NOT VERIFIED / NOT DEPLOYED**.
+Status: **Draft Git-only. Donchian nullable metrics display corrected (BDD182–183); full 183/183 isolated V8 BDD PASS; native Bun, deployed HTTP and browser/device E2E NOT VERIFIED; Railway NOT DEPLOYED.**
 
 ## PRD / threat model
 
@@ -251,3 +251,30 @@ Scenario: BDD181 malformed, oversized, or hostile Donchian rows fail closed
 **Risks left:** The detailed public `/api/orders.csv` remains a separate privacy/product decision; `report()`'s existing Telegram Paper aggregate fields were not changed. Re-verify semantics against real upstream payloads after Bun/native and HTTP staging tests, and explicitly check mobile UI for null projections before deployment. No change to Paper trading, Binance Demo execution gates, Telegram, credentials, volume, or official deployment.
 
 **Rollback:** Git revert commit `125d6e2` in the Draft PR branch. Because this change is Git-only, production currently requires no rollback.
+
+
+## v2.7 — Missing Donchian metrics are not zero (2026-11-07)
+
+**Self-discovered and reproduced:** The public Donchian projection converts malformed/missing numeric fields to `null` (intentionally), but the browser used `fmt(n) => Number(n||0)` and `pnl(n||0)`. In a synthetic rendering of the exact previously committed dashboard script, an absent last price and stop loss were shown as **0.00**, missing Paper equity as **0.00 USDT**, missing PnL as **+0.00**, and missing counts as **0**. This is a confirmed report-accuracy bug in source-derived DOM output, not evidence that production's valid upstream records were wrong.
+
+**Implementation:** Commit `14290ec83012ff4cc7cc1e86623eda4cc912c457` adds `validMetric`, `fmtObserved`, `pnlObserved`, `countObserved` to the dashboard script. Numeric fields received from Donchian now render `—` when `null`, undefined, non-finite or otherwise non-numeric, including Paper equity, signal counts, entry/mark/stop/take-profit, commissions and realized/unrealized PnL. Genuine numeric **zero** still displays as zero, so valid flat PnL is not concealed. The helper is intentionally scoped to the Donchian external-statistics view; Telegram Paper accounting and trading semantics are untouched.
+
+**BDD/contract acceptance:**
+
+```gherkin
+Scenario: BDD182 missing upstream metrics do not look like real zero
+  Given a Donchian report has null or undefined mark price, stop, PnL and equity
+  When the public dashboard renders the sanitized report
+  Then missing values appear as an em dash
+  And the browser must not manufacture 0.00 USDT or positive +0.00 PnL
+
+Scenario: BDD183 legitimate numeric zero and positive values stay correct
+  Given Donchian data includes genuine zero realized PnL and count, and a valid 12.25 price
+  When the corresponding numeric helpers run
+  Then numeric zero still displays 0.00 / +0.00 and count 0
+  And 12.25 remains 12.25, not an absent-value placeholder
+```
+
+**Evidence (same 2026-11-07 draft branch):** Using the exact previous inline browser script with stubbed DOM/fetch, before-change output included missing mark price `0.00`, missing stop `0.00`, missing equity `0.00 USDT`, and missing un-realized PnL `+0.00`. After patch the extracted inline JS parsed and **8/8** DOM assertions passed (missing equity/count/PnL, mark/stop/fee placeholders, legitimate zero PnL), plus null/NaN/zero helper checks. Re-fetched patched `paper_lab/worker.ts` and executed **183/183** actual embedded `runBDDTests()` scenarios in an **isolated V8 JavaScript evaluator** with stub Request/Response, Basic Auth, filesystem and network; `persistentStateUnchanged=true`, filesystem writes **0**, network calls **0**. This is *not* native Bun startup, an authenticated or anonymous live HTTP browser run, a Railway deployment, or proof of production data correctness.
+
+**Next:** Native Bun 1.4.4 183-test startup and read-only preview HTTP checks, display a clear stale-cache warning when Donchian upstream refresh fails, and complete a separate product/privacy review of detailed public CSV. Release/production rollout remains **HOLD** without explicit authorization. Rollback the code commit `14290ec8` through Git Revert; no persistent records were changed.
