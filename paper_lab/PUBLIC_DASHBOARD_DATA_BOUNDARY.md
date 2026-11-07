@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-11-07 (Asia/Phnom_Penh).
 Scope: `paper_lab/worker.ts` within Draft PR #8.
-Status: **IMPLEMENTED IN GIT / ISOLATED HELPER TESTED / FULL BUN BDD NOT YET VERIFIED / NOT DEPLOYED**.
+Status: **PUBLIC API AND CSV HARDENING IMPLEMENTED IN GIT / ISOLATED HELPER AND TARGETED BDD VERIFIED / FULL BUN BDD NOT YET VERIFIED / NOT DEPLOYED**.
 
 ## PRD / threat model
 
@@ -50,7 +50,50 @@ Feature: Public Paper dashboard has an explicit data boundary
     And existing durable history and CSV behavior remain unchanged
 ```
 
-These scenarios are executable as `BDD164`–`BDD167` in the existing `runBDDTests()` suite.
+These scenarios are executable as `BDD164`–`BDD167` in the existing `runBDDTests()` suite. CSV scenarios `BDD168`–`BDD171` are documented in the v2.5 section below.
+
+## v2.5 CSV formula-injection and record-boundary hardening (2026-11-07)
+
+**Self-discovered requirement:** The anonymous CSV exporter previously performed RFC-4180 quote doubling but wrote raw `reason` and `exitEvents` values. Quotes do **not** neutralize spreadsheet formulas. A field beginning with `=`, `+`, `-` or `@` (including whitespace-obfuscated prefixes) may be evaluated by Excel/Sheets when opened as a spreadsheet. Embedded CR/LF also complicates downstream record boundaries. This is a *source-confirmed input-handling vulnerability*, not evidence that users opened a malicious file.
+
+**Implemented on Draft PR #8 (commit `2887378802820355adafff2ccad3bd6e168d59f3`):**
+
+- Introduce `csvCell()` for every field. Text beginning with a spreadsheet formula prefix, including after whitespace/BOM/zero-width space, is prefixed with a literal single quote before normal CSV quote escaping.
+- Flatten ASCII control characters and Unicode line/paragraph separators to spaces so one ledger record maps to one CSV record. Preserve legitimate commas and double quotes through CSV quoting.
+- Preserve finite numeric cells as numeric, including **negative realized PnL**; only untrusted text receives formula neutralization.
+- Generate the Telegram source URL only for **positive safe-integer** message IDs; corrupt values leave a blank field instead of being embedded into a URL.
+- Keep the existing column names/order, full durable history, downloadable route and anonymous dashboard policy. No exchange orders, Telegram send, storage write or rollout is introduced.
+- The detailed public CSV remains a **separate product/privacy decision**: this patch prevents spreadsheet formula execution but does not make every exported ledger field confidential. Do not claim otherwise.
+
+**New executable synthetic tests embedded in `runBDDTests()`:**
+
+```gherkin
+Scenario: BDD168 malicious reason starts with a spreadsheet function
+  Given a Paper order reason begins with =HYPERLINK(...)
+  When a public CSV is generated
+  Then the text cell is prefixed with a quote-neutralizing apostrophe
+
+Scenario: BDD169 obfuscated or alternate spreadsheet formula prefixes
+  Given reason text starts with +, -, @, a tab before = or BOM before =
+  Then every text cell is neutralized
+  And a finite negative numeric PnL remains numeric
+
+Scenario: BDD170 embedded line breaks must not create extra CSV rows
+  Given a Paper reason contains newlines and carriage returns
+  When it is exported
+  Then exactly one data record is emitted
+
+Scenario: BDD171 invalid message ID must not create a formula-like hyperlink
+  Given the source message ID contains =1+1
+  Then the CSV link cell is blank
+  And legitimate quoted text still preserves its content
+```
+
+**Verified in this run:** The exact committed helper code passed **12/12** isolated cases (formula prefixes, positive and negative PnL, malformed ID, CSV quote escaping, control characters and record count). Executing the actual committed test bodies **BDD168–BDD171 passed 4/4**; regression test bodies **BDD108–BDD110 passed 3/3**. The entire updated source parses as JavaScript after stripping its top-level Node import declarations. This is **not** a full Bun test or live HTTP test.
+
+**Pending gates:** Full Bun boot regression `171/171`, HTTP response parity and live CSV download in an isolated test environment, and separate authorization before any Railway deployment. Confirm that spreadsheets treat the leading apostrophe as inert text across target viewers; CSV consumers might display the apostrophe literally. No production state was touched.
+
+**Rollback:** Revert commit `2887378802820355adafff2ccad3bd6e168d59f3` to restore the previous CSV logic and BDD count. Since the modification is Git-only and Draft, no live rollback is needed.
 
 ## Evidence and remaining gates
 
