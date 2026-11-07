@@ -46,3 +46,10 @@ The public Donchian Paper tables must **never** interpolate `donchianDemo.positi
 ## Supervisor review 2026-11-07 — Donchian public error sanitization
 
 Never serialize raw `donchianStatsCache.error` or upstream exceptions to anonymous `/api/report`. `mergeDonchianStats()` must keep `available` and preserve the explicit unconfigured state, but replace other upstream errors with a fixed generic message. BDD178–179 exercise sensitive-looking error text and healthy/missing paths. Code commit `c9a46a36`, documentation `PUBLIC_DASHBOARD_DATA_BOUNDARY.md`. Targeted extracted-function checks 3/3 PASS; full native Bun 179/179, HTTP, browser, and Railway parity remain NOT VERIFIED. Also review upstream `performance`/`paper`/positions for nested field leaks; schema-only validation is not a complete public field allowlist. Retain Draft PR and do not deploy without explicit approval.
+
+
+## Supervisor review 2026-11-07 — public Donchian nested DTO is a strict allowlist
+
+Anonymous `/api/report` must **never** forward entire objects from `BINANCE_DEMO_DONCHIAN` simply because `ledger` and `schemaVersion` match. In `mergeDonchianStats()`, use the explicit `donchianPublicStats()` numeric metric keys and `donchianPublicRows()` sanitized row keys; exclude `signals.last`, upstream credentials/debug fields and other nested extras. Bound both row arrays at 100, reject malformed symbols, and allow only exact TradingView chart destinations.
+
+Preserve the dashboard's valid signal counts, realized/unrealized profit, equity, stop/take-profit and real chart links. BDD180–181 test both valid data and hostile secret-bearing payloads. Git commit `125d6e2`; the **181/181 PASS** result came from an **isolated mocked V8 runner** with zero file writes/network, **not** native Bun/HTTP/browser/Railway. No production deploy is approved. Next: native Bun 181 BDD, HTTP API security regression and the separate detailed CSV disclosure review. See `PUBLIC_DASHBOARD_DATA_BOUNDARY.md` for BDD, evidence and revert instructions.
