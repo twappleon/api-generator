@@ -164,3 +164,32 @@ Scenario: BDD175 valid public identifiers preserve navigation and entry-range di
 **Implementation:** Draft PR #8 commit `ad7e6c557f0a58db71b4a517dd7d80db8646cbf4` adds two browser-only link cell helpers and executes the genuine inline browser trade table in an isolated DOM stub. BDD174–175 guard invalid *and* valid paths. The V8 harness executed **175/175 PASS**, with `persistentStateUnchanged=true`, zero filesystem writes and zero network calls; `mkdirSync` was a no-op stub. These are source-derived isolated checks, **not native Bun, real Chromium or Railway HTTP acceptance**.
 
 **Rollback and release gate:** Revert commit `ad7e6c5` on the Draft branch if a regression appears. No production rollback is needed because nothing was deployed. Before any deployment, perform native Bun startup (175/175), anonymous HTTP/CSV checks, real phone layout review and required explicit user approval. GitHub/Vercel/Railway production and Demo trade flags were not changed during this fix.
+
+
+## 2026-11-07 supervisor v2.8 — Donchian upstream chart URL trust boundary
+
+**Self-discovered issue, before change:** The public Donchian Paper open/closed tables built `<a href>` by interpolating `clean(x.chartUrl)` from the independent upstream Demo statistics service. HTML-escaping prevents attribute breakout but **does not restrict URL schemes or domains**. A malformed/compromised upstream `chartUrl` such as `javascript:alert(1)` could remain clickable in the public dashboard. This is a source-confirmed *potential* link-injection weakness; there is **no evidence of exploited traffic or compromised upstream**.
+
+**PRD security / compatibility requirement:** Donchian Paper open and closed history may link **only** to the official TradingView chart origin `https://www.tradingview.com/chart/`, a `BINANCE:{SYMBOL}.P` uppercase alphanumeric perpetual contract, and supported 15 or 60 minute intervals. The renderer must build its own normalized HTTPS URL and display `15m` or `1h` from the validated interval. Invalid upstream chart strings must show a non-clickable, accessible em dash. Every opened link must have `rel="noopener noreferrer"`. Preserve upstream ledger separation, read-only public API, anonymous access, all trading logic, existing chart links and durable Paper records.
+
+**Executable Given/When/Then in actual `runBDDTests()`:**
+
+```gherkin
+Scenario: BDD176 upstream Donchian chart URL cannot inject a link
+  Given an upstream advisory or closed Paper position supplies a javascript:, data:, foreign host, invalid symbol, unsupported interval, or extra-parameter chart URL
+  When the public table builds its chart cell with the actual inline browser helper
+  Then it renders a non-clickable accessible placeholder
+  And it creates no anchor or href
+
+Scenario: BDD177 valid Donchian 15m/1h chart URL remains functional
+  Given a valid official TradingView perpetual-contract chart for BTCUSDT and a 15- or 60-minute interval
+  When the actual inline browser helper renders the link
+  Then the normalized BINANCE%3ABTCUSDT.P link and correct interval label are present
+  And the new-tab link has rel="noopener noreferrer"
+```
+
+**Change:** `paper_lab/worker.ts` now uses an exact expected-form URL allowlist inside `donchianChartCell(x)` for **both** Donchian Paper tables, never interpolates the raw remote `chartUrl` into `href`, and adds BDD176–177. The sender's currently committed `donchianChartUrl()` builds URLs in this exact format for `15`/`60` (verified against `binance_demo/worker.ts` on the same branch), so valid legacy/1H navigation remains supported.
+
+**Repro and isolated verification:** Before the patch, the exact upstream `clean(x.chartUrl)` sink was present in two public table renderers. The new source passes JS syntax compilation, evaluates the actual embedded browser helper with blocked `javascript:`, `data:`, foreign domain and valid 15/60-min chart URLs, and completes **177/177** in a fully isolated V8 test harness, with `persistentStateUnchanged=true`, filesystem writes 0, network calls 0 and no service startup. `BDD176` and `BDD177` both PASS. **NOT VERIFIED:** native Bun boot, real Chromium click behavior, actual HTTP endpoint response, deployed Railway source and live user devices. No deployment/credential change/Telegram notification/position modification occurred.
+
+**Risk / rollback:** Git-only Draft PR #8; revert code commit `16d46ac4240c79ec3cce517c8399c35f663641a0` if needed. No production rollback is necessary because Railway has not been updated. Remains a separate launch gate: run complete BDD on Bun, inspect browser/mobile and anonymous HTTP, and obtain explicit deployment approval. Never treat HTML attribute escaping as URL-protocol validation.
