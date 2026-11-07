@@ -676,15 +676,18 @@ const winGross = exitPnls.filter(v=>v>0).reduce((a,b)=>a+b,0);
 const lossGross = -exitPnls.filter(v=>v<0).reduce((a,b)=>a+b,0);
 let peak = START_BALANCE, maxDD = 0;
 for (const x of state.snapshots) { peak = Math.max(peak, x.equity); if (peak > 0) maxDD = Math.max(maxDD, (peak - x.equity) / peak * 100); }
-const daily = {}, monthly = {}, symbols = {};
+// Read-only aggregation: plain-object keys from historical/corrupt records must
+// never mutate Object.prototype or break the public report.
+const daily = Object.create(null), monthly = Object.create(null), symbols = Object.create(null);
 for (const o of state.orders) for (const exit of exitLegs(o)) {
-const day = (exit.at || "").slice(0, 10);
-if(!day) continue;
+const day = typeof exit?.at === "string" ? exit.at.slice(0, 10) : "";
+if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(exit?.netPnl)) continue;
 const month = day.slice(0, 7);
 daily[day] ||= { trades: 0, wins: 0, pnl: 0 };
 monthly[month] ||= { trades: 0, wins: 0, pnl: 0 };
-symbols[o.symbol] ||= { trades: 0, wins: 0, pnl: 0 };
-for (const v of [daily[day], monthly[month], symbols[o.symbol]]) {
+const symbolKey = typeof o.symbol === "string" && /^[A-Z0-9]{3,16}$/.test(o.symbol) ? o.symbol : null;
+if (symbolKey) symbols[symbolKey] ||= { trades: 0, wins: 0, pnl: 0 };
+for (const v of symbolKey ? [daily[day], monthly[month], symbols[symbolKey]] : [daily[day], monthly[month]]) {
 v.trades++; if (exit.netPnl > 0) v.wins++; v.pnl += exit.netPnl;
 }
 }
@@ -1989,6 +1992,37 @@ state.quotes.SOLUSDT={price:100,at};h=publicPaperStatus();
 assert(!h.priceStale&&h.staleSymbolCount===0&&h.trackedSymbolCount===2,
 "fresh active symbols still counted stale");
 assert(!("quotes" in h)&&!("symbols" in h),"public status exposed private quote objects");
+});
+
+// Protect public history aggregation against corrupt legacy keys and timestamps.
+test("BDD191",()=>{
+const date="2026-11-08T01:00:00.000Z";
+state.orders=[
+mock({id:"BAD",messageId:5001,status:"closed",symbol:"__proto__",netPnl:2,
+exitEvents:[{at:date,netPnl:2,qty:1}]}),
+mock({id:"GOOD",messageId:5002,status:"closed",symbol:"SOLUSDT",netPnl:3,
+exitEvents:[{at:date,netPnl:3,qty:1}]})
+];
+const result=report();
+assert(!Object.hasOwn(Object.prototype,"trades")&&!Object.hasOwn(Object.prototype,"pnl")&&
+result.daily["2026-11-08"].trades===2&&result.daily["2026-11-08"].pnl===5&&
+result.symbols.SOLUSDT.trades===1&&!Object.hasOwn(result.symbols,"__proto__"),
+"malformed historical symbol caused prototype mutation or corrupted valid totals");
+});
+test("BDD192",()=>{
+state.orders=[
+mock({id:"BAD_DATE",messageId:5001,status:"closed",netPnl:2,
+exitEvents:[{at:17,netPnl:2,qty:1},{at:"__proto__",netPnl:2,qty:1},
+{at:"2026-11-08T01:00:00Z",netPnl:"INVALID",qty:1}]}),
+mock({id:"GOOD_DATE",messageId:5002,status:"closed",netPnl:-2.5,
+exitEvents:[{at:"2026-11-08T01:00:00Z",netPnl:-2.5,qty:1}]})
+];
+const result=report();
+assert(Object.keys(result.daily).length===1&&result.daily["2026-11-08"].trades===1&&
+result.daily["2026-11-08"].pnl===-2.5&&result.monthly["2026-11"].pnl===-2.5&&
+result.symbols.SOLUSDT.trades===1&&
+!Object.hasOwn(Object.prototype,"trades"),
+"malformed legacy exit time/amount broke the report or created invalid period totals");
 });
 
 const failed=results.filter(x=>!x.pass);
