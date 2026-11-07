@@ -29,7 +29,7 @@ messages: [], orders: [], quotes: {}, snapshots: [], notifications: [], telegram
 });
 mkdirSync(dirname(path), { recursive: true });
 let state = fresh();
-let donchianStatsCache = {data:null,error:null};
+let donchianStatsCache = {data:null,error:null,lastSuccessAt:null};
 if (existsSync(path)) {
 const read = JSON.parse(readFileSync(path, "utf8"));
 state = { ...fresh(), ...read };
@@ -649,8 +649,12 @@ paperPnl:donchianPublicNumber(x.paperPnl)
 }
 function mergeDonchianStats(paper,remote=donchianStatsCache.data,cache=donchianStatsCache) {
 const valid=remote?.ledger==="BINANCE_DEMO_DONCHIAN"&&remote?.schemaVersion===1;
+const lastSuccessAt=donchianPublicTime(cache.lastSuccessAt);
+const ageMs=lastSuccessAt ? Date.now()-Date.parse(lastSuccessAt) : Infinity;
+const stale=valid&&(!!cache.error || !Number.isFinite(ageMs) || ageMs>90000 || ageMs < -30000);
 return {...paper,donchianDemo:{
 available:valid,
+stale,lastSuccessAt,
 error:cache.error ? (cache.error==="統計整合未設定" ? "統計整合未設定" : "Donchian 統計服務暫時無法取得") : null,
 signals:valid?donchianPublicStats(remote.signals,["total","entries","exits"]):null,
 performance:valid?donchianPublicStats(remote.performance,["closedTrades","wins","losses","winRatePct","grossRealized","commission","funding","netPnlUsdt"]):null,
@@ -702,7 +706,7 @@ const r=await fetch(DONCHIAN_STATS_URL,{headers:{"x-stats-token":DONCHIAN_STATS_
 if(!r.ok)throw Error("Demo stats HTTP "+r.status);
 const data=await r.json();
 if(data?.schemaVersion!==1||data?.ledger!=="BINANCE_DEMO_DONCHIAN")throw Error("Demo stats schema");
-donchianStatsCache={data,error:null};
+donchianStatsCache={data,error:null,lastSuccessAt:nowISO()};
 }catch(err){donchianStatsCache.error=String(err.message||err).slice(0,180);}
 }
 // Public reporting boundary: an explicit allowlist keeps internal Paper state private.
@@ -1885,6 +1889,22 @@ gain.price==="12.25"&&gain.pnl.includes("+12.25")&&
 "legitimate numeric zero or valid Donchian metrics display regressed");
 });
 
+test("BDD184",()=>{
+const remote={ledger:"BINANCE_DEMO_DONCHIAN",schemaVersion:1,signals:{total:2}};
+const x=mergeDonchianStats({},remote,{error:"Authorization: PRIVATE_STALE_TOKEN",lastSuccessAt:new Date().toISOString()}).donchianDemo;
+assert(x.available&&x.stale&&x.signals.total===2&&x.error==="Donchian 統計服務暫時無法取得"&&
+!JSON.stringify(x).includes("PRIVATE_STALE_TOKEN"),"cached report silently looked fresh or exposed raw failure");
+});
+test("BDD185",()=>{
+const remote={ledger:"BINANCE_DEMO_DONCHIAN",schemaVersion:1,signals:{total:0}};
+const fresh=mergeDonchianStats({},remote,{error:null,lastSuccessAt:new Date().toISOString()}).donchianDemo;
+const old=mergeDonchianStats({},remote,{error:null,lastSuccessAt:new Date(Date.now()-120000).toISOString()}).donchianDemo;
+const missing=mergeDonchianStats({},remote,{error:null,lastSuccessAt:null}).donchianDemo;
+assert(!fresh.stale&&old.stale&&missing.stale&&fresh.signals.total===0&&
+page.includes("d.stale")&&page.includes("d.lastSuccessAt")&&page.includes("不能視為即時行情"),
+"upstream cache freshness and UI warning contract failed");
+});
+
 const failed=results.filter(x=>!x.pass);
 return {
 mode:"SYNTHETIC_BDD", isolated:true, persistentStateUnchanged:state===savedState,
@@ -1970,6 +1990,8 @@ const page = [
 "$('dd').textContent=fmt(r.maxDrawdownPct)+'%';",
 "$('orders').textContent='持倉 '+r.openPositions+' / 掛單 '+r.pendingOrders+' / 部分平倉 '+(r.partialExits||0);",
 "const d=r.donchianDemo||{},dp=d.performance||{},pp=d.paper||{},ds=d.signals||{};",
+"const defaultDonchianStatus='新建倉已替換為 1H Donchian + EMA200 + ATR；既有 Legacy 15m 持倉依原規則結束。此區不與 Telegram Paper 淨值相加，也不會送出 Binance Demo 或正式訂單。';",
+"$('dStatus').textContent=d.stale?'⚠️ Donchian 上游統計未更新或可能過期；下列數值只供歷史參考，不能視為即時行情。最後成功取得：'+(d.lastSuccessAt||'未知'):(d.error?'⚠️ Donchian 統計不可用：'+d.error:defaultDonchianStatus);",
 "$('dSignals').textContent=d.available?countObserved(ds.total):'—';$('dSignalSub').textContent=d.available?'建倉 '+countObserved(ds.entries)+' / 平倉 '+countObserved(ds.exits):'等待上游資料';",
 "$('dWin').textContent=d.available?countObserved(pp.openPositions)+' / '+countObserved(pp.closedTrades):'—';$('dPnl').innerHTML=d.available?'已實現 '+pnlObserved(pp.realizedPnl)+' / 未實現 '+pnlObserved(pp.unrealizedPnl):'損益 —';",
 "$('dPaperEquity').textContent=d.available?(validMetric(pp.equity)?fmt(pp.equity)+' USDT':'—'):'—';$('dActual').textContent=d.available?countObserved(dp.closedTrades):'—';",
