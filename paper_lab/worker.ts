@@ -725,7 +725,7 @@ if (!Number.isFinite(quote?.price) || quote.price <= 0 ||
 return {priceStale: staleSymbolCount > 0, staleSymbolCount, trackedSymbolCount: tracked.size};
 }
 // Public reporting boundary: an explicit allowlist keeps internal Paper state private.
-// Only the seven fields used by the anonymous trade table are exposed.
+// Only the nine fields used by the anonymous trade table are exposed.
 function publicOrders() {
 return state.orders.slice(-100).map(o=>({
 messageId:Number.isSafeInteger(o.messageId)&&o.messageId>0?o.messageId:null,
