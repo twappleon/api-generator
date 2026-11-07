@@ -616,11 +616,48 @@ snapshot(); persist();
 } catch (err) { state.priceError = String(err.message || err); persist(); }
 finally { pricesBusy = false; }
 }
+// The anonymous dashboard must not expose raw Donchian upstream objects.
+const donchianPublicNumber = v => typeof v === "number" && Number.isFinite(v) ? v : null;
+const donchianPublicStats = (source, fields) => Object.fromEntries(fields.map(k => [k, donchianPublicNumber(source?.[k])]));
+const donchianPublicText = (v, pattern) => typeof v === "string" && pattern.test(v) ? v : null;
+const donchianPublicTime = v => donchianPublicText(v,/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.+-]{8,24}Z?$/);
+const donchianPublicChart = v => donchianPublicText(v,/^https:\/\/www[.]tradingview[.]com\/chart\/[?]symbol=BINANCE%3A[A-Z0-9]{3,16}[.]P&interval=(?:15|60)$/);
+function donchianPublicRows(source,closed=false) {
+if (!Array.isArray(source)) return [];
+return source.slice(0,100).filter(x => x && typeof x === "object" &&
+typeof x.symbol === "string" && /^[A-Z0-9]{3,16}$/.test(x.symbol)).map(x => ({
+symbol:x.symbol,side:donchianPublicText(x.side,/^(?:LONG|SHORT|long|short)$/),
+strategyVersion:donchianPublicText(x.strategyVersion,/^[A-Z0-9_]{3,48}$/),
+entryPrice:donchianPublicNumber(x.entryPrice),
+entryTime:donchianPublicTime(x.entryTime),
+chartUrl:donchianPublicChart(x.chartUrl),
+...(closed ? {
+referenceEntry:donchianPublicNumber(x.referenceEntry),
+exitPrice:donchianPublicNumber(x.exitPrice),
+exitReason:donchianPublicText(x.exitReason,/^[A-Z0-9_:-]{1,64}$/),
+fees:donchianPublicNumber(x.fees),
+netPnl:donchianPublicNumber(x.netPnl),
+exitTime:donchianPublicTime(x.exitTime)
+} : {
+lastPrice:donchianPublicNumber(x.lastPrice),
+lastPriceAt:donchianPublicTime(x.lastPriceAt),
+stopLoss:donchianPublicNumber(x.stopLoss),
+takeProfit:donchianPublicNumber(x.takeProfit),
+paperPnl:donchianPublicNumber(x.paperPnl)
+})
+}));
+}
 function mergeDonchianStats(paper,remote=donchianStatsCache.data,cache=donchianStatsCache) {
 const valid=remote?.ledger==="BINANCE_DEMO_DONCHIAN"&&remote?.schemaVersion===1;
-const p=valid?remote.performance||{}:{};
-return {...paper,
-donchianDemo:{available:valid,error:cache.error ? (cache.error==="統計整合未設定" ? "統計整合未設定" : "Donchian 統計服務暫時無法取得") : null,signals:valid?remote.signals:null,performance:valid?p:null,paper:valid?remote.paper:null,positions:valid&&Array.isArray(remote.advisoryPositions)?remote.advisoryPositions:[],closedPositions:valid&&Array.isArray(remote.closedPaperPositions)?remote.closedPaperPositions:[]}}
+return {...paper,donchianDemo:{
+available:valid,
+error:cache.error ? (cache.error==="統計整合未設定" ? "統計整合未設定" : "Donchian 統計服務暫時無法取得") : null,
+signals:valid?donchianPublicStats(remote.signals,["total","entries","exits"]):null,
+performance:valid?donchianPublicStats(remote.performance,["closedTrades","wins","losses","winRatePct","grossRealized","commission","funding","netPnlUsdt"]):null,
+paper:valid?donchianPublicStats(remote.paper,["initialBalance","equity","openPositions","closedTrades","wins","winRatePct","realizedPnl","unrealizedPnl"]):null,
+positions:valid?donchianPublicRows(remote.advisoryPositions):[],
+closedPositions:valid?donchianPublicRows(remote.closedPaperPositions,true):[]
+}};
 }
 function report() {
 const closed = state.orders.filter(o => o.status === "closed");
@@ -1782,6 +1819,44 @@ const healthy=mergeDonchianStats({}, {ledger:"BINANCE_DEMO_DONCHIAN",schemaVersi
 assert(!missing.donchianDemo.available&&missing.donchianDemo.error==="統計整合未設定"&&
 healthy.donchianDemo.available&&healthy.donchianDemo.error===null,
 "public Donchian missing/healthy status regressed");
+});
+
+
+test("BDD180",()=>{
+const secret="PRIVATE_UPSTREAM_ACCOUNT_KEY";
+const remote={ledger:"BINANCE_DEMO_DONCHIAN",schemaVersion:1,
+signals:{total:4,entries:2,exits:2,last:{rawToken:secret}},
+performance:{closedTrades:2,netPnlUsdt:-3.2,apiKey:secret},
+paper:{equity:9996.8,openPositions:1,credentials:secret},
+advisoryPositions:[{symbol:"SOLUSDT",side:"LONG",entryPrice:101,entryTime:"2026-11-07T12:00:00.000Z",
+chartUrl:"https://www.tradingview.com/chart/?symbol=BINANCE%3ASOLUSDT.P&interval=60",
+paperPnl:-1.2,rawToken:secret}],
+closedPaperPositions:[{symbol:"BTCUSDT",side:"SHORT",netPnl:2,exitReason:"TAKE_PROFIT_2R",
+exitTime:"2026-11-07T12:00:00.000Z",chartUrl:"javascript:alert(1)",credentials:secret}]};
+const result=mergeDonchianStats({equity:10005},remote,{error:"Authorization: "+secret});
+assert(result.equity===10005&&result.donchianDemo.signals.total===4&&
+result.donchianDemo.performance.netPnlUsdt===-3.2&&
+result.donchianDemo.paper.equity===9996.8&&
+result.donchianDemo.positions[0].entryPrice===101&&
+result.donchianDemo.positions[0].chartUrl===remote.advisoryPositions[0].chartUrl&&
+result.donchianDemo.closedPositions[0].netPnl===2&&
+!JSON.stringify(result).includes(secret)&&
+!JSON.stringify(result).includes("javascript:"),
+"public Donchian nested objects leaked private upstream fields or broke legitimate metrics");
+});
+test("BDD181",()=>{
+const remote={ledger:"BINANCE_DEMO_DONCHIAN",schemaVersion:1,
+advisoryPositions:[{symbol:"BAD<script>",secret:"PRIVATE_ROW"}],
+closedPaperPositions:Array.from({length:150},(_,i)=>({symbol:"BTCUSDT",netPnl:i,
+chartUrl:"https://evil.example/chart/?symbol=BINANCE%3ABTCUSDT.P&interval=60",
+apiKey:"PRIVATE_ROW"}))};
+const result=mergeDonchianStats({},remote,{error:null});
+assert(result.donchianDemo.positions.length===0&&
+result.donchianDemo.closedPositions.length===100&&
+result.donchianDemo.closedPositions[0].chartUrl===null&&
+Object.keys(result.donchianDemo.closedPositions[0]).every(k=>k!=="apiKey")&&
+!JSON.stringify(result).includes("PRIVATE_ROW"),
+"Donchian anonymous detail projection accepted bad symbols, unsafe URL or unbounded rows");
 });
 
 const failed=results.filter(x=>!x.pass);
