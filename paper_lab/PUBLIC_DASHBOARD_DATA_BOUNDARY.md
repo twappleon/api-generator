@@ -341,3 +341,38 @@ Scenario: BDD187 malformed events cannot bypass CSV projection
 **Evidence:** before patch, source-derived CSV **contained** the synthetic `TOP_SECRET_BD_186` value; after patch, re-fetched committed blob `d47809a6feb0d59d46536c9722dc57e10654515d`, and executed actual committed `BDD108–110`, `BDD168–171`, `BDD186–187` with the production `csvCell()`/`csv()` functions: **9/9 PASS**, 0 FAIL. Additional checks confirmed zero-value/negative PnL preserved and no nested debug fields. **187 tests are now defined, but full 187/187 original Bun start-up is NOT VERIFIED.** Isolated V8 checks are not live HTTP, browser, Railway, or real account validation.
 
 **Rollback:** Git Revert `162c1460` (plus documentation commits if desired). No production deployment, exchange order, state migration, notifications, or credential access was performed. Detailed anonymous CSV authorization itself remains a separate product/privacy decision: this fix only reduces accidental unknown nested-field exposure. Next: native Bun all 187 tests, protected/public HTTP route behavior, external CSV inspection, then rollout only with explicit approval.
+
+
+## 2026-11-08 — v2.9 Telegram Paper quote-freshness visibility (BDD188–190)
+
+**Problem (reproduced in source):** `pollPrices()` always sets `state.lastPricePollAt` after an attempted poll, even if every symbol fetch failed. The anonymous `/api/status` previously exposed only that attempt timestamp and generic `priceError`, not per-symbol observation freshness. A 5-minute-old cached mark with a just-updated attempt timestamp could therefore look current while the dashboard still displayed Paper unrealized PnL. This is a display-risk reproduction using synthetic state; it is **not** evidence of inaccurate live trades or a production incident.
+
+**Draft-only source change:** `4313ca6e1d38190e7c365011b9eeb77ce67a672e`. New read-only `publicPaperPriceHealth()` examines successful quote timestamps for BTCUSDT plus symbols of active `open`/`pending`/`waiting_price` Paper orders. A missing, nonpositive, invalid, >90-second-old or >30-second-future observation is flagged. Closed-only symbols do not create warnings. `GET /api/status` adds only `priceStale`, `staleSymbolCount`, and `trackedSymbolCount` (no price objects, credentials or order details). The public UI warns explicitly that mark-to-market PnL is **not real-time** when any tracked symbol is stale, and relabels `lastPricePollAt` as a **poll attempt, not a successful quote**. Do not rewrite the existing stored ledger, price engine, +1% net take-profit rule or Telegram behavior.
+
+**New executable in-source Gherkin contracts:**
+
+```gherkin
+Feature: Public Paper mark-to-market quote freshness
+  Scenario: BDD188 fresh BTC observation is not incorrectly stale
+    Given BTCUSDT has a positive quote observed within the last 90 seconds
+    When anonymous /api/status is generated
+    Then priceStale is false and the tracked symbol count is 1
+    And the report page contains a stale-PnL warning for use when needed
+
+  Scenario: BDD189 a recent polling attempt does not disguise old or missing data
+    Given lastPricePollAt is current but the last successful BTC quote is five minutes old
+    When anonymous /api/status is generated
+    Then priceStale is true
+    And a missing quote or a far-future timestamp is also marked stale
+
+  Scenario: BDD190 an active market must not inherit another market's freshness
+    Given BTC has a fresh quote and an open SOL order has no successful quote
+    And a closed ETH order remains in history
+    When anonymous /api/status is generated
+    Then two symbols are tracked and the stale count is one
+    When SOL receives a fresh positive quote
+    Then priceStale is false and the stale count is zero
+    And no private quote map is emitted
+```
+
+**Verification boundary:** Real GitHub pre-change source passed **187/187** in the isolated V8 synthetic harness. Edited source passed **190/190**, `persistentStateUnchanged=true`, with blocked disk writes and blocked network. This is a *source-derived V8 test*, not native Bun, actual browser, network HTTP or deployed Railway. The GitHub commit was only written after all 190 passed; no production change or order placement. Future verification: native Bun startup, real HTTP `/api/status` parity, Chromium dashboard stale/fresh view, 15-second poll cadence, and device-level QA. **ROLLBACK:** Git revert `4313ca6e` to remove the new freshness fields and UI warning (not recommended until consumers are reviewed). Anonymous CSV detail/privacy remains a separate authorization decision.
