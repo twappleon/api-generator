@@ -671,7 +671,7 @@ donchianStatsCache={data,error:null};
 // Public reporting boundary: an explicit allowlist keeps internal Paper state private.
 // Only the seven fields used by the anonymous trade table are exposed.
 function publicOrders() {
-return state.orders.map(o=>({
+return state.orders.slice(-100).map(o=>({
 messageId:Number.isSafeInteger(o.messageId)&&o.messageId>0?o.messageId:null,
 symbol:typeof o.symbol==="string"&&/^[A-Z0-9]{3,16}$/.test(o.symbol)?o.symbol:null,
 side:["long","short"].includes(o.side)?o.side:null,
@@ -1638,6 +1638,19 @@ status.priceError==="行情資料暫時無法取得"&&
 !JSON.stringify(status).includes("PRIVATE_")&&
 status.mode==="PAPER_ONLY"&&status.ordersTracked===0,
 "public status leaked upstream error details");
+});
+test("BDD166",()=>{
+state.orders=[mock({messageId:"<script>",symbol:"BTCUSDT<script>",side:"invalid",status:"<script>",entryPrice:Infinity,netPnl:NaN})];
+const row=publicOrders()[0];
+assert(row.messageId===null&&row.symbol===null&&row.side===null&&
+row.status==="unknown"&&row.entryPrice===null&&row.netPnl===null,
+"invalid internal values flowed into public trade rows");
+});
+test("BDD167",()=>{
+state.orders=Array.from({length:105},(_,i)=>mock({messageId:5001+i}));
+const rows=publicOrders();
+assert(rows.length===100&&rows[0].messageId===5006&&rows[99].messageId===5105,
+"public orders ignored 100-row API window");
 });
 
 const failed=results.filter(x=>!x.pass);
