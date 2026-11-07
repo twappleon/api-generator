@@ -314,3 +314,30 @@ Scenario: BDD185 age-based freshness and missing timestamps
 **Verified:** exact new `worker.ts` parsed using V8 `new Function` after removing only Node import statements; extracted live HTML `<script>` separately parsed; BDD184 and BDD185 executed directly from the newly committed source and returned **2/2 PASS** in isolated V8 with synthetic data; four extra timestamp/error cases passed. This is **NOT** a complete 185-case Bun startup run, browser visual verification, live HTTP, or deployed runtime acceptance. No disk, Telegram, trading, or production state used. Full Bun + HTTP + actual browser remain pending and are required before deployment approval.
 
 **Rollback:** revert commit `23d295170e3dfcf2bea2dd90d0267a87314a0f61` (and documentation commits if desired). Do not deploy or change Railway variables without explicit approval.
+
+
+## v2.9 — Anonymous detailed CSV nested-event allowlist (2026-11-08)
+
+**Self-discovered / reproduced before change:** public GET `/api/orders.csv` used `JSON.stringify(o.exitEvents || [])` on persisted trade records. A source-executed synthetic order with an extra `exitEvents[].internalToken: "TOP_SECRET_BD_186"` and a nested debug password reproduced the unwanted extra fields in the CSV. This is a potential exposure vector if old/malformed event records contain unknown private fields; there is **no evidence of an actual credential disclosure**.
+
+**Code:** Draft PR #8 commit `162c1460f512fa47adfc857d2b1b330463ec06e4` introduces `publicCsvExitEvents()`. The anonymous CSV now exports *only* supported event attributes: `at`, `reason`, numeric `price`, `qty`, `fractionOfRemaining`, `grossPnl`, `feeExit`, `allocatedEntryFee`, `netPnl`, positive safe-integer `messageId`, and boolean `assumedRatio`. It drops unknown nested keys and malformed event values, without rewriting the persisted ledger, removing the `exitEvents` column, or altering account/trade math. Text length is bounded and existing `csvCell()` spreadsheet-formula protection remains in use.
+
+**BDD acceptance (executed from committed source, isolated V8):**
+
+```gherkin
+Scenario: BDD186 public CSV excludes unexpected nested event data
+  Given a simulated closed order contains a valid partial exit with a private debug token
+  When an anonymous viewer exports CSV
+  Then the debug token and nested extras must not appear
+  And partial-exit fraction, reason, PnL and source message ID remain available
+
+Scenario: BDD187 malformed events cannot bypass CSV projection
+  Given historical events contain unknown keys, invalid numeric values and invalid message IDs
+  When the detailed CSV nested event projection runs
+  Then only the documented typed attributes are serialized
+  And malformed event objects are ignored without leaking arbitrary nested fields
+```
+
+**Evidence:** before patch, source-derived CSV **contained** the synthetic `TOP_SECRET_BD_186` value; after patch, re-fetched committed blob `d47809a6feb0d59d46536c9722dc57e10654515d`, and executed actual committed `BDD108–110`, `BDD168–171`, `BDD186–187` with the production `csvCell()`/`csv()` functions: **9/9 PASS**, 0 FAIL. Additional checks confirmed zero-value/negative PnL preserved and no nested debug fields. **187 tests are now defined, but full 187/187 original Bun start-up is NOT VERIFIED.** Isolated V8 checks are not live HTTP, browser, Railway, or real account validation.
+
+**Rollback:** Git Revert `162c1460` (plus documentation commits if desired). No production deployment, exchange order, state migration, notifications, or credential access was performed. Detailed anonymous CSV authorization itself remains a separate product/privacy decision: this fix only reduces accidental unknown nested-field exposure. Next: native Bun all 187 tests, protected/public HTTP route behavior, external CSV inspection, then rollout only with explicit approval.
