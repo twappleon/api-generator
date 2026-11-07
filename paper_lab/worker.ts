@@ -1859,6 +1859,32 @@ Object.keys(result.donchianDemo.closedPositions[0]).every(k=>k!=="apiKey")&&
 "Donchian anonymous detail projection accepted bad symbols, unsafe URL or unbounded rows");
 });
 
+// Nullable upstream metrics must not be presented as a zero price or zero balance.
+function observedDonchianMetricForBDD(value) {
+const inline=page.slice(page.indexOf("<script>")+8,page.indexOf("</script>"));
+const start=inline.indexOf("const fmt="),end=inline.indexOf("const clean=",start);
+assert(start>=0&&end>start,"Donchian number formatters missing");
+return new Function("value",inline.slice(start,end)+
+"return {price:fmtObserved(value),pnl:pnlObserved(value),count:countObserved(value)};")(value);
+}
+test("BDD182",()=>{
+const missing=observedDonchianMetricForBDD(null);
+const undefinedValue=observedDonchianMetricForBDD(undefined);
+assert(missing.price==="—"&&missing.count==="—"&&missing.pnl==="—"&&
+undefinedValue.price==="—"&&
+page.includes("fmtObserved(x.lastPrice)")&&page.includes("fmtObserved(x.stopLoss)")&&
+page.includes("pnlObserved(x.paperPnl)")&&page.includes("fmtObserved(x.fees)")&&
+page.includes("validMetric(pp.equity)"),"missing Donchian metrics disguised as numeric zero");
+});
+test("BDD183",()=>{
+const zero=observedDonchianMetricForBDD(0);
+const gain=observedDonchianMetricForBDD(12.25);
+assert(zero.price==="0.00"&&zero.count==="0"&&zero.pnl.includes("+0.00")&&
+gain.price==="12.25"&&gain.pnl.includes("+12.25")&&
+!page.includes("pnl(x.netPnl||0)")&&!page.includes("fmt(x.lastPrice)"),
+"legitimate numeric zero or valid Donchian metrics display regressed");
+});
+
 const failed=results.filter(x=>!x.pass);
 return {
 mode:"SYNTHETIC_BDD", isolated:true, persistentStateUnchanged:state===savedState,
@@ -1922,6 +1948,10 @@ const page = [
 "const $=id=>document.getElementById(id);",
 "const fmt=(n,d=2)=>Number(n||0).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});",
 "const pnl=n=>'<span class=\"'+(n>=0?'positive':'negative')+'\">'+(n>=0?'+':'')+fmt(n)+'</span>';",
+"const validMetric=n=>typeof n==='number'&&Number.isFinite(n);",
+"const fmtObserved=(n,d=2)=>validMetric(n)?fmt(n,d):'—';",
+"const pnlObserved=n=>validMetric(n)?pnl(n):'—';",
+"const countObserved=n=>Number.isSafeInteger(n)&&n>=0?String(n):'—';",
 "const clean=s=>String(s??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));",
 "const telegramChartUrl=symbol=>'https://www.tradingview.com/chart/?symbol=BINANCE%3A'+encodeURIComponent(String(symbol||''))+'.P&interval=15';",
 "const telegramSourceCell=id=>Number.isSafeInteger(id)&&id>0?'<a href=\"https://t.me/KCryptoBTC168/'+id+'\" target=\"_blank\" rel=\"noopener noreferrer\">#'+id+'</a>':'<span aria-label=\"來源訊號不可用\">—</span>';",
@@ -1940,12 +1970,12 @@ const page = [
 "$('dd').textContent=fmt(r.maxDrawdownPct)+'%';",
 "$('orders').textContent='持倉 '+r.openPositions+' / 掛單 '+r.pendingOrders+' / 部分平倉 '+(r.partialExits||0);",
 "const d=r.donchianDemo||{},dp=d.performance||{},pp=d.paper||{},ds=d.signals||{};",
-"$('dSignals').textContent=d.available?Number(ds.total||0):'—';$('dSignalSub').textContent=d.available?'建倉 '+Number(ds.entries||0)+' / 平倉 '+Number(ds.exits||0):'等待上游資料';",
-"$('dWin').textContent=d.available?Number(pp.openPositions||0)+' / '+Number(pp.closedTrades||0):'—';$('dPnl').innerHTML=d.available?'已實現 '+pnl(pp.realizedPnl||0)+' / 未實現 '+pnl(pp.unrealizedPnl||0):'損益 —';",
-"$('dPaperEquity').textContent=d.available?fmt(pp.equity)+' USDT':'—';$('dActual').textContent=d.available?Number(dp.closedTrades||0):'—';",
+"$('dSignals').textContent=d.available?countObserved(ds.total):'—';$('dSignalSub').textContent=d.available?'建倉 '+countObserved(ds.entries)+' / 平倉 '+countObserved(ds.exits):'等待上游資料';",
+"$('dWin').textContent=d.available?countObserved(pp.openPositions)+' / '+countObserved(pp.closedTrades):'—';$('dPnl').innerHTML=d.available?'已實現 '+pnlObserved(pp.realizedPnl)+' / 未實現 '+pnlObserved(pp.unrealizedPnl):'損益 —';",
+"$('dPaperEquity').textContent=d.available?(validMetric(pp.equity)?fmt(pp.equity)+' USDT':'—'):'—';$('dActual').textContent=d.available?countObserved(dp.closedTrades):'—';",
 "const strategyName=x=>String(x.strategyVersion||'').includes('1H_')?'1H EMA+ATR':'Legacy 15m';",
-"const ps=d.positions||[];$('dPositions').innerHTML=ps.length?ps.map(x=>'<tr><td data-label=\"幣別\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"策略\"><span class=\"tag\">'+strategyName(x)+'</span></td><td data-label=\"狀態\"><span class=\"tag\">Paper 模擬持倉</span></td><td data-label=\"建倉參考\">'+fmt(x.entryPrice)+'</td><td data-label=\"即時標記價\">'+fmt(x.lastPrice)+'</td><td data-label=\"行情時間\">'+clean(x.lastPriceAt||'—')+'</td><td data-label=\"停損\">'+fmt(x.stopLoss)+'</td><td data-label=\"停利\">'+fmt(x.takeProfit)+'</td><td data-label=\"未實現損益\">'+pnl(x.paperPnl||0)+'</td><td data-label=\"訊號時間\">'+clean(x.entryTime||'—')+'</td><td data-label=\"K線\">'+donchianChartCell(x)+'</td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Paper 持倉</td></tr>';",
-"const cs=d.closedPositions||[];$('dClosedPositions').innerHTML=cs.length?cs.map(x=>'<tr><td data-label=\"幣別\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"策略\"><span class=\"tag\">'+strategyName(x)+'</span></td><td data-label=\"狀態\"><span class=\"tag\">已平倉</span></td><td data-label=\"建倉參考\">'+fmt(x.referenceEntry)+'</td><td data-label=\"模擬進場\">'+fmt(x.entryPrice)+'</td><td data-label=\"模擬出場\">'+fmt(x.exitPrice)+'</td><td data-label=\"原因\">'+clean(x.exitReason||'—')+'</td><td data-label=\"費用\">'+fmt(x.fees||0)+'</td><td data-label=\"淨損益\">'+pnl(x.netPnl||0)+'</td><td data-label=\"平倉時間\">'+clean(x.exitTime||'—')+'</td><td data-label=\"K線\">'+donchianChartCell(x)+'</td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Donchian Paper 平倉紀錄</td></tr>';",
+"const ps=d.positions||[];$('dPositions').innerHTML=ps.length?ps.map(x=>'<tr><td data-label=\"幣別\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"策略\"><span class=\"tag\">'+strategyName(x)+'</span></td><td data-label=\"狀態\"><span class=\"tag\">Paper 模擬持倉</span></td><td data-label=\"建倉參考\">'+fmtObserved(x.entryPrice)+'</td><td data-label=\"即時標記價\">'+fmtObserved(x.lastPrice)+'</td><td data-label=\"行情時間\">'+clean(x.lastPriceAt||'—')+'</td><td data-label=\"停損\">'+fmtObserved(x.stopLoss)+'</td><td data-label=\"停利\">'+fmtObserved(x.takeProfit)+'</td><td data-label=\"未實現損益\">'+pnlObserved(x.paperPnl)+'</td><td data-label=\"訊號時間\">'+clean(x.entryTime||'—')+'</td><td data-label=\"K線\">'+donchianChartCell(x)+'</td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Paper 持倉</td></tr>';",
+"const cs=d.closedPositions||[];$('dClosedPositions').innerHTML=cs.length?cs.map(x=>'<tr><td data-label=\"幣別\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"策略\"><span class=\"tag\">'+strategyName(x)+'</span></td><td data-label=\"狀態\"><span class=\"tag\">已平倉</span></td><td data-label=\"建倉參考\">'+fmtObserved(x.referenceEntry)+'</td><td data-label=\"模擬進場\">'+fmtObserved(x.entryPrice)+'</td><td data-label=\"模擬出場\">'+fmtObserved(x.exitPrice)+'</td><td data-label=\"原因\">'+clean(x.exitReason||'—')+'</td><td data-label=\"費用\">'+fmtObserved(x.fees)+'</td><td data-label=\"淨損益\">'+pnlObserved(x.netPnl)+'</td><td data-label=\"平倉時間\">'+clean(x.exitTime||'—')+'</td><td data-label=\"K線\">'+donchianChartCell(x)+'</td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Donchian Paper 平倉紀錄</td></tr>';",
 "$('status').textContent='● 訊號：'+(s.channelError?'讀取異常':'正常')+' | 首次建立基線：'+(s.initialized?'完成':'等待中')+' | 最後訊號輪詢 '+(s.lastChannelPollAt||'—')+' | 已記錄貼文 '+s.messagesCaptured+' | 最後行情 '+(s.lastPricePollAt||'—')+(s.channelError?' | '+s.channelError:'')+(s.priceError?' | 行情錯誤：'+s.priceError:'');",
 "telegramTradeRows=o.slice().reverse().slice(0,100);renderTelegramTrades();",
 "const days=Object.entries(r.daily).sort((a,b)=>b[0].localeCompare(a[0]));",
