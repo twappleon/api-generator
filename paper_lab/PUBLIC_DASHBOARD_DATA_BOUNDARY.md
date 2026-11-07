@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-11-07 (Asia/Phnom_Penh).
 Scope: `paper_lab/worker.ts` within Draft PR #8.
-Status: **Draft Git-only. Donchian nullable metrics display corrected (BDD182–183); full 183/183 isolated V8 BDD PASS; native Bun, deployed HTTP and browser/device E2E NOT VERIFIED; Railway NOT DEPLOYED.**
+Status: **Draft Git-only. Existing BDD183/183 isolated V8 PASS; added Donchian stale-cache BDD184–185 targeted 2/2 PASS with simulated UI checks; full 185-test Bun/HTTP/browser E2E NOT VERIFIED; Railway NOT DEPLOYED.**
 
 ## PRD / threat model
 
