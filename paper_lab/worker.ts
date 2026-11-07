@@ -668,6 +668,29 @@ if(data?.schemaVersion!==1||data?.ledger!=="BINANCE_DEMO_DONCHIAN")throw Error("
 donchianStatsCache={data,error:null};
 }catch(err){donchianStatsCache.error=String(err.message||err).slice(0,180);}
 }
+// Public reporting boundary: an explicit allowlist keeps internal Paper state private.
+// Only the seven fields used by the anonymous trade table are exposed.
+function publicOrders() {
+return state.orders.map(o=>({
+messageId:Number.isSafeInteger(o.messageId)&&o.messageId>0?o.messageId:null,
+symbol:typeof o.symbol==="string"&&/^[A-Z0-9]{3,16}$/.test(o.symbol)?o.symbol:null,
+side:["long","short"].includes(o.side)?o.side:null,
+status:typeof o.status==="string"&&/^[a-z_]{1,32}$/.test(o.status)?o.status:"unknown",
+entryPrice:Number.isFinite(o.entryPrice)?o.entryPrice:null,
+exitPrice:Number.isFinite(o.exitPrice)?o.exitPrice:null,
+netPnl:Number.isFinite(o.netPnl)?o.netPnl:null
+}));
+}
+function publicPaperStatus() {
+return {
+mode:"PAPER_ONLY",channel:"KCryptoBTC168",initialized:state.initialized,
+lastSeenId:state.lastSeenId,lastChannelPollAt:state.lastChannelPollAt,
+lastPricePollAt:state.lastPricePollAt,
+channelError:state.channelError?"Telegram 頻道資料暫時無法取得":null,
+priceError:state.priceError?"行情資料暫時無法取得":null,
+messagesCaptured:state.messages.length,ordersTracked:state.orders.length
+};
+}
 function csv() {
 const fields = ["messageId", "symbol", "side", "kind", "status", "entryLow", "entryHigh",
 "entryPrice", "stop", "target", "qty", "exitPrice", "feeEntry", "feeExit",
@@ -1595,6 +1618,27 @@ test("BDD160",()=>{assert(page.includes("Telegram Paper 模擬交易紀錄")&&pa
 test("BDD161",()=>{assert(page.includes("TELEGRAM_TRADE_PAGE_SIZE=10")&&page.includes("tradesPrev")&&page.includes("tradesNext")&&page.includes("每頁 10 筆")&&page.includes("renderTelegramTrades"),"Telegram Paper pagination missing");});
 test("BDD162",()=>{assert(page.includes("responsive-table")&&page.includes("data-label")&&page.includes("grid-template-columns:1fr")&&page.includes("viewport"),"mobile RWD layout missing");});
 test("BDD163",()=>{const publicPaths=["/","/api/status","/api/report","/api/orders","/api/orders.csv","/api/telegram/status"];assert(publicPaths.every(path=>route(new Request("http://localhost"+path)).status===200)&&route(new Request("http://localhost/api/telegram/setup")).status===401,"public/protected route boundary invalid");});
+test("BDD164",()=>{
+state.orders=[mock({entryPrice:101,exitPrice:102,netPnl:1.5,
+pendingCloseCommands:[{text:"PRIVATE_COMMAND"}],internalKey:"PRIVATE_KEY",debugToken:"PRIVATE_TOKEN"})];
+const publicRows=publicOrders(),row=publicRows[0];
+assert(publicRows.length===1&&row.messageId===5001&&row.symbol==="SOLUSDT"&&
+row.entryPrice===101&&row.exitPrice===102&&row.netPnl===1.5&&
+Object.keys(row).sort().join(",")==="entryPrice,exitPrice,messageId,netPnl,side,status,symbol"&&
+!JSON.stringify(publicRows).includes("PRIVATE_")&&
+!JSON.stringify(publicRows).includes("pendingCloseCommands"),
+"public orders returned internal Paper state");
+});
+test("BDD165",()=>{
+state.channelError="Authorization: Bearer PRIVATE_CHANNEL_TOKEN";
+state.priceError="https://internal.example/?token=PRIVATE_PRICE_TOKEN";
+const status=publicPaperStatus();
+assert(status.channelError==="Telegram 頻道資料暫時無法取得"&&
+status.priceError==="行情資料暫時無法取得"&&
+!JSON.stringify(status).includes("PRIVATE_")&&
+status.mode==="PAPER_ONLY"&&status.ordersTracked===0,
+"public status leaked upstream error details");
+});
 
 const failed=results.filter(x=>!x.pass);
 return {
@@ -1701,16 +1745,10 @@ if (req.method !== "GET") return new Response("Method Not Allowed", { status: 40
 if (u.pathname === "/" && req.method === "GET")
 return new Response(page, { headers: { "Content-Type": "text/html; charset=utf-8",
 "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
-if (u.pathname === "/api/status") return json({
-mode: "PAPER_ONLY", channel: "KCryptoBTC168", initialized: state.initialized,
-lastSeenId: state.lastSeenId, lastChannelPollAt: state.lastChannelPollAt,
-lastPricePollAt: state.lastPricePollAt, channelError: state.channelError,
-priceError: state.priceError, messagesCaptured: state.messages.length,
-ordersTracked: state.orders.length
-});
+if (u.pathname === "/api/status") return json(publicPaperStatus());
 if (u.pathname === "/api/telegram/status") return json(publicTelegramStatus());
 if (u.pathname === "/api/report") return json(report());
-if (u.pathname === "/api/orders") return json(state.orders);
+if (u.pathname === "/api/orders") return json(publicOrders());
 if (u.pathname === "/api/orders.csv") return new Response(csv(), {
 headers: { "Content-Type": "text/csv; charset=utf-8",
 "Content-Disposition": 'attachment; filename="k_signal_paper_trades.csv"',
