@@ -15,5 +15,11 @@ The file `worker.ts` is a **snapshot** of the existing independent Railway Funct
 
 - The user explicitly authorized the **anonymous, sanitized, read-only** dashboard in v2.4. Do not restore Basic Auth to public reporting without a new product decision; keep `/api/telegram/setup`, `/api/selftest`, `/api/messages`, and `/api/quotes` under Basic Auth.
 - Do **not** serialize `state.orders` or raw upstream exception strings to the public API. Use `publicOrders()`'s seven-field allowlist/latest-100 window and `publicPaperStatus()`'s generic upstream error messages.
-- Public CSV remains a separate export with longer history. Before exposing user-generated text in it, add spreadsheet formula-injection tests. Do not call Git-only changes deployed.
+- Public CSV remains a separate, detailed export with longer history. Its untrusted text fields now use `csvCell()` (formula-prefix escaping, control-character flattening, RFC-4180 quote doubling), and malformed message IDs cannot generate a source link. Keep `BDD168`–`BDD171` and the legacy `BDD108`–`BDD110` tests; do not reverse this change in a UI refactor. A negative *number* (PnL) must remain numeric, not get prefixed with a text apostrophe.
+- The public detailed CSV still needs a separate product/privacy review; formula neutralization does **not** equal confidentiality. It is currently Git-only and not deployed. Do not claim full Bun `171/171` or production parity based on isolated test successes.
+- A Git-only commit can be rolled back with Git Revert; do not change live Railway Function source, persistent state, Telegram or trade gates without explicit approval.
 - The PRD/BDD, isolated test results, pending full Bun verification, and rollback instructions are preserved in `PUBLIC_DASHBOARD_DATA_BOUNDARY.md`.
+
+## Supervisor review 2026-11-07 — CSV export
+
+Observed: RFC-4180 quoting alone leaves spreadsheet formulas executable. Implemented `csvCell()` and BDD168–171 in PR #8; committed helper and targeted existing BDD108–110 verified in an isolated V8 harness. Full 171-test Bun suite, HTTP integration and deployment are still pending. Details and rollback at `PUBLIC_DASHBOARD_DATA_BOUNDARY.md`.
