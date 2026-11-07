@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-11-08 (Asia/Phnom_Penh).
 Scope: `paper_lab/worker.ts` within Draft PR #8.
-Status: **Draft Git-only. Current BDD190/190 source-derived isolated V8 PASS with read-only synthetic stale/fresh UI checks; native Bun full suite, real HTTP/browser E2E and Railway deployment NOT VERIFIED. Prior 183/185/187 results remain historical snapshots.**
+Status: **Draft Git-only. Current BDD192/192 source-derived isolated V8 PASS with read-only synthetic stale/fresh UI checks; native Bun full suite, real HTTP/browser E2E and Railway deployment NOT VERIFIED. Prior 183/185/187 results remain historical snapshots.**
 
 ## PRD / threat model
 
@@ -376,3 +376,14 @@ Feature: Public Paper mark-to-market quote freshness
 ```
 
 **Verification boundary:** Real GitHub pre-change source passed **187/187** in the isolated V8 synthetic harness. Edited source passed **190/190**, `persistentStateUnchanged=true`, with blocked disk writes and blocked network. This is a *source-derived V8 test*, not native Bun, actual browser, network HTTP or deployed Railway. The GitHub commit was only written after all 190 passed; no production change or order placement. Future verification: native Bun startup, real HTTP `/api/status` parity, Chromium dashboard stale/fresh view, 15-second poll cadence, and device-level QA. **ROLLBACK:** Git revert `4313ca6e` to remove the new freshness fields and UI warning (not recommended until consumers are reviewed). Anonymous CSV detail/privacy remains a separate authorization decision.
+
+
+## 2026-11-08 v2.10: robust historical period aggregation (BDD191–192)
+
+**Self-discovered failure:** the read-only `report()` summary used plain `{}` dictionaries indexed by unvalidated persisted `o.symbol` and exit timestamps. A synthetic legacy closed order whose symbol is `__proto__` caused `Object.prototype.trades`/`pnl` mutation rather than a symbol summary; a numeric `exit.at` caused a TypeError in `.slice(0,10)`, failing the entire public report route. Neither case proves this has occurred in real persistent data; these are directly reproduced source-level integrity risks.
+
+**Draft-only correction:** use null-prototype aggregation maps for daily/monthly/symbol grouping; accept only date-formatted `YYYY-MM-DD` slices and finite numeric exit PnL for period summaries; include per-symbol aggregations only for `^[A-Z0-9]{3,16}$` symbols. Valid date/leg profits and losses retain the same counts and values. Invalid historical symbols can still contribute to valid *daily/monthly* totals but cannot become symbol keys. Do not rewrite any persisted history and do not change execution, +1% net close, Telegram or Demo logic.
+
+**Tests:** `paper_lab/REPORT_AGGREGATION_INTEGRITY.feature` defines BDD191–192 (Given/When/Then), embedded as executable test cases in `runBDDTests()`. Before→after isolated reproduction: prototype mutation TRUE→FALSE, numeric legacy timestamp report THROW→SAFE SKIP, regular SOLUSDT and daily totals unchanged. After commit `5b1eed479cc56ab9fc0a4f8efbb609312177029b`, the exact GitHub source was loaded into an isolated V8 harness (no actual filesystem or external HTTP), all **192/192 source BDD PASS**, `persistentStateUnchanged=true`; Worker JS syntax parse PASS. This is **NOT native Bun**, a deployed HTTP route, Chromium or Railway approval.
+
+**Rollback:** Git Revert code commit `5b1eed479cc56ab9fc0a4f8efbb609312177029b` and matching documentation commits. Keep PR #8 Draft; no deployment, live trading, mock-fund trading, Telegram outbound message, credentials or ledger writes were authorized or performed.
