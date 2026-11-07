@@ -709,6 +709,21 @@ if(data?.schemaVersion!==1||data?.ledger!=="BINANCE_DEMO_DONCHIAN")throw Error("
 donchianStatsCache={data,error:null,lastSuccessAt:nowISO()};
 }catch(err){donchianStatsCache.error=String(err.message||err).slice(0,180);}
 }
+// Quote freshness is based on successful per-symbol observations, NOT lastPricePollAt:
+// that timestamp records attempted polls even when every upstream request fails.
+function publicPaperPriceHealth(now=Date.now()) {
+const tracked = new Set(["BTCUSDT"]);
+for (const o of state.orders) if (["open","waiting_price","pending"].includes(o.status) &&
+  typeof o.symbol === "string" && /^[A-Z0-9]{3,16}$/.test(o.symbol)) tracked.add(o.symbol);
+let staleSymbolCount = 0;
+for (const symbol of tracked) {
+const quote = state.quotes[symbol];
+const ageMs = now - Date.parse(quote?.at || "");
+if (!Number.isFinite(quote?.price) || quote.price <= 0 ||
+  !Number.isFinite(ageMs) || ageMs > 90000 || ageMs < -30000) staleSymbolCount++;
+}
+return {priceStale: staleSymbolCount > 0, staleSymbolCount, trackedSymbolCount: tracked.size};
+}
 // Public reporting boundary: an explicit allowlist keeps internal Paper state private.
 // Only the seven fields used by the anonymous trade table are exposed.
 function publicOrders() {
@@ -731,7 +746,8 @@ lastSeenId:state.lastSeenId,lastChannelPollAt:state.lastChannelPollAt,
 lastPricePollAt:state.lastPricePollAt,
 channelError:state.channelError?"Telegram 頻道資料暫時無法取得":null,
 priceError:state.priceError?"行情資料暫時無法取得":null,
-messagesCaptured:state.messages.length,ordersTracked:state.orders.length
+messagesCaptured:state.messages.length,ordersTracked:state.orders.length,
+...publicPaperPriceHealth()
 };
 }
 // Defend CSV viewers against spreadsheet formula execution and record splitting.
@@ -1944,6 +1960,37 @@ publicCsvExitEvents({secret:"SECRET_CSV_187"})==="[]",
 "CSV event projection accepted malformed event fields or non-arrays");
 });
 
+// Paper mark-price health must never confuse attempted polls with fresh quotes.
+test("BDD188",()=>{
+const at=new Date().toISOString();
+state.quotes.BTCUSDT={price:100,at};state.lastPricePollAt=at;
+const h=publicPaperStatus();
+assert(h.priceStale===false&&h.staleSymbolCount===0&&h.trackedSymbolCount===1,
+"fresh BTC quote was incorrectly marked stale");
+assert(page.includes("s.priceStale")&&page.includes("持倉損益非即時"),
+"public dashboard lacks stale quote warning");
+});
+test("BDD189",()=>{
+const at=new Date().toISOString();state.lastPricePollAt=at;
+state.quotes.BTCUSDT={price:100,at:new Date(Date.now()-5*60000).toISOString()};
+assert(publicPaperStatus().priceStale,"successful poll timestamp concealed stale quote");
+state.quotes={};assert(publicPaperStatus().priceStale,"missing quote appeared fresh");
+state.quotes.BTCUSDT={price:100,at:new Date(Date.now()+5*60000).toISOString()};
+assert(publicPaperStatus().priceStale,"far-future quote appeared fresh");
+});
+test("BDD190",()=>{
+const at=new Date().toISOString();state.quotes.BTCUSDT={price:100,at};
+state.orders=[mock({status:"open",symbol:"SOLUSDT"}),
+ mock({id:"OLD",messageId:5002,symbol:"ETHUSDT",status:"closed"})];
+let h=publicPaperStatus();
+assert(h.priceStale&&h.staleSymbolCount===1&&h.trackedSymbolCount===2,
+"missing active SOL quote or closed ETH affected freshness incorrectly");
+state.quotes.SOLUSDT={price:100,at};h=publicPaperStatus();
+assert(!h.priceStale&&h.staleSymbolCount===0&&h.trackedSymbolCount===2,
+"fresh active symbols still counted stale");
+assert(!("quotes" in h)&&!("symbols" in h),"public status exposed private quote objects");
+});
+
 const failed=results.filter(x=>!x.pass);
 return {
 mode:"SYNTHETIC_BDD", isolated:true, persistentStateUnchanged:state===savedState,
@@ -2037,7 +2084,7 @@ const page = [
 "const strategyName=x=>String(x.strategyVersion||'').includes('1H_')?'1H EMA+ATR':'Legacy 15m';",
 "const ps=d.positions||[];$('dPositions').innerHTML=ps.length?ps.map(x=>'<tr><td data-label=\"幣別\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"策略\"><span class=\"tag\">'+strategyName(x)+'</span></td><td data-label=\"狀態\"><span class=\"tag\">Paper 模擬持倉</span></td><td data-label=\"建倉參考\">'+fmtObserved(x.entryPrice)+'</td><td data-label=\"即時標記價\">'+fmtObserved(x.lastPrice)+'</td><td data-label=\"行情時間\">'+clean(x.lastPriceAt||'—')+'</td><td data-label=\"停損\">'+fmtObserved(x.stopLoss)+'</td><td data-label=\"停利\">'+fmtObserved(x.takeProfit)+'</td><td data-label=\"未實現損益\">'+pnlObserved(x.paperPnl)+'</td><td data-label=\"訊號時間\">'+clean(x.entryTime||'—')+'</td><td data-label=\"K線\">'+donchianChartCell(x)+'</td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Paper 持倉</td></tr>';",
 "const cs=d.closedPositions||[];$('dClosedPositions').innerHTML=cs.length?cs.map(x=>'<tr><td data-label=\"幣別\">'+clean(x.symbol)+'</td><td data-label=\"方向\">'+clean(x.side)+'</td><td data-label=\"策略\"><span class=\"tag\">'+strategyName(x)+'</span></td><td data-label=\"狀態\"><span class=\"tag\">已平倉</span></td><td data-label=\"建倉參考\">'+fmtObserved(x.referenceEntry)+'</td><td data-label=\"模擬進場\">'+fmtObserved(x.entryPrice)+'</td><td data-label=\"模擬出場\">'+fmtObserved(x.exitPrice)+'</td><td data-label=\"原因\">'+clean(x.exitReason||'—')+'</td><td data-label=\"費用\">'+fmtObserved(x.fees)+'</td><td data-label=\"淨損益\">'+pnlObserved(x.netPnl)+'</td><td data-label=\"平倉時間\">'+clean(x.exitTime||'—')+'</td><td data-label=\"K線\">'+donchianChartCell(x)+'</td></tr>').join(''):'<tr><td colspan=\"12\">尚無 Donchian Paper 平倉紀錄</td></tr>';",
-"$('status').textContent='● 訊號：'+(s.channelError?'讀取異常':'正常')+' | 首次建立基線：'+(s.initialized?'完成':'等待中')+' | 最後訊號輪詢 '+(s.lastChannelPollAt||'—')+' | 已記錄貼文 '+s.messagesCaptured+' | 最後行情 '+(s.lastPricePollAt||'—')+(s.channelError?' | '+s.channelError:'')+(s.priceError?' | 行情錯誤：'+s.priceError:'');",
+"$('status').textContent='● 訊號：'+(s.channelError?'讀取異常':'正常')+' | 行情：'+(s.priceStale?'⚠️ 過期或缺失（持倉損益非即時）':'最近 90 秒已更新')+' | 首次建立基線：'+(s.initialized?'完成':'等待中')+' | 最後訊號輪詢 '+(s.lastChannelPollAt||'—')+' | 已記錄貼文 '+s.messagesCaptured+' | 最後行情輪詢（非成功時間） '+(s.lastPricePollAt||'—')+(s.channelError?' | '+s.channelError:'')+(s.priceError?' | 行情錯誤：'+s.priceError:'');",
 "telegramTradeRows=o.slice().reverse().slice(0,100);renderTelegramTrades();",
 "const days=Object.entries(r.daily).sort((a,b)=>b[0].localeCompare(a[0]));",
 "$('daily').innerHTML=days.length?days.map(([k,v])=>'<tr><td data-label=\"日期\">'+k+'</td><td data-label=\"交易數\">'+v.trades+'</td><td data-label=\"勝場\">'+v.wins+'</td><td data-label=\"已實現損益\">'+pnl(v.pnl)+'</td></tr>').join(''):'<tr><td colspan=\"4\">尚無已平倉交易</td></tr>';",
