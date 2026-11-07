@@ -620,7 +620,7 @@ function mergeDonchianStats(paper,remote=donchianStatsCache.data,cache=donchianS
 const valid=remote?.ledger==="BINANCE_DEMO_DONCHIAN"&&remote?.schemaVersion===1;
 const p=valid?remote.performance||{}:{};
 return {...paper,
-donchianDemo:{available:valid,error:cache.error,signals:valid?remote.signals:null,performance:valid?p:null,paper:valid?remote.paper:null,positions:valid&&Array.isArray(remote.advisoryPositions)?remote.advisoryPositions:[],closedPositions:valid&&Array.isArray(remote.closedPaperPositions)?remote.closedPaperPositions:[]}}
+donchianDemo:{available:valid,error:cache.error ? (cache.error==="統計整合未設定" ? "統計整合未設定" : "Donchian 統計服務暫時無法取得") : null,signals:valid?remote.signals:null,performance:valid?p:null,paper:valid?remote.paper:null,positions:valid&&Array.isArray(remote.advisoryPositions)?remote.advisoryPositions:[],closedPositions:valid&&Array.isArray(remote.closedPaperPositions)?remote.closedPaperPositions:[]}}
 }
 function report() {
 const closed = state.orders.filter(o => o.status === "closed");
@@ -1766,6 +1766,22 @@ const html=donchianChartForBDD("https://www.tradingview.com/chart/?symbol=BINANC
 assert(html.includes("BINANCE%3ABTCUSDT.P&interval="+interval)&&html.includes(label+" K線")&&
 html.includes('rel="noopener noreferrer"')&&!html.includes("javascript:"),"valid Donchian chart navigation regressed");
 }
+});
+
+test("BDD178",()=>{
+const err="https://internal.invalid/?token=PRIVATE_DONCHIAN_TOKEN; Authorization: Bearer PRIVATE_ACCESS_KEY";
+const upstream={ledger:"BINANCE_DEMO_DONCHIAN",schemaVersion:1,performance:{closedTrades:0}};
+const result=mergeDonchianStats({},upstream,{error:err});
+assert(result.donchianDemo.available&&result.donchianDemo.error==="Donchian 統計服務暫時無法取得"&&
+!JSON.stringify(result).includes("PRIVATE_")&&!JSON.stringify(result).includes("Authorization"),
+"public Donchian report leaked raw upstream error");
+});
+test("BDD179",()=>{
+const missing=mergeDonchianStats({},{schemaVersion:99},{error:"統計整合未設定"});
+const healthy=mergeDonchianStats({}, {ledger:"BINANCE_DEMO_DONCHIAN",schemaVersion:1,performance:{}},{error:null});
+assert(!missing.donchianDemo.available&&missing.donchianDemo.error==="統計整合未設定"&&
+healthy.donchianDemo.available&&healthy.donchianDemo.error===null,
+"public Donchian missing/healthy status regressed");
 });
 
 const failed=results.filter(x=>!x.pass);
