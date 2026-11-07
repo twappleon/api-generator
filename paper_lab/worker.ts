@@ -691,13 +691,23 @@ priceError:state.priceError?"行情資料暫時無法取得":null,
 messagesCaptured:state.messages.length,ordersTracked:state.orders.length
 };
 }
+// Defend CSV viewers against spreadsheet formula execution and record splitting.
+// Keep finite numeric values (including negative PnL) numeric; all other values are text.
+function csvCell(value) {
+const numeric = typeof value === "number" && Number.isFinite(value);
+let text = String(value ?? "").replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, " ");
+if (!numeric && /^[\s\u200b\u2060\ufeff]*[=+\-@]/u.test(text)) text = "'" + text;
+return '"' + text.replace(/"/g, '""') + '"';
+}
 function csv() {
 const fields = ["messageId", "symbol", "side", "kind", "status", "entryLow", "entryHigh",
 "entryPrice", "stop", "target", "qty", "exitPrice", "feeEntry", "feeExit",
 "grossPnl", "netPnl", "receivedAt", "entryTime", "exitTime", "reason", "initialQty", "lastPartialTime", "exitEvents"];
 return [fields.join(","), ...state.orders.map(o => fields.map(k => {
-const v = k === "messageId" ? "https://t.me/KCryptoBTC168/" + o[k] : (k === "exitEvents" ? JSON.stringify(o[k]||[]) : String(o[k] ?? ""));
-return '"' + v.replace(/"/g, '""') + '"';
+const v = k === "messageId"
+? (Number.isSafeInteger(o[k]) && o[k] > 0 ? "https://t.me/KCryptoBTC168/" + o[k] : "")
+: (k === "exitEvents" ? JSON.stringify(o[k] || []) : (o[k] ?? ""));
+return csvCell(v);
 }).join(","))].join("\n");
 }
 function json(value) {
@@ -1651,6 +1661,32 @@ state.orders=Array.from({length:105},(_,i)=>mock({messageId:5001+i}));
 const rows=publicOrders();
 assert(rows.length===100&&rows[0].messageId===5006&&rows[99].messageId===5105,
 "public orders ignored 100-row API window");
+});
+
+test("BDD168",()=>{
+state.orders=[mock({reason:'=HYPERLINK("https://bad.example","click")'})];
+assert(csv().includes('"\'=HYPERLINK(""https://bad.example"",""click"")"'),
+"spreadsheet formula was not neutralized in CSV");
+});
+test("BDD169",()=>{
+for(const suspicious of ["+SUM(A1)","-HYPERLINK(A1)","@SUM(A1)"," \t=1+1","\ufeff=1+1"]){
+const cell=csvCell(suspicious);
+assert(cell.startsWith('"\'')&&!cell.includes("\r")&&!cell.includes("\n"),"CSV leading formula marker not escaped");
+}
+assert(csvCell(-7.5)==='"-7.5"',"finite negative PnL lost numeric representation");
+});
+test("BDD170",()=>{
+state.orders=[mock({reason:"first\nsecond\rthird"})];
+const content=csv();
+assert(content.split("\n").length===2&&content.includes("first second third"),
+"CSV untrusted line breaks created extra records");
+});
+test("BDD171",()=>{
+state.orders=[mock({messageId:"=1+1",reason:'note "unchanged"'})];
+const content=csv();
+assert(!content.includes("https://t.me/KCryptoBTC168/=")&&
+content.includes('"","SOLUSDT"')&&content.includes('"note ""unchanged"""'),
+"CSV original link input was unsafely constructed");
 });
 
 const failed=results.filter(x=>!x.pass);
