@@ -222,3 +222,32 @@ Scenario: BDD179 healthy and not-configured Donchian integration retain their di
 **Residual scope:** `remote.performance`, `remote.paper` and position arrays are still forwarded from the validated upstream schema; nested field confidentiality requires a separate allowlist review before releasing these Git-only changes. CSV detailed export privacy, native Bun and actual anonymous HTTP are also outstanding. This change does not purport to solve those separate boundaries.
 
 **Rollback:** Revert `c9a46a36` on Draft PR #8. No production rollback is needed because the Git branch is not auto-deployed. No Railway source, credentials, persisted positions, Telegram or live trading flags were changed.
+
+
+## 2026-11-07 — BDD180–181: anonymous Donchian nested DTO allowlist
+
+**Independent source-backed finding:** The previous `mergeDonchianStats()` tested only `ledger` and `schemaVersion`, then forwarded `remote.signals`, `remote.performance`, `remote.paper`, `remote.advisoryPositions[]` and `remote.closedPaperPositions[]` as entire objects. A valid-looking upstream response with `signals.last.rawToken`, `paper.credentials` or `positions[].apiKey` would be copied into anonymous `/api/report`. This was an **unsafe potential information-exposure path**, not evidence of real credentials being leaked. It is independent of the previously sanitized `donchianStatsCache.error`.
+
+**Security/PRD change:** Build public DTOs from explicit numeric-key allowlists for signal counts, performance, and Paper metrics, plus fixed-name row projections for the columns actually used in the anonymous dashboard. Reject malformed trade symbols; allow only validated short strategy names, ISO-like timestamps, a small known set of trade sides/reasons, finite numbers, and approved TradingView URLs. Return no more than 100 position rows per array, with `chartUrl:null` for untrusted links. Keep existing visible positive/negative PnL, signal counts, prices, status and normal 15m/1h charts. Never mutate upstream or persisted ledgers.
+
+**New executable BDD (also implemented as `test("BDD180"` and `test("BDD181"` in `worker.ts`):**
+
+```gherkin
+Scenario: BDD180 public Donchian report excludes secret-bearing nested extras
+  Given valid schema v1 and nested signals, metrics, and positions containing unexpected secret fields
+  When the anonymous Donchian DTO is constructed
+  Then legitimate signal counts, equity, PnL, and a trusted chart still work
+  And serialized report contains no upstream private token or hostile URL
+
+Scenario: BDD181 malformed, oversized, or hostile Donchian rows fail closed
+  Given one malformed-symbol row and 150 closed records with unapproved chart destinations
+  When the anonymous Donchian report is constructed
+  Then the malformed-symbol row is rejected and the closed records are capped at 100
+  And invalid charts become null and extra upstream keys never appear in serialized output
+```
+
+**Git-only implementation:** `125d6e261422adffda030b30aad5d8194f56b190` on Draft PR #8. Tested the actual source-defined `mergeDonchianStats()` with malicious and valid synthetic payloads. After commit, retrieved the committed file and ran **181/181 source-defined BDD callbacks PASS** in a sandboxed V8 runner, with mocked Bun.env, file APIs, HTTP Request/Response, auth/base64 and network; `persistentStateUnchanged=true`, file writes **0**, network calls **0**. This is **not Bun-native, actual HTTP, browser, nor Railway validation**. Leave PR Draft and production deployment **HOLD**.
+
+**Risks left:** The detailed public `/api/orders.csv` remains a separate privacy/product decision; `report()`'s existing Telegram Paper aggregate fields were not changed. Re-verify semantics against real upstream payloads after Bun/native and HTTP staging tests, and explicitly check mobile UI for null projections before deployment. No change to Paper trading, Binance Demo execution gates, Telegram, credentials, volume, or official deployment.
+
+**Rollback:** Git revert commit `125d6e2` in the Draft PR branch. Because this change is Git-only, production currently requires no rollback.
