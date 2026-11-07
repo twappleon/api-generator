@@ -352,7 +352,11 @@ function unrealizedOf(o, price) {
 return mark(o,price) - (o.feeEntry || 0) * (1 - realizedShare(o));
 }
 function exitLegs(o) {
-if (o.exitEvents?.length) return o.exitEvents;
+// Legacy persisted records may hold a non-array exitEvents value or a mixed array.
+// Avoid crashing anonymous reporting; never mutate the original ledger on read.
+const events = Array.isArray(o.exitEvents)
+? o.exitEvents.filter(e => e && typeof e === "object" && !Array.isArray(e)) : [];
+if (events.length) return events;
 if (o.status === "closed") return [{at:o.exitTime,netPnl:o.netPnl||0,qty:o.initialQty||o.qty,reason:o.reason}];
 return [];
 }
@@ -668,7 +672,9 @@ const closed = state.orders.filter(o => o.status === "closed");
 const open = state.orders.filter(o => o.status === "open");
 const realized = [...closed,...open].reduce((v,o)=>v+realizedOf(o),0);
 const unrealized = open.reduce((v, o) => v + unrealizedOf(o,state.quotes[o.symbol]?.price || o.entryPrice),0);
-const partialExits = state.orders.reduce((v,o)=>v+(o.exitEvents||[]).filter(x=>x.fractionOfRemaining<1).length,0);
+const partialExits = state.orders.reduce((v,o)=>v+
+(Array.isArray(o.exitEvents) ? o.exitEvents.filter(x=>x && typeof x === "object" &&
+Number.isFinite(x.fractionOfRemaining) && x.fractionOfRemaining > 0 && x.fractionOfRemaining < 1).length : 0),0);
 const wins = closed.filter(o => o.netPnl > 0);
 const losses = closed.filter(o => o.netPnl < 0);
 const exitPnls = state.orders.flatMap(o=>exitLegs(o).map(v=>v.netPnl||0));
@@ -2023,6 +2029,28 @@ result.daily["2026-11-08"].pnl===-2.5&&result.monthly["2026-11"].pnl===-2.5&&
 result.symbols.SOLUSDT.trades===1&&
 !Object.hasOwn(Object.prototype,"trades"),
 "malformed legacy exit time/amount broke the report or created invalid period totals");
+});
+
+
+// Legacy event containers must not corrupt anonymous reporting or write back to the ledger.
+test("BDD193",()=>{
+const date="2026-11-08T01:00:00.000Z";
+state.orders=[mock({status:"closed",netPnl:4,exitTime:date,exitEvents:"old_bad_shape"})];
+const before=state.orders[0].exitEvents;
+const result=report();
+assert(result.daily["2026-11-08"].pnl===4&&result.daily["2026-11-08"].trades===1&&
+result.partialExits===0&&state.orders[0].exitEvents===before,
+"malformed non-array exitEvents broke report or mutated historical ledger");
+});
+test("BDD194",()=>{
+const date="2026-11-08T01:00:00.000Z";
+const events=[null,"invalid",7,{at:date,netPnl:2,fractionOfRemaining:0.25},
+{at:date,netPnl:1,fractionOfRemaining:1}];
+state.orders=[mock({status:"closed",netPnl:3,exitEvents:events})];
+const result=report();
+assert(result.partialExits===1&&result.daily["2026-11-08"].pnl===3&&
+result.daily["2026-11-08"].trades===2&&state.orders[0].exitEvents===events&&
+events.length===5,"mixed legacy exitEvents crashed or changed valid partial totals");
 });
 
 const failed=results.filter(x=>!x.pass);
