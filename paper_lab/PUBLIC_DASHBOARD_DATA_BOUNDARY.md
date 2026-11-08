@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-11-08 (Asia/Phnom_Penh).
 Scope: `paper_lab/worker.ts` within Draft PR #8.
-Status: **Draft Git-only. Current 217/217 embedded source-derived isolated V8 BDD PASS (including management BDD219–221); separately BDD215–218 are covered by a Node offline source-derived test. Native Bun, real HTTP/browser E2E and Railway deployment NOT VERIFIED. Previous 183/185/187/192 results are historical.**
+Status: **Draft Git-only. Current 220/220 embedded source-derived isolated V8 BDD PASS (including management BDD219–221); separately BDD215–218 are covered by a Node offline source-derived test. Native Bun, real HTTP/browser E2E and Railway deployment NOT VERIFIED. Previous 183/185/187/192 results are historical.**
 
 ## PRD / threat model
 
@@ -464,3 +464,10 @@ Feature: Public Paper mark-to-market quote freshness
 Current worker already refuses startup when `APP_PASSWORD.length < 16`; no live missing-password bypass is asserted. This update adds a **second independent guard**: `authOk(req, configuredPassword=password)` denies a non-string or empty configured password before checking Basic credentials. It intentionally preserves existing anonymous reporting and credential-protected management endpoints and does not touch trading, durable state, secrets or Railway.
 
 BDD219–221 and `ADMIN_AUTH_FAIL_CLOSED.feature` cover absent password, correct/wrong password, missing header, wrong scheme and invalid Base64. Pre-fix source-level reproduction accepted `Basic operator:` with a simulated empty configured secret; post-fix denies it, while a supplied nonempty correct secret still works. Exact new GitHub `worker.ts` passed **217/217 embedded synthetic BDD** in an offline V8 harness with Request/Response and filesystem/network mocks, `persistentStateUnchanged=true`; three isolated Node tests passed against a copied function fixture. **Not** native Bun, a real HTTP socket, CI, live Railway or a verified live security exposure. The existing 16-character boot guard must remain; roll back Draft-only commits if necessary. Detailed evidence: `ADMIN_AUTH_FAIL_CLOSED_QA_2026-11-08.md`.
+
+
+## 2026-11-08 — Anonymous Telegram status values must be typed, not merely allowlisted by field name
+
+The existing `publicTelegramStatus()` method contained an **untyped value projection**: although it did not return private field names, historical `botUsername`, `lastSentAt` and `delivered` values were passed through unchanged. The pre-fix exact-source V8 reproduction showed synthetic private markers in anonymous JSON. The new Draft-only source returns only canonical Telegram bot usernames, non-negative safe integer counters, an explicit pairing boolean, and canonical UTC `lastSentAt` or null. This does **not** establish that any live secret was exposed; source evidence is from deliberately malformed isolated test state. The Telegram Paper ledger, stored pairing, sending, and private admin API are unchanged.
+
+Executable synthetic Gherkin BDD222–224 and `PUBLIC_TELEGRAM_STATUS_PROJECTION.feature` cover positive and negative cases; `tests/public_telegram_status_projection.test.mjs` runs copied real helper source through Node's V8, no network. Exact latest GitHub Worker passed **220/220 embedded BDD in mocked V8**, `persistentStateUnchanged=true`, and 6/6 local Node source-fixture tests passed across both new test files. **Bun boot, true HTTP, real browser, Railway and production never ran in this test environment.** See `PUBLIC_TELEGRAM_STATUS_QA_2026-11-08.md` for before/after evidence and Git-revert rollback. Do not deploy without approval.
