@@ -779,14 +779,17 @@ exitPrice:Number.isFinite(o.exitPrice)?o.exitPrice:null,
 netPnl:Number.isFinite(o.netPnl)?o.netPnl:null
 }));
 }
+// Public status is also anonymous: archived scalar metadata is not a safe public value.
 function publicPaperStatus() {
 return {
-mode:"PAPER_ONLY",channel:"KCryptoBTC168",initialized:state.initialized,
-lastSeenId:state.lastSeenId,lastChannelPollAt:state.lastChannelPollAt,
-lastPricePollAt:state.lastPricePollAt,
+mode:"PAPER_ONLY",channel:"KCryptoBTC168",initialized:state.initialized===true,
+lastSeenId:Number.isSafeInteger(state.lastSeenId)&&state.lastSeenId>=0?state.lastSeenId:0,
+lastChannelPollAt:publicCsvTime(state.lastChannelPollAt)||null,
+lastPricePollAt:publicCsvTime(state.lastPricePollAt)||null,
 channelError:state.channelError?"Telegram 頻道資料暫時無法取得":null,
 priceError:state.priceError?"行情資料暫時無法取得":null,
-messagesCaptured:state.messages.length,ordersTracked:state.orders.length,
+messagesCaptured:Array.isArray(state.messages)?state.messages.length:0,
+ordersTracked:Array.isArray(state.orders)?state.orders.length:0,
 ...publicPaperPriceHealth()
 };
 }
@@ -2258,6 +2261,36 @@ const exported=csv();
 assert(exported.includes("net_take_profit_1pct") && exported.includes("2026-11-08T01:00:00.000Z") &&
 exported.includes('"-1.25"') && exported.includes("5010") &&
 exported.split("\n").length===2,"valid public CSV history lost exit, time or negative PnL");
+});
+
+test("BDD209",()=>{
+const secret="PRIVATE_ANON_STATUS_209";
+state.initialized=secret;state.lastSeenId=secret;
+state.lastChannelPollAt="Authorization: Bearer "+secret;
+state.lastPricePollAt={debugToken:secret};
+const out=publicPaperStatus();
+assert(out.initialized===false&&out.lastSeenId===0&&out.lastChannelPollAt===null&&
+out.lastPricePollAt===null&&!JSON.stringify(out).includes(secret),
+"public anonymous status leaked legacy metadata or private debug values");
+});
+test("BDD210",()=>{
+state.initialized=true;state.lastSeenId=5011;
+state.lastChannelPollAt="2026-11-08T03:30:00Z";
+state.lastPricePollAt="2026-11-08T03:31:00.123Z";
+state.messages=[{id:5001}];state.orders=[mock()];
+const out=publicPaperStatus();
+assert(out.initialized===true&&out.lastSeenId===5011&&out.messagesCaptured===1&&
+out.ordersTracked===1&&out.lastChannelPollAt==="2026-11-08T03:30:00.000Z"&&
+out.lastPricePollAt==="2026-11-08T03:31:00.123Z",
+"safe public status lost legitimate monitoring values");
+});
+test("BDD211",()=>{
+state.messages=null;state.orders="PRIVATE_ORDER_COUNT";
+state.lastSeenId=-10;state.lastChannelPollAt="not-a-date";
+const out=publicPaperStatus();
+assert(out.messagesCaptured===0&&out.ordersTracked===0&&out.lastSeenId===0&&
+out.lastChannelPollAt===null&&!JSON.stringify(out).includes("PRIVATE_ORDER_COUNT"),
+"legacy status collection corruption broke anonymous status availability");
 });
 
 const failed=results.filter(x=>!x.pass);
