@@ -183,8 +183,12 @@ lastSentAt:t.lastSentAt||null, lastError:t.error||null };
 }
 function publicTelegramStatus() {
 const s=telegramStatus();
-return {targetUsername:s.targetUsername,paired:s.paired,botUsername:s.botUsername,
-queued:s.queued,delivered:s.delivered,lastSentAt:s.lastSentAt};
+// Anonymous status is a typed DTO. Old persisted Telegram metadata is untrusted.
+return {targetUsername:s.targetUsername,paired:s.paired===true,
+botUsername:typeof s.botUsername==="string"&&/^[a-zA-Z][\w]{4,31}$/.test(s.botUsername)?s.botUsername:null,
+queued:Number.isSafeInteger(s.queued)&&s.queued>=0?s.queued:0,
+delivered:Number.isSafeInteger(s.delivered)&&s.delivered>=0?s.delivered:0,
+lastSentAt:publicCsvTime(s.lastSentAt)||null};
 }
 function telegramSetup() {
 const status=telegramStatus();
@@ -2375,6 +2379,34 @@ test("BDD221",()=>{
     !authOk(authReq("Bearer secret"),"secret") &&
     !authOk(authReq("Basic !!!"),"secret"),
     "missing, wrong-scheme or invalid Base64 credentials bypassed Basic auth");
+});
+
+
+// Anonymous Telegram status must not echo arbitrary archived metadata.
+test("BDD222",()=>{
+state.telegram={chatId:"123",botUsername:"Authorization: Bearer PRIVATE_BOT_222",
+delivered:"PRIVATE_COUNTER_222",lastSentAt:"Bearer PRIVATE_TIME_222"};
+const out=publicTelegramStatus();
+assert(out.paired===true&&out.botUsername===null&&out.delivered===0&&out.lastSentAt===null&&
+!JSON.stringify(out).includes("PRIVATE_"),"legacy bot metadata leaked to anonymous status");
+});
+test("BDD223",()=>{
+state.telegram={chatId:"123",botUsername:"Signal_Helper_Bot",delivered:7,
+lastSentAt:"2026-11-08T09:00:00.000Z"};
+state.notifications=[{key:"safe",status:"pending",text:"notice",retryAt:0}];
+const out=publicTelegramStatus();
+assert(out.targetUsername==="@"+TG_TARGET&&out.paired===true&&
+out.botUsername==="Signal_Helper_Bot"&&out.delivered===7&&out.queued===1&&
+out.lastSentAt==="2026-11-08T09:00:00.000Z",
+"safe Telegram status projection broke valid monitoring values");
+});
+test("BDD224",()=>{
+state.telegram={chatId:null,botUsername:"fake_bot?private=SECRET_224",
+delivered:-100,lastSentAt:{secret:"SECRET_224"}};
+const out=publicTelegramStatus();
+assert(out.paired===false&&out.botUsername===null&&out.delivered===0&&
+out.lastSentAt===null&&!JSON.stringify(out).includes("SECRET_224"),
+"non-scalar, invalid or negative legacy fields bypassed Telegram status sanitization");
 });
 
 const failed=results.filter(x=>!x.pass);
