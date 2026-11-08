@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-11-08 (Asia/Phnom_Penh).
 Scope: `paper_lab/worker.ts` within Draft PR #8.
-Status: **Draft Git-only. Current BDD192/192 source-derived isolated V8 PASS with read-only synthetic stale/fresh UI checks; native Bun full suite, real HTTP/browser E2E and Railway deployment NOT VERIFIED. Prior 183/185/187 results remain historical snapshots.**
+Status: **Draft Git-only. Current 217/217 embedded source-derived isolated V8 BDD PASS (including management BDD219–221); separately BDD215–218 are covered by a Node offline source-derived test. Native Bun, real HTTP/browser E2E and Railway deployment NOT VERIFIED. Previous 183/185/187/192 results are historical.**
 
 ## PRD / threat model
 
@@ -458,3 +458,9 @@ Feature: Public Paper mark-to-market quote freshness
 **Applied only to existing Draft PR #8:** The status projection now enforces `initialized === true`, nonnegative integer `lastSeenId`, vetted canonical UTC `lastChannelPollAt`/`lastPricePollAt` or `null`, and zero message/order counts when the persisted collections are invalid. A valid state preserves legitimate progress and telemetry. No public field names, routes, ledger entries, notification rules, simulated take-profit threshold or production data were changed.
 
 **Evidence/limits:** BDD209 (hostile/secret), BDD210 (valid), BDD211 (bad collection) were read back from actual committed `worker.ts` and executed with its `publicPaperStatus()` and `publicCsvTime()` in a standalone V8 function-level harness: **3/3 PASS**, each using synthetic data. After the focused 3/3 check, the committed GitHub worker source was executed with an isolated synthetic V8 harness mocking Bun, Basic Auth, Request/Response/URL, fs and all network I/O: **211/211 BDD PASS, 0 FAIL, persistentStateUnchanged=true**. This includes the 208 previous cases and the three new cases, but **does not execute native Bun, real HTTP network, a user browser, Railway or production data**, all of which remain NOT VERIFIED. Prior CI pre-runner failure is not proof of a test regression. Explicit deployment approval is required; rollback via `git revert` of the Draft branch changes.
+
+
+## 2026-11-08 — management login fails closed even if startup policy changes
+Current worker already refuses startup when `APP_PASSWORD.length < 16`; no live missing-password bypass is asserted. This update adds a **second independent guard**: `authOk(req, configuredPassword=password)` denies a non-string or empty configured password before checking Basic credentials. It intentionally preserves existing anonymous reporting and credential-protected management endpoints and does not touch trading, durable state, secrets or Railway.
+
+BDD219–221 and `ADMIN_AUTH_FAIL_CLOSED.feature` cover absent password, correct/wrong password, missing header, wrong scheme and invalid Base64. Pre-fix source-level reproduction accepted `Basic operator:` with a simulated empty configured secret; post-fix denies it, while a supplied nonempty correct secret still works. Exact new GitHub `worker.ts` passed **217/217 embedded synthetic BDD** in an offline V8 harness with Request/Response and filesystem/network mocks, `persistentStateUnchanged=true`; three isolated Node tests passed against a copied function fixture. **Not** native Bun, a real HTTP socket, CI, live Railway or a verified live security exposure. The existing 16-character boot guard must remain; roll back Draft-only commits if necessary. Detailed evidence: `ADMIN_AUTH_FAIL_CLOSED_QA_2026-11-08.md`.
