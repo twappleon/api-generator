@@ -401,12 +401,23 @@ else if (o.status === "open") v += realizedOf(o) + unrealizedOf(o, state.quotes[
 }
 return v;
 }
+// Preserve unreadable legacy snapshot containers only at the sampling write boundary.
+function writablePaperSnapshots() {
+if (Array.isArray(state.snapshots)) return state.snapshots;
+if (Object.prototype.hasOwnProperty.call(state,"snapshots") &&
+  !Object.prototype.hasOwnProperty.call(state,"legacySnapshotsOriginal"))
+state.legacySnapshotsOriginal=state.snapshots;
+state.snapshots=[];
+return state.snapshots;
+}
 function snapshot() {
-const t = Date.now();
-const previous = state.snapshots[state.snapshots.length - 1];
-if (!previous || t - Date.parse(previous.at) >= 60000) {
-state.snapshots.push({ at: nowISO(), equity: equity() });
-if (state.snapshots.length > 90000) state.snapshots = state.snapshots.slice(-90000);
+const samples=writablePaperSnapshots(),t=Date.now();
+const last=samples[samples.length-1];
+const previousAt=typeof last?.at==="string"?Date.parse(last.at):NaN;
+// Invalid or far-future historic timestamp cannot permanently freeze the curve.
+if(!Number.isFinite(previousAt)||t-previousAt>=60000||previousAt-t>30000){
+samples.push({at:nowISO(),equity:equity()});
+if(samples.length>90000)state.snapshots=samples.slice(-90000);
 }
 }
 function openOrder(o, price) {
@@ -2408,6 +2419,13 @@ assert(out.paired===false&&out.botUsername===null&&out.delivered===0&&
 out.lastSentAt===null&&!JSON.stringify(out).includes("SECRET_224"),
 "non-scalar, invalid or negative legacy fields bypassed Telegram status sanitization");
 });
+
+
+test("BDD225",()=>{const legacy={private:"SENSITIVE_225"};state.snapshots=legacy;snapshot();
+assert(Array.isArray(state.snapshots)&&state.snapshots.length===1&&state.snapshots[0].equity===START_BALANCE&&state.legacySnapshotsOriginal===legacy&&!JSON.stringify(publicPaperSnapshots()).includes("SENSITIVE_225"),"snapshot non-array repair must preserve audit and keep private metadata private");});
+test("BDD226",()=>{const legacy={at:"broken",equity:START_BALANCE};state.snapshots=[legacy];snapshot();assert(state.snapshots.length===2&&state.snapshots[0]===legacy&&Number.isFinite(Date.parse(state.snapshots[1].at)),"bad timestamp froze sampling");});
+test("BDD227",()=>{const future={at:"2099-01-01T00:00:00.000Z",equity:START_BALANCE};state.snapshots=[future];snapshot();assert(state.snapshots.length===2&&state.snapshots[0]===future,"future timestamp froze sampling");});
+test("BDD228",()=>{const valid={at:nowISO(),equity:START_BALANCE};state.snapshots=[valid];snapshot();assert(state.snapshots.length===1&&state.snapshots[0]===valid,"recent valid sample duplicated");});
 
 const failed=results.filter(x=>!x.pass);
 return {
