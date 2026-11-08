@@ -878,13 +878,15 @@ return csvCell(v);
 function json(value) {
 return Response.json(value, { headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
 }
-function authOk(req) {
+function authOk(req, configuredPassword = password) {
+// Fail closed: an unset APP_PASSWORD must never authorize a blank Basic password.
+if (typeof configuredPassword !== "string" || configuredPassword.length === 0) return false;
 const auth = req.headers.get("authorization") || "";
 if (!auth.startsWith("Basic ")) return false;
 let pair;
 try { pair = atob(auth.slice(6)).split(":"); } catch { return false; }
 const got = Buffer.from(pair.slice(1).join(":"));
-const expected = Buffer.from(password);
+const expected = Buffer.from(configuredPassword);
 return got.length === expected.length && timingSafeEqual(got, expected);
 }
 
@@ -2350,6 +2352,29 @@ const batch=pendingOutboxBatch();
 assert(batch.length===2&&batch[0].key==="existing"&&batch[1].key==="new:214"&&
 state.notifications===raw&&raw[0]===null&&raw[1]==="unreadable",
 "outbox recovery replayed or erased malformed audit entries");
+});
+
+
+
+// Production Basic-Auth guard: no configured APP_PASSWORD must fail closed.
+const authReq = authorization => ({ headers: { get: key => key === "authorization" ? authorization : null } });
+test("BDD219",()=>{
+  const blank = authReq("Basic b3BlcmF0b3I6"); // operator:
+  const nonempty = authReq("Basic b3BlcmF0b3I6c2VjcmV0"); // operator:secret
+  assert(!authOk(blank, "") && !authOk(nonempty, ""),
+    "unset APP_PASSWORD authenticated a Basic request");
+});
+test("BDD220",()=>{
+  const valid = authReq("Basic b3BlcmF0b3I6c2VjcmV0"); // operator:secret
+  const blank = authReq("Basic b3BlcmF0b3I6");
+  assert(authOk(valid,"secret") && !authOk(valid,"wrong") && !authOk(blank,"secret"),
+    "configured credential should authorize only an exact non-empty password");
+});
+test("BDD221",()=>{
+  assert(!authOk(authReq(null),"secret") &&
+    !authOk(authReq("Bearer secret"),"secret") &&
+    !authOk(authReq("Basic !!!"),"secret"),
+    "missing, wrong-scheme or invalid Base64 credentials bypassed Basic auth");
 });
 
 const failed=results.filter(x=>!x.pass);
