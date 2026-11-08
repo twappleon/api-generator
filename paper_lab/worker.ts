@@ -687,7 +687,18 @@ positions:valid?donchianPublicRows(remote.advisoryPositions):[],
 closedPositions:valid?donchianPublicRows(remote.closedPaperPositions,true):[]
 }};
 }
+// Anonymous reporting must never serialize raw historical snapshot records.
+// This projection preserves the persisted audit ledger and exposes only finite equity
+// at a canonical observation timestamp; malformed rows stay private and unchanged.
+function publicPaperSnapshots() {
+if (!Array.isArray(state.snapshots)) return [];
+return state.snapshots.filter(x => x && typeof x === "object" && !Array.isArray(x) &&
+  typeof x.at === "string" && Number.isFinite(Date.parse(x.at)) && Number.isFinite(x.equity))
+.map(x => ({ at: new Date(Date.parse(x.at)).toISOString(), equity: x.equity }));
+}
+
 function report() {
+const validSnapshots = publicPaperSnapshots();
 const closed = readablePaperOrders().filter(o => o.status === "closed");
 const open = readablePaperOrders().filter(o => o.status === "open");
 const realized = [...closed,...open].reduce((v,o)=>v+realizedOf(o),0);
@@ -701,7 +712,7 @@ const exitPnls = readablePaperOrders().flatMap(o=>exitLegs(o).map(v=>v.netPnl||0
 const winGross = exitPnls.filter(v=>v>0).reduce((a,b)=>a+b,0);
 const lossGross = -exitPnls.filter(v=>v<0).reduce((a,b)=>a+b,0);
 let peak = START_BALANCE, maxDD = 0;
-for (const x of state.snapshots) { peak = Math.max(peak, x.equity); if (peak > 0) maxDD = Math.max(maxDD, (peak - x.equity) / peak * 100); }
+for (const x of validSnapshots) { peak = Math.max(peak, x.equity); if (peak > 0) maxDD = Math.max(maxDD, (peak - x.equity) / peak * 100); }
 // Read-only aggregation: plain-object keys from historical/corrupt records must
 // never mutate Object.prototype or break the public report.
 const daily = Object.create(null), monthly = Object.create(null), symbols = Object.create(null);
@@ -725,7 +736,7 @@ openPositions: open.length, pendingOrders: readablePaperOrders().filter(x => x.s
 closedTrades: closed.length, partialExits, winRatePct: closed.length ? wins.length / closed.length * 100 : 0,
 profitFactor: lossGross > 0 ? winGross / lossGross : null, maxDrawdownPct: maxDD,
 feesPaid: readablePaperOrders().reduce((v, o) => v + (o.feeEntry || 0) + (o.feeExit || 0), 0),
-daily, monthly, symbols, snapshots: state.snapshots.slice(-1000)
+daily, monthly, symbols, snapshots: validSnapshots.slice(-1000)
 });
 }
 async function refreshDonchianStats(){
@@ -2158,6 +2169,30 @@ const result=publicPaperPriceHealth();
 assert(result.trackedSymbolCount>=1&&result.staleSymbolCount>=1&&
 publicOrders().length===1&&state.orders.length===3,
 "malformed row broke quote freshness or widened public order boundary");
+});
+
+test("BDD204",()=>{
+const original={at:"2026-11-08T01:00:00Z",equity:9950,privateToken:"PRIVATE_SNAPSHOT_204",
+internal:{chatId:"PRIVATE_CHAT_204"}};
+state.snapshots=[original];
+const result=report();
+assert(result.snapshots.length===1 && result.snapshots[0].at==="2026-11-08T01:00:00.000Z" &&
+result.snapshots[0].equity===9950 && Object.keys(result.snapshots[0]).sort().join(",")==="at,equity" &&
+!JSON.stringify(result).includes("PRIVATE_SNAPSHOT_204") &&
+!JSON.stringify(result).includes("PRIVATE_CHAT_204") && state.snapshots[0]===original,
+"anonymous report leaked raw snapshot metadata or mutated archived snapshot");
+});
+test("BDD205",()=>{
+state.snapshots=[null,"scalar",{at:"oops",equity:1},
+{at:"2026-11-08T01:00:00Z",equity:10000},
+{at:"2026-11-08T01:01:00Z",equity:9500},
+{at:"2026-11-08T01:02:00Z",equity:9900,secret:"PRIVATE_HISTORY_205"}];
+const originals=state.snapshots.slice();
+const result=report();
+assert(result.snapshots.length===3 && Math.abs(result.maxDrawdownPct-5)<1e-9 &&
+!JSON.stringify(result).includes("PRIVATE_HISTORY_205") && state.snapshots.length===6 &&
+state.snapshots.every((x,i)=>x===originals[i]),
+"malformed archived snapshots broke drawdown, leaked metadata or changed audit rows");
 });
 
 const failed=results.filter(x=>!x.pass);
