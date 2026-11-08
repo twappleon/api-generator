@@ -29,6 +29,13 @@ messages: [], orders: [], quotes: {}, snapshots: [], notifications: [], telegram
 });
 mkdirSync(dirname(path), { recursive: true });
 let state = fresh();
+// Keep malformed historical rows for audit, but never let a null/scalar row
+// block public reporting or a valid Paper stop-loss.
+function readablePaperOrders() {
+return Array.isArray(state.orders)
+? state.orders.filter(o=>o!==null && typeof o==="object" && !Array.isArray(o)) : [];
+}
+
 let donchianStatsCache = {data:null,error:null,lastSuccessAt:null};
 if (existsSync(path)) {
 const read = JSON.parse(readFileSync(path, "utf8"));
@@ -76,7 +83,7 @@ return queueNotice("order:"+o.messageId+":"+o.status,
 return false;
 }
 function notifyNewChannelItem(m) {
-const o=state.orders.find(x=>x.messageId===m.id);
+const o=readablePaperOrders().find(x=>x.messageId===m.id);
 if(m.classification==="trade_signal_accepted" && o) {
 queueNotice("signal:"+m.id,
 "📡 K哥頻道新模擬訊號\n"+
@@ -87,7 +94,7 @@ o.symbol+" "+(o.side==="long"?"做多":"做空")+"\n"+
 "\n模式：Paper Only · 扣費淨利達 1% 自動平倉\n"+
 tgTradeLink(o));
 } else if(m.classification==="cancelled_order" && m.replyTo) {
-const original=state.orders.find(x=>x.messageId===m.replyTo);
+const original=readablePaperOrders().find(x=>x.messageId===m.replyTo);
 if(original) notifyOrderStatus(original);
 } else if(["partial_close_requested","full_close_requested"].includes(m.classification)) {
 queueNotice("channel_action:"+m.id,
@@ -363,7 +370,7 @@ return [];
 const mark = (o, px) => o.side === "long" ? o.qty * (px - o.entryPrice) : o.qty * (o.entryPrice - px);
 function equity() {
 let v = START_BALANCE;
-for (const o of state.orders) {
+for (const o of readablePaperOrders()) {
 if (o.status === "closed") v += o.netPnl;
 else if (o.status === "open") v += realizedOf(o) + unrealizedOf(o, state.quotes[o.symbol]?.price || o.entryPrice);
 }
@@ -387,7 +394,7 @@ const px = price * (o.side === "long" ? 1 + SLIP : 1 - SLIP);
 const distance = Math.abs(px - o.stop);
 const eq = Math.max(0, equity());
 const riskQty = distance ? eq * RISK / distance : 0;
-const used = state.orders.filter(x => x.status === "open")
+const used = readablePaperOrders().filter(x => x.status === "open")
 .reduce((sum, x) => sum + x.qty * x.entryPrice, 0);
 const qty = Math.min(riskQty, eq * MAX_POSITION / px, Math.max(0, eq - used) / px);
 if (!Number.isFinite(qty) || qty <= 0) {
@@ -491,7 +498,7 @@ if (m.id <= state.lastSeenId) m.classification = "late_history_ignored";
 else if (!m.publishedAt || Date.parse(m.publishedAt) > now + 120000 ||
 now - Date.parse(m.publishedAt) > AGE) m.classification = "stale_or_missing_timestamp";
 else if (m.replyTo && (cancelMsg(m.text) || closeMsg(m.text))) {
-const o = state.orders.find(x => x.messageId === m.replyTo);
+const o = readablePaperOrders().find(x => x.messageId === m.replyTo);
 if (!o) m.classification = "orphan_reply_needs_review";
 else if (cancelMsg(m.text) && (o.status === "pending" || o.status === "waiting_price")) {
 o.status = "cancelled"; o.reason = "channel_cancelled_before_fill"; m.classification = "cancelled_order";
@@ -558,7 +565,7 @@ if(!Number.isFinite(price) || price<=0) return;
 const t = Date.now();
 state.quotes[sym] = { price, at: nowISO() };
 if (!syntheticTestMode && sym === "BTCUSDT" && Date.now()-lastPriceLogAt > 300000) { console.info("PRICE_SYNC",JSON.stringify({symbol:sym,price,at:state.quotes[sym].at})); lastPriceLogAt=Date.now(); }
-for (const o of state.orders) {
+for (const o of readablePaperOrders()) {
 if (o.symbol !== sym) continue;
 if (o.status === "waiting_price") {
 if (t - Date.parse(o.receivedAt) > AGE) {
@@ -612,7 +619,7 @@ pricesBusy = true;
 try {
 const t = Date.now();
 const symbols = new Set(["BTCUSDT"]);
-for (const o of state.orders) {
+for (const o of readablePaperOrders()) {
 if (o.status === "pending" && t - Date.parse(o.receivedAt) > TTL) {
 o.status = "expired"; o.reason = "pending_ttl";
 } else if (o.status === "waiting_price" && t - Date.parse(o.receivedAt) > AGE) {
@@ -681,16 +688,16 @@ closedPositions:valid?donchianPublicRows(remote.closedPaperPositions,true):[]
 }};
 }
 function report() {
-const closed = state.orders.filter(o => o.status === "closed");
-const open = state.orders.filter(o => o.status === "open");
+const closed = readablePaperOrders().filter(o => o.status === "closed");
+const open = readablePaperOrders().filter(o => o.status === "open");
 const realized = [...closed,...open].reduce((v,o)=>v+realizedOf(o),0);
 const unrealized = open.reduce((v, o) => v + unrealizedOf(o,state.quotes[o.symbol]?.price || o.entryPrice),0);
-const partialExits = state.orders.reduce((v,o)=>v+
+const partialExits = readablePaperOrders().reduce((v,o)=>v+
 (Array.isArray(o.exitEvents) ? o.exitEvents.filter(x=>x && typeof x === "object" &&
 Number.isFinite(x.fractionOfRemaining) && x.fractionOfRemaining > 0 && x.fractionOfRemaining < 1).length : 0),0);
 const wins = closed.filter(o => o.netPnl > 0);
 const losses = closed.filter(o => o.netPnl < 0);
-const exitPnls = state.orders.flatMap(o=>exitLegs(o).map(v=>v.netPnl||0));
+const exitPnls = readablePaperOrders().flatMap(o=>exitLegs(o).map(v=>v.netPnl||0));
 const winGross = exitPnls.filter(v=>v>0).reduce((a,b)=>a+b,0);
 const lossGross = -exitPnls.filter(v=>v<0).reduce((a,b)=>a+b,0);
 let peak = START_BALANCE, maxDD = 0;
@@ -698,7 +705,7 @@ for (const x of state.snapshots) { peak = Math.max(peak, x.equity); if (peak > 0
 // Read-only aggregation: plain-object keys from historical/corrupt records must
 // never mutate Object.prototype or break the public report.
 const daily = Object.create(null), monthly = Object.create(null), symbols = Object.create(null);
-for (const o of state.orders) for (const exit of exitLegs(o)) {
+for (const o of readablePaperOrders()) for (const exit of exitLegs(o)) {
 const day = typeof exit?.at === "string" ? exit.at.slice(0, 10) : "";
 if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(exit?.netPnl)) continue;
 const month = day.slice(0, 7);
@@ -714,10 +721,10 @@ return mergeDonchianStats({
 mode: "PAPER_ONLY", initialBalance: START_BALANCE, netTakeProfitPct: NET_TAKE_PROFIT*100, equity: equity(),
 netReturnPct: (equity() / START_BALANCE - 1) * 100,
 realizedPnl: realized, unrealizedPnl: unrealized,
-openPositions: open.length, pendingOrders: state.orders.filter(x => x.status === "pending").length,
+openPositions: open.length, pendingOrders: readablePaperOrders().filter(x => x.status === "pending").length,
 closedTrades: closed.length, partialExits, winRatePct: closed.length ? wins.length / closed.length * 100 : 0,
 profitFactor: lossGross > 0 ? winGross / lossGross : null, maxDrawdownPct: maxDD,
-feesPaid: state.orders.reduce((v, o) => v + (o.feeEntry || 0) + (o.feeExit || 0), 0),
+feesPaid: readablePaperOrders().reduce((v, o) => v + (o.feeEntry || 0) + (o.feeExit || 0), 0),
 daily, monthly, symbols, snapshots: state.snapshots.slice(-1000)
 });
 }
@@ -735,7 +742,7 @@ donchianStatsCache={data,error:null,lastSuccessAt:nowISO()};
 // that timestamp records attempted polls even when every upstream request fails.
 function publicPaperPriceHealth(now=Date.now()) {
 const tracked = new Set(["BTCUSDT"]);
-for (const o of state.orders) if (["open","waiting_price","pending"].includes(o.status) &&
+for (const o of readablePaperOrders()) if (["open","waiting_price","pending"].includes(o.status) &&
   typeof o.symbol === "string" && /^[A-Z0-9]{3,16}$/.test(o.symbol)) tracked.add(o.symbol);
 let staleSymbolCount = 0;
 for (const symbol of tracked) {
@@ -749,7 +756,7 @@ return {priceStale: staleSymbolCount > 0, staleSymbolCount, trackedSymbolCount: 
 // Public reporting boundary: an explicit allowlist keeps internal Paper state private.
 // Only the nine fields used by the anonymous trade table are exposed.
 function publicOrders() {
-return state.orders.slice(-100).map(o=>({
+return readablePaperOrders().slice(-100).map(o=>({
 messageId:Number.isSafeInteger(o.messageId)&&o.messageId>0?o.messageId:null,
 symbol:typeof o.symbol==="string"&&/^[A-Z0-9]{3,16}$/.test(o.symbol)?o.symbol:null,
 side:["long","short"].includes(o.side)?o.side:null,
@@ -798,7 +805,7 @@ function csv() {
 const fields = ["messageId", "symbol", "side", "kind", "status", "entryLow", "entryHigh",
 "entryPrice", "stop", "target", "qty", "exitPrice", "feeEntry", "feeExit",
 "grossPnl", "netPnl", "receivedAt", "entryTime", "exitTime", "reason", "initialQty", "lastPartialTime", "exitEvents"];
-return [fields.join(","), ...state.orders.map(o => fields.map(k => {
+return [fields.join(","), ...readablePaperOrders().map(o => fields.map(k => {
 const v = k === "messageId"
 ? (Number.isSafeInteger(o[k]) && o[k] > 0 ? "https://t.me/KCryptoBTC168/" + o[k] : "")
 : (k === "exitEvents" ? publicCsvExitEvents(o[k]) : (o[k] ?? ""));
@@ -2116,6 +2123,41 @@ handlePrice("SOLUSDT",100);
 assert(o.status==="closed"&&o.exitEvents.length===1&&
 o.unreadablePendingCloseCommands?.length===1&&o.unreadablePendingCloseCommands[0]===null,
 "corrupted queued command crashed price loop or erased original unreadable command");
+});
+
+
+// Unreadable historical top-level rows must not block reporting or a valid simulated stop.
+test("BDD200",()=>{
+const valid=mock({status:"closed",netPnl:4,exitTime:"2026-11-08T01:00:00.000Z"});
+const raw=[null,"legacy-not-an-object",17,valid];state.orders=raw;
+const pub=publicOrders(),out=csv();
+assert(pub.length===1&&pub[0].messageId===5001&&
+out.split("\n").length===2&&out.includes("SOLUSDT")&&
+state.orders===raw&&raw[0]===null&&raw[1]==="legacy-not-an-object",
+"unreadable order rows crashed public projections or modified archival ledger");
+});
+test("BDD201",()=>{
+const good=mock({status:"closed",netPnl:4,exitTime:"2026-11-08T01:00:00.000Z"});
+const raw=[null,"historic-corruption",good];state.orders=raw;
+const r=report();
+assert(r.closedTrades===1&&r.daily["2026-11-08"].pnl===4&&
+r.equity===START_BALANCE+4&&r.partialExits===0&&state.orders===raw,
+"unreadable order container crashed report, spoiled PnL, or changed stored data");
+});
+test("BDD202",()=>{
+const o=mock();const raw=[null,"unknown-row",o];state.orders=raw;
+openOrder(o,100);handlePrice("SOLUSDT",94);
+assert(o.status==="closed"&&o.exitEvents.length===1&&o.reason==="stop_loss"&&
+raw[0]===null&&raw[1]==="unknown-row",
+"malformed archived row blocked valid simulated stop-loss or was erased");
+});
+test("BDD203",()=>{
+const valid=mock({status:"open",messageId:5001});
+state.orders=[null,0,valid];
+const result=publicPaperPriceHealth();
+assert(result.trackedSymbolCount>=1&&result.staleSymbolCount>=1&&
+publicOrders().length===1&&state.orders.length===3,
+"malformed row broke quote freshness or widened public order boundary");
 });
 
 const failed=results.filter(x=>!x.pass);
