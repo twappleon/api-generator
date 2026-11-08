@@ -41,8 +41,31 @@ if (existsSync(path)) {
 const read = JSON.parse(readFileSync(path, "utf8"));
 state = { ...fresh(), ...read };
 }
+// Legacy outbox rows are read-only audit data; corrupt arrays/scalars must not crash boot
+// or cause malformed, unauthorised Telegram sendMessage payloads.
+function readableOutboxNotifications() {
+return Array.isArray(state.notifications)
+? state.notifications.filter(n => n && typeof n === "object" && !Array.isArray(n)) : [];
+}
+function writableOutboxNotifications() {
+if (Array.isArray(state.notifications)) return state.notifications;
+if (Object.prototype.hasOwnProperty.call(state,"notifications") &&
+!Object.prototype.hasOwnProperty.call(state,"legacyNotificationsOriginal"))
+state.legacyNotificationsOriginal = state.notifications;
+state.notifications = [];
+return state.notifications;
+}
+function pendingOutboxBatch(now=Date.now()) {
+return readableOutboxNotifications().filter(n=>{
+const retryAt=n.retryAt == null ? 0 : n.retryAt;
+return n.status==="pending" && typeof n.key==="string" && n.key.length>0 &&
+typeof n.text==="string" && n.text.length>0 &&
+typeof retryAt==="number" && Number.isFinite(retryAt) && now>=retryAt;
+}).slice(0,4);
+}
+const initialOutbox=readableOutboxNotifications();
 console.info("TELEGRAM_BINDING_STATE", JSON.stringify({botUsername:state.telegram?.botUsername||null,paired:!!state.telegram?.chatId,target:"@"+TG_TARGET,botTokenConfigured:!!TELEGRAM_BOT_TOKEN}));
-console.info("TELEGRAM_OUTBOX_AUDIT",JSON.stringify({total:state.notifications?.length||0,delivered:state.notifications?.filter(n=>n.status==="delivered").length||0,pending:state.notifications?.filter(n=>n.status==="pending").length||0,latest:(state.notifications||[]).slice(-12).map(n=>({key:n.key,status:n.status,attempts:n.attempts,createdAt:n.createdAt,deliveredAt:n.deliveredAt}))}));
+console.info("TELEGRAM_OUTBOX_AUDIT",JSON.stringify({total:Array.isArray(state.notifications)?state.notifications.length:0,readable:initialOutbox.length,unreadableContainer:!Array.isArray(state.notifications),delivered:initialOutbox.filter(n=>n.status==="delivered").length,pending:initialOutbox.filter(n=>n.status==="pending").length,latest:initialOutbox.slice(-12).map(n=>({key:n.key,status:n.status,attempts:n.attempts,createdAt:n.createdAt,deliveredAt:n.deliveredAt}))}));
 function persist() {
 const temp = path + ".tmp";
 writeFileSync(temp, JSON.stringify(state), { mode: 0o600 });
@@ -51,21 +74,20 @@ renameSync(temp, path);
 
 function tgState() {
 state.telegram ||= { chatId:null, boundUsername:null, botUsername:null, pairingCode:null, boundAt:null, updateOffset:0, error:null, lastSentAt:null, delivered:0 };
-state.notifications ||= [];
 return state.telegram;
 }
 let notificationsMutedForStartupTests = false;
 function queueNotice(key, message) {
 if (notificationsMutedForStartupTests) return false;
 if (!tgState().chatId) return false; // Do not notify unpaired/baseline history.
-const notices = state.notifications;
-if (notices.some(n => n.key===key)) return false;
+const notices = writableOutboxNotifications();
+if (notices.some(n => n?.key===key)) return false;
 notices.push({ key, text:String(message).slice(0,3900), createdAt:nowISO(),
 deliveredAt:null, attempts:0, retryAt:0, status:"pending", lastError:null });
 // Keep delivered event keys for deduplication; cap storage.
 if(notices.length>4000) {
-const delivered=notices.filter(n=>n.status==="delivered").slice(-2500);
-state.notifications=[...notices.filter(n=>n.status!=="delivered"),...delivered];
+const delivered=notices.filter(n=>n?.status==="delivered").slice(-2500);
+state.notifications=[...notices.filter(n=>n?.status!=="delivered"),...delivered];
 }
 return true;
 }
@@ -153,7 +175,7 @@ return got.length===expected.length && timingSafeEqual(got,expected);
 }
 function telegramStatus() {
 const t=tgState();
-const notices=state.notifications||[];
+const notices=readableOutboxNotifications();
 return {targetUsername:"@"+TG_TARGET, botTokenConfigured:!!TELEGRAM_BOT_TOKEN,
 paired:!!t.chatId, pairedAt:t.boundAt||null, botUsername:t.botUsername||null,
 queued:notices.filter(x=>x.status!=="delivered").length, delivered:t.delivered||0,
@@ -245,8 +267,7 @@ if(tgSendBusy || !TELEGRAM_BOT_TOKEN || !tgState().chatId)return;
 tgSendBusy=true;
 try {
 const t=tgState();
-const pending=(state.notifications||[]).filter(n=>n.status!=="delivered" &&
-n.status!=="paused" && Date.now()>=(n.retryAt||0)).slice(0,4);
+const pending=pendingOutboxBatch();
 for(const n of pending){
 try {
 await telegramApi("sendMessage",{
@@ -2291,6 +2312,44 @@ const out=publicPaperStatus();
 assert(out.messagesCaptured===0&&out.ordersTracked===0&&out.lastSeenId===0&&
 out.lastChannelPollAt===null&&!JSON.stringify(out).includes("PRIVATE_ORDER_COUNT"),
 "legacy status collection corruption broke anonymous status availability");
+});
+
+
+ 
+// Outbox recovery must preserve corrupt persisted history and never send it.
+test("BDD212",()=>{
+state.telegram.chatId="12345";
+const raw=[null,42,"legacy",{key:"delivered",status:"delivered",text:"done"},
+{key:"safe",status:"pending",text:"safe queued event",retryAt:0},
+{key:"bad-text",status:"pending",text:{secret:"NO_SEND"},retryAt:0}];
+state.notifications=raw;
+const summary=telegramStatus(),pending=pendingOutboxBatch();
+assert(summary.queued===2&&pending.length===1&&pending[0].key==="safe"&&
+state.notifications===raw&&raw[0]===null,
+"invalid archived outbox rows crashed reads, were modified or became sendable");
+});
+test("BDD213",()=>{
+state.telegram.chatId="12345";
+state.notifications="legacy-corrupt-outbox";
+assert(readableOutboxNotifications().length===0&&
+telegramStatus().queued===0&&state.notifications==="legacy-corrupt-outbox",
+"read-only status mutated malformed outbox container");
+assert(queueNotice("new:213","valid new paper notification")===true&&
+state.legacyNotificationsOriginal==="legacy-corrupt-outbox"&&
+Array.isArray(state.notifications)&&state.notifications.length===1&&
+queueNotice("new:213","duplicate")===false,
+"new event was dropped, duplicated or old malformed outbox data was erased");
+});
+test("BDD214",()=>{
+state.telegram.chatId="12345";
+const raw=[null,"unreadable",{key:"existing",status:"pending",text:"previous",retryAt:0}];
+state.notifications=raw;
+assert(!queueNotice("existing","duplicate")&&queueNotice("new:214","new queued event"),
+"corrupt array prevented valid enqueue or failed to deduplicate");
+const batch=pendingOutboxBatch();
+assert(batch.length===2&&batch[0].key==="existing"&&batch[1].key==="new:214"&&
+state.notifications===raw&&raw[0]===null&&raw[1]==="unreadable",
+"outbox recovery replayed or erased malformed audit entries");
 });
 
 const failed=results.filter(x=>!x.pass);
