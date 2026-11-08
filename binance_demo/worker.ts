@@ -1,0 +1,1247 @@
+import {createHmac,timingSafeEqual} from "node:crypto";
+import {existsSync,mkdirSync,readFileSync,writeFileSync,renameSync} from "node:fs";
+import {dirname} from "node:path";
+
+/** K Signal / Binance USD-M Demo only. THERE IS NO PRODUCTION ENDPOINT OR ORDER PATH. */
+const DEMO_HOST = "https://demo-fapi.binance.com";
+const CHANNEL = "https://t.me/s/KCryptoBTC168";
+const APP_PASSWORD = Bun.env.APP_PASSWORD || "";
+const KEY = Bun.env.BINANCE_DEMO_API_KEY || "";
+const SECRET = Bun.env.BINANCE_DEMO_API_SECRET || "";
+const CHANNEL_EXECUTE = Bun.env.DEMO_ORDER_ENABLED === "true";
+const DONCHIAN_EXECUTE = Bun.env.DEMO_DONCHIAN_ORDER_ENABLED === "true";
+const EXECUTE = CHANNEL_EXECUTE || DONCHIAN_EXECUTE;
+const LOCAL_BDD_ONLY = Bun.env.LOCAL_BDD_ONLY === "true" && !EXECUTE;
+const TELEGRAM_TOKEN = Bun.env.TELEGRAM_BOT_TOKEN || "";
+const TELEGRAM_CHAT_ID = Bun.env.DEMO_TELEGRAM_CHAT_ID || "";
+const STATS_SHARED_TOKEN = (Bun.env.STATS_SHARED_TOKEN || "").trim();
+const PATH = Bun.env.DATA_FILE || "/data/demo-state.json";
+const INITIAL_NOTIONAL = Math.min(100,Math.max(10,Number(Bun.env.DEMO_TRADE_NOTIONAL_USDT||50)));
+const MAX_OPEN = 1;
+const MAX_LOSS = 0.005;
+const TP_NET = 0.01;
+const DIAGNOSTIC_POSITION_SIDE="BOTH";
+const FEE_FALLBACK=0.0004;
+const SLIP=0.0002;
+const LIMIT_TTL=24*60*60*1000;
+const RECONCILE_NOT_FOUND_LIMIT=3;
+const ALLOWED = new Set(["BTCUSDT","ETHUSDT","SOLUSDT","ZECUSDT"]);
+const LEGACY_DONCHIAN_STRATEGY="DONCHIAN_15M_20_10_2R";
+const ACTIVE_DONCHIAN_STRATEGY="DONCHIAN_1H_20_10_EMA200_ATR14_2X_2R";
+const DONCHIAN_INTERVAL="15m";
+const DONCHIAN_ENTRY_PERIOD=20;
+const DONCHIAN_EXIT_PERIOD=10;
+const DONCHIAN_TAKE_PROFIT_R=2;
+const ACTIVE_DONCHIAN_INTERVAL="1h";
+const ACTIVE_DONCHIAN_EMA_PERIOD=200;
+const ACTIVE_DONCHIAN_ATR_PERIOD=14;
+const ACTIVE_DONCHIAN_ATR_MULTIPLIER=2;
+const DONCHIAN_ENTRY_MAX_DEVIATION=0.005;
+const DONCHIAN_SYMBOLS=[...ALLOWED];
+const SIGNED_PATHS = new Set(["/fapi/v1/order","/fapi/v1/order/test","/fapi/v1/account",
+  "/fapi/v2/balance","/fapi/v3/positionRisk","/fapi/v1/positionSide/dual",
+  "/fapi/v1/leverage","/fapi/v1/marginType","/fapi/v1/userTrades","/fapi/v1/income",
+  "/fapi/v1/algoOrder","/fapi/v1/openAlgoOrders"]);
+const now = () => new Date().toISOString();
+if(APP_PASSWORD.length<16) throw Error("APP_PASSWORD >=16 required");
+if(!PATH.startsWith("/data/")&&!LOCAL_BDD_ONLY) throw Error("Demo must use its own /data mounted volume");
+if(!Number.isFinite(INITIAL_NOTIONAL)) throw Error("Invalid demo notional");
+const blank=()=>({schema:4,baseline:false,lastSeen:0,lastChannelPoll:null,lastDemoPoll:null,
+  channelError:null,demoError:null,lastDonchianPoll:null,donchianError:null,halted:false,haltReason:null,
+  candidate:[],orders:[],events:[],outbox:[],lastQuote:{},donchianMarks:{},lastGoodAccount:null,
+  demoBackoffUntil:0,donchian:{},donchianPaper:[]});
+mkdirSync(dirname(PATH),{recursive:true});
+let ledger=blank();
+if(existsSync(PATH)){
+ const loaded=JSON.parse(readFileSync(PATH,"utf8"));
+ ledger={...blank(),...loaded,schema:4,
+   donchian:loaded.donchian&&typeof loaded.donchian==="object"?loaded.donchian:{}};
+}
+for(const [symbol,state] of Object.entries(ledger.donchian)){
+ if(state?.position&&state.position!=="FLAT"){
+  state.strategyVersion||=LEGACY_DONCHIAN_STRATEGY;state.interval||=DONCHIAN_INTERVAL;
+ }else if(state){
+  state.strategyVersion=ACTIVE_DONCHIAN_STRATEGY;state.interval=ACTIVE_DONCHIAN_INTERVAL;state.lastCandleCloseTime=null;
+ }
+ const openPaper=ledger.donchianPaper.findLast?.(x=>x.symbol===symbol&&x.status==="OPEN");
+ if(openPaper){openPaper.strategyVersion||=state.strategyVersion;openPaper.interval||=state.interval;}
+}
+for(const row of ledger.donchianPaper){row.strategyVersion||=LEGACY_DONCHIAN_STRATEGY;row.interval||=DONCHIAN_INTERVAL;}
+let storageSafe=true, synthetic=false;
+function markPersistenceFailure(error){
+ storageSafe=false;ledger.halted=true;ledger.haltReason="PERSISTENCE_FAILURE";
+ if(!synthetic)console.error("DEMO_STORAGE_FATAL",String(error));
+}
+function save(){
+  if(synthetic)return;
+  try{
+    let tmp=PATH+".writing";
+    writeFileSync(tmp,JSON.stringify(ledger),{mode:0o600});
+    renameSync(tmp,PATH);
+  }catch(e){markPersistenceFailure(e);throw e;}
+}
+function log(type,detail){
+  if(synthetic)return;
+  ledger.events.push({at:now(),type,detail});
+  if(ledger.events.length>3500)ledger.events=ledger.events.slice(-3500);
+}
+function halt(reason){ledger.halted=true;ledger.haltReason=String(reason).slice(0,240);log("HALT",ledger.haltReason);save();
+  enqueue("halt:"+reason,"🚨 Binance DEMO 測試服務已暫停下單\n原因："+reason);}
+function auth(req){
+  const value=req.headers.get("authorization")||"";
+  if(!value.startsWith("Basic "))return false;
+  try{const raw=atob(value.substring(6));const val=Buffer.from(raw.split(":").slice(1).join(":"));
+  const expected=Buffer.from(APP_PASSWORD);
+  return val.length===expected.length&&timingSafeEqual(val,expected);}catch{return false;}
+}
+function statsAuth(req){
+ const got=Buffer.from(req.headers.get("x-stats-token")||"");
+ const expected=Buffer.from(STATS_SHARED_TOKEN);
+ return expected.length>=32&&got.length===expected.length&&timingSafeEqual(got,expected);
+}
+function response(obj,code=200){return Response.json(obj,{status:code,headers:{"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});}
+function tagDemoNotice(text){
+ const body=String(text);
+ if(body.toUpperCase().includes("DONCHIAN PAPER"))return body;
+ return body.toUpperCase().includes("BINANCE DEMO")?body:"BINANCE DEMO\n"+body;
+}
+function enqueue(id,text){
+  if(synthetic||!TELEGRAM_TOKEN||!TELEGRAM_CHAT_ID)return;
+  if(ledger.outbox.some(x=>x.id===id))return;
+ ledger.outbox.push({id,text:tagDemoNotice(text).slice(0,3500),at:now(),sentAt:null,
+    status:"PENDING",attempts:0,retryAt:0});save();
+}
+async function telegramDeliver(){
+ if(!TELEGRAM_TOKEN||!TELEGRAM_CHAT_ID||synthetic)return;
+ let batch=ledger.outbox.filter(n=>n.status==="PENDING"&&Date.now()>=n.retryAt).slice(0,3);
+ for(const n of batch){
+  try{const r=await fetch("https://api.telegram.org/bot"+TELEGRAM_TOKEN+"/sendMessage",{
+   method:"POST",headers:{"content-type":"application/json"},
+   body:JSON.stringify({chat_id:TELEGRAM_CHAT_ID,text:n.text,disable_web_page_preview:true}),
+   signal:AbortSignal.timeout(9000)});
+   const j=await r.json();
+   if(!r.ok||!j.ok)throw Error("Telegram send failed HTTP "+r.status);
+   n.sentAt=now();n.status="SENT";save();console.info("DEMO_TELEGRAM_SENT",n.id);
+  }catch(e){n.attempts++;n.retryAt=Date.now()+Math.min(3600000,10000*2**Math.min(8,n.attempts));
+   if(n.attempts>=12)n.status="FAILED";
+   log("TELEGRAM_SEND_ERROR",String(e));save();break;}
+ }
+}
+const decode=s=>s.replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n)))
+ .replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">");
+const strip=s=>decode(s.replace(/<br\s*\/?>/gi,"\n").replace(/<[^>]*>/g,"")).trim();
+function parseHTML(html){
+ const all=[...html.matchAll(/data-post="KCryptoBTC168\/(\d+)"/g)], found=[];
+ for(let i=0;i<all.length;i++){
+  const chunk=html.slice(all[i].index,i+1<all.length?all[i+1].index:html.length);
+  const body=chunk.match(/<div class="tgme_widget_message_text js-message_text"[^>]*>([\s\S]*?)<\/div>/);
+  const tm=chunk.match(/<time[^>]*datetime="([^"]+)"/);
+  const reply=chunk.match(/class="tgme_widget_message_reply[^"]*" href="https:\/\/t.me\/KCryptoBTC168\/(\d+)"/);
+  found.push({id:Number(all[i][1]),text:body?strip(body[1]):"",time:tm?.[1]||null,
+   replyTo:reply?Number(reply[1]):null});
+ }
+ return found.sort((a,b)=>a.id-b.id).filter((v,i,a)=>i===0||v.id!==a[i-1].id);
+}
+function parseSignal(x){
+ const t=x.text;
+ const coin=t.match(/#(BTC|ETH|SOL|ZEC)\b/i);
+ if(!coin)return null;
+ if(!/市價|現價|掛單|挂单/.test(t))return null;
+ const side=/(做多|附近多|小多|分批多)/.test(t)?"long":/(做空|附近空|小空|分批空)/.test(t)?"short":null;
+ const range=t.match(/(\d+(?:\.\d+)?)\s*[-–~]\s*(\d+(?:\.\d+)?)/);
+ const stop=t.match(/止[損损]\s*[:：]?\s*(\d+(?:\.\d+)?)/);
+ if(!side||!range||!stop)return null;
+ const [lo,hi]=[Number(range[1]),Number(range[2])].sort((a,b)=>a-b);
+ const sl=Number(stop[1]);
+ if((side==="long"&&sl>=lo)||(side==="short"&&sl<=hi)||!lo||!hi)return null;
+ return {id:x.id,symbol:coin[1].toUpperCase()+"USDT",side,mode:/掛單|挂单/.test(t)?"LIMIT":"MARKET",
+  entryLow:lo,entryHigh:hi,stop:sl,sourceTime:x.time,receivedAt:now(),status:"CANDIDATE",
+  url:"https://t.me/KCryptoBTC168/"+x.id,reason:"AWAITING_DEMO_ARM"};
+}
+async function publicGet(path,params={}){
+ const u=new URL(DEMO_HOST+path);
+ for(const [k,v] of Object.entries(params))u.searchParams.set(k,String(v));
+ let r;
+ try{r=await fetch(u,{redirect:"error",signal:AbortSignal.timeout(10000)});}
+ catch(cause){const err=new Error("Demo public "+path+" network failure");err.cause=cause;err.transient=true;throw err;}
+ const raw=await r.text();if(!r.ok){const err=new Error("Demo public "+path+" HTTP "+r.status);
+  Object.assign(err,failureFlags("GET",r.status,0));throw err;}
+ return JSON.parse(raw);
+}
+let serverOffset=0,exchangeInfoCache=null,lastExchangeInfoAt=0,lastPublicLogAt=0,lastDonchianLogAt=0;
+async function serverTime(){const d=await publicGet("/fapi/v1/time");
+ if(!Number.isFinite(d.serverTime))throw Error("Invalid DEMO server time");
+ serverOffset=d.serverTime-Date.now();return d.serverTime;}
+async function signed(method,path,args={}){
+ if(!KEY||!SECRET)throw Error("DEMO credentials missing");
+ if(!SIGNED_PATHS.has(path))throw Error("Signed path not allowed");
+ const query=new URLSearchParams();
+ for(const [k,v] of Object.entries(args))if(v!==null&&v!==undefined)query.set(k,String(v));
+ query.set("timestamp",String(Date.now()+serverOffset));query.set("recvWindow","5000");
+ const qs=query.toString(), signature=createHmac("sha256",SECRET).update(qs).digest("hex");
+ const body=qs+"&signature="+signature;
+ const target=DEMO_HOST+path;
+ let r;
+ try{
+  r=await fetch(method==="GET"?target+"?"+body:target,{
+   method,headers:{"X-MBX-APIKEY":KEY,...(method==="GET"?{}:{"Content-Type":"application/x-www-form-urlencoded"})},
+   ...(method==="GET"?{}:{body}),redirect:"error",signal:AbortSignal.timeout(12000)});
+ }catch(cause){
+  const err=new Error("DEMO "+method+" "+path+" network failure");
+  err.cause=cause;err.transient=true;err.unknown=method!=="GET";throw err;
+ }
+ const raw=await r.text();let data;try{data=JSON.parse(raw)}catch{data={msg:raw.slice(0,120)}}
+ if(!r.ok){const err=new Error("DEMO "+method+" "+path+" HTTP "+r.status+
+    " code "+(data.code??"") +" "+String(data.msg||"").slice(0,120));
+   err.status=r.status;err.code=data.code;
+   Object.assign(err,failureFlags(method,r.status,data.code));
+   const retryAfter=Number(r.headers.get("retry-after")||0);
+   if(retryAfter>0)err.retryAfterMs=retryAfter*1000;
+   throw err;}
+ return data;
+}
+const signedQuery=async(path,args)=>signed("GET",path,args);
+function failureFlags(method,status,code){return {
+ auth:[401,403].includes(Number(status))||[-2014,-2015].includes(Number(code)),
+ transient:[408,418,429].includes(Number(status))||Number(status)>=500,
+ unknown:method!=="GET"&&(Number(status)===408||Number(status)>=500)
+};}
+function noteBackoff(err){
+ if(!err?.transient)return;
+ const wait=Math.max(Number(err.retryAfterMs)||0,err?.status===429?60000:10000);
+ ledger.demoBackoffUntil=Math.max(Number(ledger.demoBackoffUntil)||0,Date.now()+wait);
+}
+function isOrderActive(status){return ["NEW","PARTIALLY_FILLED","PENDING_CANCEL"].includes(String(status));}
+function isOrderTerminal(status){return ["FILLED","CANCELED","EXPIRED","EXPIRED_IN_MATCH","REJECTED"].includes(String(status));}
+function isAlgoActive(status){return ["NEW","PENDING_NEW","TRIGGERING"].includes(String(status));}
+function shouldCancelEntry(o,at=Date.now()){
+ return o.mode==="LIMIT"&&isOrderActive(o.exchangeStatus)&&at-Date.parse(o.submittedAt)>=LIMIT_TTL;
+}
+function hasUnmanagedPosition(positions,orders){
+ return positions.filter(x=>Math.abs(Number(x.positionAmt||0))>1e-10).some(row=>
+   row.positionSide!=="BOTH"||!orders.some(o=>!["CLOSED","CLOSED_UNFILLED"].includes(o.status)&&o.symbol===row.symbol));
+}
+function evaluateDonchian(candles,positionOrState="FLAT"){
+ const current=candles.at(-1);
+ if(!current)return null;
+ const advisory=typeof positionOrState==="string"?{position:positionOrState}:positionOrState;
+ const position=advisory?.position||"FLAT";
+ const period=position==="FLAT"?DONCHIAN_ENTRY_PERIOD:DONCHIAN_EXIT_PERIOD;
+ if(candles.length<period+1)return null;
+ const prior=candles.slice(-(period+1),-1);
+ const upper=Math.max(...prior.map(x=>x.high)),lower=Math.min(...prior.map(x=>x.low));
+ if(!Number.isFinite(upper)||!Number.isFinite(lower)||!Number.isFinite(current.close))return null;
+ if(position==="FLAT"){
+  const exitPrior=candles.slice(-(DONCHIAN_EXIT_PERIOD+1),-1);
+  const exitUpper=Math.max(...exitPrior.map(x=>x.high)),exitLower=Math.min(...exitPrior.map(x=>x.low));
+  if(current.close>upper){const risk=current.close-exitLower;
+   return {action:"ENTER_LONG",upper,lower,exitUpper,exitLower,price:current.close,
+    stopLoss:exitLower,takeProfit:current.close+DONCHIAN_TAKE_PROFIT_R*risk,riskReward:DONCHIAN_TAKE_PROFIT_R,reason:"ENTRY_BREAKOUT",closeTime:current.closeTime};}
+  if(current.close<lower){const risk=exitUpper-current.close;
+   return {action:"ENTER_SHORT",upper,lower,exitUpper,exitLower,price:current.close,
+    stopLoss:exitUpper,takeProfit:current.close-DONCHIAN_TAKE_PROFIT_R*risk,riskReward:DONCHIAN_TAKE_PROFIT_R,reason:"ENTRY_BREAKOUT",closeTime:current.closeTime};}
+ }
+ if(position==="LONG"&&Number.isFinite(advisory.takeProfit)&&current.close>=advisory.takeProfit)
+  return {action:"EXIT_LONG",upper,lower,price:current.close,reason:"TAKE_PROFIT_2R",triggerLevel:advisory.takeProfit,closeTime:current.closeTime};
+ if(position==="LONG"&&Number.isFinite(advisory.stopLoss)&&current.close<=advisory.stopLoss)
+  return {action:"EXIT_LONG",upper,lower,price:current.close,reason:"STOP_LOSS",triggerLevel:advisory.stopLoss,closeTime:current.closeTime};
+ if(position==="SHORT"&&Number.isFinite(advisory.takeProfit)&&current.close<=advisory.takeProfit)
+  return {action:"EXIT_SHORT",upper,lower,price:current.close,reason:"TAKE_PROFIT_2R",triggerLevel:advisory.takeProfit,closeTime:current.closeTime};
+ if(position==="SHORT"&&Number.isFinite(advisory.stopLoss)&&current.close>=advisory.stopLoss)
+  return {action:"EXIT_SHORT",upper,lower,price:current.close,reason:"STOP_LOSS",triggerLevel:advisory.stopLoss,closeTime:current.closeTime};
+ if(position==="LONG"&&current.close<lower)return {action:"EXIT_LONG",upper,lower,price:current.close,reason:"CHANNEL_EXIT",triggerLevel:lower,closeTime:current.closeTime};
+ if(position==="SHORT"&&current.close>upper)return {action:"EXIT_SHORT",upper,lower,price:current.close,reason:"CHANNEL_EXIT",triggerLevel:upper,closeTime:current.closeTime};
+ return null;
+}
+function emaSeries(values,period){
+ if(values.length<period+1)return null;
+ const k=2/(period+1);let ema=values.slice(0,period).reduce((a,b)=>a+b,0)/period,previous=ema;
+ for(let i=period;i<values.length;i++){previous=ema;ema=values[i]*k+ema*(1-k);}
+ return {current:ema,previous};
+}
+function atrValue(candles,period){
+ if(candles.length<period+1)return null;
+ const rows=candles.slice(-(period+1));let total=0;
+ for(let i=1;i<rows.length;i++)total+=Math.max(rows[i].high-rows[i].low,Math.abs(rows[i].high-rows[i-1].close),Math.abs(rows[i].low-rows[i-1].close));
+ return total/period;
+}
+function evaluateFilteredDonchian(candles,positionOrState="FLAT"){
+ const current=candles.at(-1),advisory=typeof positionOrState==="string"?{position:positionOrState}:positionOrState;
+ if(!current)return null;
+ const position=advisory?.position||"FLAT",required=Math.max(ACTIVE_DONCHIAN_EMA_PERIOD+1,DONCHIAN_ENTRY_PERIOD+1,ACTIVE_DONCHIAN_ATR_PERIOD+1);
+ if(candles.length<required)return null;
+ const ema=emaSeries(candles.map(x=>x.close),ACTIVE_DONCHIAN_EMA_PERIOD),atr=atrValue(candles,ACTIVE_DONCHIAN_ATR_PERIOD);
+ if(!ema||!Number.isFinite(atr)||atr<=0)return null;
+ const period=position==="FLAT"?DONCHIAN_ENTRY_PERIOD:DONCHIAN_EXIT_PERIOD;
+ const prior=candles.slice(-(period+1),-1),upper=Math.max(...prior.map(x=>x.high)),lower=Math.min(...prior.map(x=>x.low));
+ const common={upper,lower,price:current.close,closeTime:current.closeTime,ema200:ema.current,atr14:atr,
+  interval:ACTIVE_DONCHIAN_INTERVAL,strategyVersion:ACTIVE_DONCHIAN_STRATEGY};
+ if(position==="FLAT"){
+  const risk=atr*ACTIVE_DONCHIAN_ATR_MULTIPLIER;
+  if(current.close>upper&&current.close>ema.current)return {...common,action:"ENTER_LONG",stopLoss:current.close-risk,takeProfit:current.close+DONCHIAN_TAKE_PROFIT_R*risk,riskReward:DONCHIAN_TAKE_PROFIT_R,reason:"ENTRY_BREAKOUT_EMA_FILTERED"};
+  if(current.close<lower&&current.close<ema.current)return {...common,action:"ENTER_SHORT",stopLoss:current.close+risk,takeProfit:current.close-DONCHIAN_TAKE_PROFIT_R*risk,riskReward:DONCHIAN_TAKE_PROFIT_R,reason:"ENTRY_BREAKOUT_EMA_FILTERED"};
+ }
+ if(position==="LONG"&&Number.isFinite(advisory.takeProfit)&&current.close>=advisory.takeProfit)return {...common,action:"EXIT_LONG",reason:"TAKE_PROFIT_2R",triggerLevel:advisory.takeProfit};
+ if(position==="LONG"&&Number.isFinite(advisory.stopLoss)&&current.close<=advisory.stopLoss)return {...common,action:"EXIT_LONG",reason:"STOP_LOSS",triggerLevel:advisory.stopLoss};
+ if(position==="SHORT"&&Number.isFinite(advisory.takeProfit)&&current.close<=advisory.takeProfit)return {...common,action:"EXIT_SHORT",reason:"TAKE_PROFIT_2R",triggerLevel:advisory.takeProfit};
+ if(position==="SHORT"&&Number.isFinite(advisory.stopLoss)&&current.close>=advisory.stopLoss)return {...common,action:"EXIT_SHORT",reason:"STOP_LOSS",triggerLevel:advisory.stopLoss};
+ if(position==="LONG"&&current.close<lower)return {...common,action:"EXIT_LONG",reason:"CHANNEL_EXIT",triggerLevel:lower};
+ if(position==="SHORT"&&current.close>upper)return {...common,action:"EXIT_SHORT",reason:"CHANNEL_EXIT",triggerLevel:upper};
+ return null;
+}
+function donchianPrice(value){
+ if(value===null||value===undefined||!Number.isFinite(Number(value)))return "未設定";
+ return Number(value).toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:8});
+}
+function donchianPair(symbol){return symbol.endsWith("USDT")?symbol.slice(0,-4)+"/USDT":symbol;}
+function donchianChartUrl(symbol,interval=DONCHIAN_INTERVAL){return "https://www.tradingview.com/chart/?symbol=BINANCE%3A"+encodeURIComponent(symbol)+".P&interval="+(interval==="1h"?"60":"15");}
+function paperOpen(symbol,s){
+ const id=symbol+":"+s.entryTime;if(ledger.donchianPaper.some(x=>x.id===id))return;
+ const long=s.position==="LONG",fill=s.entryPrice*(long?1+SLIP:1-SLIP),qty=100/fill;
+ ledger.donchianPaper.push({id,symbol,side:s.position,status:"OPEN",referenceEntry:s.entryPrice,entryPrice:fill,qty,
+  strategyVersion:s.strategyVersion||LEGACY_DONCHIAN_STRATEGY,interval:s.interval||DONCHIAN_INTERVAL,
+  stopLoss:s.stopLoss,takeProfit:s.takeProfit,entryTime:s.entryTime,feeEntry:fill*qty*FEE_FALLBACK,feeExit:0,grossPnl:0,netPnl:0,exitPrice:null,exitTime:null,exitReason:null});
+ if(!synthetic)save();
+}
+function paperClose(symbol,event){
+ const x=ledger.donchianPaper.findLast(t=>t.symbol===symbol&&t.status==="OPEN");if(!x)return;
+ const long=x.side==="LONG",fill=event.price*(long?1-SLIP:1+SLIP);x.exitPrice=fill;x.exitTime=new Date(event.closeTime).toISOString();x.exitReason=event.reason;
+ x.grossPnl=(long?fill-x.entryPrice:x.entryPrice-fill)*x.qty;x.feeExit=fill*x.qty*FEE_FALLBACK;x.netPnl=x.grossPnl-x.feeEntry-x.feeExit;x.status="CLOSED";
+}
+function paperReport(){
+ const rows=ledger.donchianPaper,open=rows.filter(x=>x.status==="OPEN"),closed=rows.filter(x=>x.status==="CLOSED");
+ const unrealized=open.reduce((n,x)=>{const mark=Number(ledger.donchianMarks[x.symbol]?.price||ledger.donchian[x.symbol]?.lastObservedClose||x.entryPrice),exit=mark*(x.side==="LONG"?1-SLIP:1+SLIP);return n+(x.side==="LONG"?exit-x.entryPrice:x.entryPrice-exit)*x.qty-x.feeEntry-exit*x.qty*FEE_FALLBACK},0);
+ const realized=closed.reduce((n,x)=>n+x.netPnl,0),wins=closed.filter(x=>x.netPnl>0).length;
+ return {initialBalance:10000,equity:10000+realized+unrealized,openPositions:open.length,closedTrades:closed.length,wins,winRatePct:closed.length?wins/closed.length*100:0,realizedPnl:realized,unrealizedPnl:unrealized};
+}
+function paperClosedRecords(){
+ return ledger.donchianPaper.filter(x=>x.status==="CLOSED").slice(-100).reverse().map(x=>({
+  symbol:x.symbol,side:x.side,strategyVersion:x.strategyVersion,interval:x.interval,referenceEntry:x.referenceEntry,entryPrice:x.entryPrice,exitPrice:x.exitPrice,
+  stopLoss:x.stopLoss,takeProfit:x.takeProfit,entryTime:x.entryTime,exitTime:x.exitTime,exitReason:x.exitReason,
+  grossPnl:x.grossPnl,fees:Number(x.feeEntry||0)+Number(x.feeExit||0),netPnl:x.netPnl,
+  chartUrl:donchianChartUrl(x.symbol,x.interval),status:"PAPER_CLOSED"}));
+}
+function donchianExecutionCandidate(symbol,event,enabled=DONCHIAN_EXECUTE){
+ const long=event.action==="ENTER_LONG",reference=Number(event.price);
+ return {id:"DONCHIAN_"+symbol+"_"+event.closeTime,symbol,side:long?"long":"short",mode:"MARKET",
+  entryLow:reference*(1-DONCHIAN_ENTRY_MAX_DEVIATION),entryHigh:reference*(1+DONCHIAN_ENTRY_MAX_DEVIATION),
+  stop:Number(event.stopLoss),strategyTarget:Number(event.takeProfit),strategy:event.strategyVersion||LEGACY_DONCHIAN_STRATEGY,
+  sourceType:"DONCHIAN",sourceTime:new Date(event.closeTime).toISOString(),receivedAt:now(),
+  status:enabled?"CANDIDATE":"BLOCKED_DONCHIAN_EXECUTION_DISABLED",
+  url:donchianChartUrl(symbol,event.interval||DONCHIAN_INTERVAL),reason:enabled?"AWAITING_DEMO_RISK_CHECK":"DONCHIAN_EXECUTION_DISABLED"};
+}
+function donchianExitRequest(symbol,event,enabled=DONCHIAN_EXECUTE){return {
+ id:"DONCHIAN_EXIT_"+symbol+"_"+event.closeTime,symbol,side:event.action==="EXIT_LONG"?"long":"short",
+ action:event.action,reason:event.reason,referencePrice:event.price,triggerLevel:event.triggerLevel,
+ closeTime:event.closeTime,requestedAt:now(),status:enabled?"PENDING":"BLOCKED_DONCHIAN_EXECUTION_DISABLED"};}
+function executionAllowed(candidate,channelEnabled=CHANNEL_EXECUTE,donchianEnabled=DONCHIAN_EXECUTE){
+ return candidate?.sourceType==="DONCHIAN"?donchianEnabled:channelEnabled;
+}
+function donchianNotification(symbol,event,state,previousPosition){
+ const p=donchianPrice,pair=donchianPair(symbol),closed=new Date(event.closeTime).toISOString(),interval=event.interval||state.interval||DONCHIAN_INTERVAL;
+ const active=event.strategyVersion===ACTIVE_DONCHIAN_STRATEGY||state.strategyVersion===ACTIVE_DONCHIAN_STRATEGY;
+ if(event.action==="ENTER_LONG"||event.action==="ENTER_SHORT"){
+  const long=event.action==="ENTER_LONG",risk=Math.abs(event.price-event.stopLoss),riskPct=risk/event.price*100;
+  return "DONCHIAN PAPER\n🚨 "+(long?"多方建倉提示":"空方建倉提示")+
+   "\n\n幣別："+pair+"（"+symbol+"）\n方向："+(long?"做多 LONG":"做空 SHORT")+
+   "\n策略："+(active?"1H Donchian + EMA200 + ATR":"Legacy 15m Donchian")+"\n週期："+interval+"（已收盤 K 線）"+
+   "\n\n建倉參考價："+p(event.price)+
+   "\n停損參考價："+p(event.stopLoss)+(active?"（2 × ATR14）":"（固定於訊號產生時的 10 期"+(long?"下軌":"上軌")+"）")+
+   "\n停利參考價："+p(event.takeProfit)+"（2R，報酬風險比 2:1）"+
+   "\n每單位風險："+p(risk)+"（"+riskPct.toFixed(3)+"%）"+
+   "\n\n觸發條件："+interval+" 收盤"+(long?"突破 20 期上軌 ":"跌破 20 期下軌 ")+p(long?event.upper:event.lower)+(active?"，且位於 EMA200 "+(long?"上方":"下方")+"（EMA200 "+p(event.ema200)+"；ATR14 "+p(event.atr14)+"）":"")+
+   "\n移動平倉："+interval+" 收盤"+(long?"跌破 10 期下軌":"突破 10 期上軌")+
+   "\nTradingView K線（"+interval+"）："+donchianChartUrl(symbol,interval)+
+   "\nK 線收盤："+closed+
+   "\n\n✅ 已建立 Paper 模擬持倉；不會送出 Binance Demo 或正式交易訂單，與 Telegram 頻道訊號無關。";
+ }
+ const long=previousPosition==="LONG",pnl=state.entryPrice?
+  ((long?event.price-state.entryPrice:state.entryPrice-event.price)/state.entryPrice*100):null;
+ const reason={TAKE_PROFIT_2R:"到達 2R 停利",STOP_LOSS:"到達固定停損",CHANNEL_EXIT:"觸發 10 期移動通道平倉"}[event.reason]||event.reason;
+ return "DONCHIAN PAPER\n🔔 "+(long?"多方平倉提示":"空方平倉提示")+
+  "\n\n幣別："+pair+"（"+symbol+"）\n方向："+(long?"平多 EXIT LONG":"平空 EXIT SHORT")+
+  "\n策略："+(active?"1H Donchian + EMA200 + ATR":"Legacy 15m Donchian")+"\n週期："+interval+"（已收盤 K 線）"+
+  "\n\n原建倉參考價："+p(state.entryPrice)+"\n本次平倉參考價："+p(event.price)+
+  "\n原停損參考價："+p(state.stopLoss)+"\n原停利參考價："+p(state.takeProfit)+
+  (pnl===null?"":"\n提示區間報酬："+(pnl>=0?"+":"")+pnl.toFixed(3)+"%")+
+  "\n平倉原因："+reason+(Number.isFinite(event.triggerLevel)?"（觸發價 "+p(event.triggerLevel)+"）":"")+
+  "\nTradingView K線（"+interval+"）："+donchianChartUrl(symbol,interval)+
+  "\nK 線收盤："+closed+
+  "\n\n✅ 已結算 Paper 模擬持倉；不會送出 Binance Demo 或正式交易訂單，與 Telegram 頻道訊號無關。";
+}
+function applyDonchian(symbol,candles,strategyVersion=LEGACY_DONCHIAN_STRATEGY){
+ if(!ALLOWED.has(symbol)||!candles.length)return null;
+ const latest=candles.at(-1),state=ledger.donchian[symbol]||{position:"FLAT",lastCandleCloseTime:null,
+   entryPrice:null,entryTime:null,lastAction:null,strategyVersion,interval:strategyVersion===ACTIVE_DONCHIAN_STRATEGY?ACTIVE_DONCHIAN_INTERVAL:DONCHIAN_INTERVAL};
+ if(state.lastCandleCloseTime===null){
+  state.lastCandleCloseTime=latest.closeTime;state.lastObservedClose=latest.close;
+  ledger.donchian[symbol]=state;save();return null; // baseline only; never alert stale history
+ }
+ if(latest.closeTime<=state.lastCandleCloseTime)return null;
+ const event=strategyVersion===ACTIVE_DONCHIAN_STRATEGY?evaluateFilteredDonchian(candles,state):evaluateDonchian(candles,state);
+ state.lastCandleCloseTime=latest.closeTime;state.lastObservedClose=latest.close;
+ if(event){
+  const previousPosition=state.position;
+  if(event.action==="ENTER_LONG"||event.action==="ENTER_SHORT"){
+   state.position=event.action==="ENTER_LONG"?"LONG":"SHORT";
+   state.entryPrice=event.price;state.entryTime=new Date(event.closeTime).toISOString();
+   state.strategyVersion=strategyVersion;state.interval=strategyVersion===ACTIVE_DONCHIAN_STRATEGY?ACTIVE_DONCHIAN_INTERVAL:DONCHIAN_INTERVAL;
+   state.stopLoss=event.stopLoss;state.takeProfit=event.takeProfit;
+   paperOpen(symbol,state);
+   const candidate=donchianExecutionCandidate(symbol,event);
+   if(!ledger.candidate.some(row=>row.id===candidate.id))ledger.candidate.push(candidate);
+  }else{paperClose(symbol,event);state.position="FLAT";state.exitPrice=event.price;state.exitTime=new Date(event.closeTime).toISOString();}
+  if(event.action.startsWith("EXIT"))state.executionExit=donchianExitRequest(symbol,event);
+  state.lastAction={...event,at:now(),previousPosition};
+  log("DONCHIAN_SIGNAL",{symbol,action:event.action,price:event.price,closeTime:event.closeTime,
+   demoExecutionEnabled:DONCHIAN_EXECUTE});
+  enqueue("donchian:"+symbol+":"+event.closeTime+":"+event.action,
+    donchianNotification(symbol,event,state,previousPosition));
+  if(event.action.startsWith("EXIT")){state.entryPrice=null;state.entryTime=null;state.stopLoss=null;state.takeProfit=null;
+   if(strategyVersion===LEGACY_DONCHIAN_STRATEGY){state.strategyVersion=ACTIVE_DONCHIAN_STRATEGY;state.interval=ACTIVE_DONCHIAN_INTERVAL;state.lastCandleCloseTime=null;}}
+ }
+ ledger.donchian[symbol]=state;save();return event;
+}
+async function pollDonchian(){
+ const observed=Date.now()+serverOffset;
+ const [rows,markRows]=await Promise.all([Promise.all(DONCHIAN_SYMBOLS.map(async symbol=>{
+  const state=ledger.donchian[symbol],legacy=state?.position&&state.position!=="FLAT"&&state.strategyVersion!==ACTIVE_DONCHIAN_STRATEGY;
+  const strategyVersion=legacy?LEGACY_DONCHIAN_STRATEGY:ACTIVE_DONCHIAN_STRATEGY;
+  const interval=legacy?DONCHIAN_INTERVAL:ACTIVE_DONCHIAN_INTERVAL;
+  const limit=legacy?DONCHIAN_ENTRY_PERIOD+12:ACTIVE_DONCHIAN_EMA_PERIOD+32;
+  const raw=await publicGet("/fapi/v1/klines",{symbol,interval,limit});
+  if(!Array.isArray(raw))throw Error("Invalid Donchian kline response for "+symbol);
+  const candles=raw.map(k=>({openTime:Number(k[0]),high:Number(k[2]),low:Number(k[3]),close:Number(k[4]),closeTime:Number(k[6])}))
+    .filter(k=>[k.openTime,k.high,k.low,k.close,k.closeTime].every(Number.isFinite)&&k.closeTime<observed);
+  const required=legacy?DONCHIAN_ENTRY_PERIOD+1:ACTIVE_DONCHIAN_EMA_PERIOD+1;
+  if(candles.length<required)throw Error("Insufficient closed Donchian candles for "+symbol+" "+interval);
+  return {symbol,candles,strategyVersion,interval};
+ })),publicGet("/fapi/v1/premiumIndex",{})]);
+ if(!Array.isArray(markRows))throw Error("Invalid Donchian mark-price response");
+ const markAt=now();
+ for(const symbol of DONCHIAN_SYMBOLS){
+  const row=markRows.find(x=>x.symbol===symbol),price=Number(row?.markPrice);
+  if(!Number.isFinite(price)||price<=0)throw Error("Invalid Donchian mark price for "+symbol);
+  ledger.donchianMarks[symbol]={price,observedAt:markAt,source:"BINANCE_DEMO_MARK_PRICE"};
+ }
+ for(const row of rows)applyDonchian(row.symbol,row.candles,row.strategyVersion);
+ ledger.lastDonchianPoll=now();ledger.donchianError=null;save();
+ if(Date.now()-lastDonchianLogAt>600000){
+  console.info("DONCHIAN_PUBLIC_CONNECTED",JSON.stringify({host:DEMO_HOST,activeStrategy:ACTIVE_DONCHIAN_STRATEGY,
+    symbols:Object.fromEntries(rows.map(row=>[row.symbol,{interval:row.interval,lastClosed:row.candles.at(-1).closeTime}]))}));
+  lastDonchianLogAt=Date.now();
+ }
+}
+function riskParams(c,price,sym,acc,spec){
+ if(!ALLOWED.has(sym))throw Error("Unsupported instrument");
+ const f=spec.filters||[];
+ const lot=c.mode==="LIMIT"?f.find(x=>x.filterType==="LOT_SIZE"):
+   f.find(x=>x.filterType==="MARKET_LOT_SIZE")||f.find(x=>x.filterType==="LOT_SIZE");
+ const minNotional=f.find(x=>x.filterType==="MIN_NOTIONAL");
+ const tick=f.find(x=>x.filterType==="PRICE_FILTER");
+ const step=Number(lot?.stepSize||0),minQty=Number(lot?.minQty||0);
+ const minValue=Number(minNotional?.notional||5), tickValue=Number(tick?.tickSize||0);
+ const minPrice=Number(tick?.minPrice||0),maxPrice=Number(tick?.maxPrice||Number.MAX_VALUE);
+ if(!Number.isFinite(price)||price<=0||step<=0||tickValue<=0||c.stop<=0)throw Error("Invalid price or filters");
+ if((c.side==="long"&&c.stop>=price)||(c.side==="short"&&c.stop<=price))
+   throw Error("Stop beyond entry");
+ const funds=Math.min(Number(acc.availableBalance||0),Number(acc.balance||acc.availableBalance||0));
+ if(!Number.isFinite(funds)||funds<=0)throw Error("Demo available balance zero");
+ const riskPerUnit=Math.abs(price-c.stop);
+ const notional=Math.min(INITIAL_NOTIONAL,funds*0.1,(funds*MAX_LOSS)/riskPerUnit*price);
+ let q=Math.floor((notional/price+1e-12)/step)*step;
+ const decimals=Math.min(8,(""+lot.stepSize).split(".")[1]?.length||0);
+ q=Number(q.toFixed(decimals));
+ if(q<minQty||q*price<minValue)throw Error("Demo quantity below exchange minimum");
+ let sl=c.side==="long"?Math.floor(c.stop/tickValue)*tickValue:Math.ceil(c.stop/tickValue)*tickValue;
+ sl=Number(sl.toFixed(8));
+ if(sl<minPrice||sl>maxPrice)throw Error("Stop outside exchange price filter");
+ let limitPrice=null;
+ if(c.mode==="LIMIT"){
+  const raw=c.side==="long"?c.entryLow:c.entryHigh;
+  limitPrice=c.side==="long"?Math.floor(raw/tickValue)*tickValue:Math.ceil(raw/tickValue)*tickValue;
+  limitPrice=Number(limitPrice.toFixed(8));
+  if(limitPrice<minPrice||limitPrice>maxPrice||q*limitPrice<minValue)throw Error("Limit outside exchange filters");
+ }
+ return {quantity:q,stopPrice:sl,limitPrice,notional:q*price,risk:Math.abs(price-sl)*q};
+}
+const idFor=(c,suffix)=>("KSD"+c.id+"_"+suffix).slice(0,36);
+function recordOrderStatus(local,remote){
+ if(!remote)return;
+ const qty=Number(remote.executedQty||0),avg=Number(remote.avgPrice||0);
+ const origQty=Number(remote.origQty??local.qty??remote.executedQty??0);
+ if(qty<0||!Number.isFinite(qty)||!Number.isFinite(avg)||!Number.isFinite(origQty)||origQty<qty)
+   throw Error("Invalid remote order");
+ if(remote.clientOrderId && remote.clientOrderId!==local.clientOrderId)
+   throw Error("Remote client order ID mismatch");
+ if(remote.symbol && remote.symbol!==local.symbol)throw Error("Remote order symbol mismatch");
+ local.orderId=remote.orderId??local.orderId;
+ local.exchangeStatus=String(remote.status||"UNKNOWN");
+ local.origQty=origQty;
+ local.filledQty=qty;
+ local.remainingQty=Math.max(0,origQty-qty);
+ if(avg>0)local.avgPrice=avg;
+ else if(qty>0&&Number(remote.cumQuote)>0)local.avgPrice=Number(remote.cumQuote)/qty;
+ local.entryTerminal=isOrderTerminal(local.exchangeStatus);
+ if(qty>0)
+    local.status=local.stopConfirmed?"PROTECTED":"NEEDS_STOP";
+ else if(isOrderTerminal(local.exchangeStatus))local.status="CLOSED_UNFILLED";
+ else if(local.exchangeStatus==="NEW")local.status="ORDER_PENDING";
+ local.lastReconcile=now();
+}
+function recordAlgoStatus(o,remote){
+ if(!remote||String(remote.clientAlgoId||"")!==o.stopClientId||remote.symbol!==o.symbol)
+   throw Error("Invalid DEMO stop response identity");
+ if(remote.orderType!=="STOP_MARKET"||remote.algoType!=="CONDITIONAL"||remote.closePosition!==true)
+   throw Error("Invalid DEMO stop response protection fields");
+ o.stopAlgoId=remote.algoId??o.stopAlgoId??null;
+ o.stopStatus=String(remote.algoStatus||"UNKNOWN");
+ o.stopActualOrderId=remote.actualOrderId||o.stopActualOrderId||null;
+ o.stopConfirmed=isAlgoActive(o.stopStatus);
+ o.stopLastCheckedAt=now();
+ if(o.stopConfirmed)o.status="PROTECTED";
+ return o.stopConfirmed;
+}
+function actualSettlement(o,trades,fundingRows){
+ const entryId=String(o.orderId);
+ const exitIds=new Set([o.tpOrderId,o.stopActualOrderId].filter(v=>v!==null&&v!==undefined&&v!=="").map(String));
+ const ids=new Set([entryId,...exitIds]);
+ const owned=trades.filter(t=>ids.has(String(t.orderId)));
+ if(owned.some(t=>t.commissionAsset&&t.commissionAsset!=="USDT"))
+   throw Error("Non-USDT commission requires asset conversion before settlement");
+ if(fundingRows.some(t=>t.asset&&t.asset!=="USDT"))throw Error("Non-USDT funding row");
+ const commission=owned.reduce((n,t)=>n+Number(t.commission||0),0);
+ const gross=owned.reduce((n,t)=>n+Number(t.realizedPnl||0),0);
+ const funding=fundingRows.reduce((n,t)=>n+Number(t.income||0),0);
+ const entryRows=owned.filter(t=>String(t.orderId)===entryId),exitRows=owned.filter(t=>exitIds.has(String(t.orderId)));
+ const weighted=rows=>{const qty=rows.reduce((n,t)=>n+Number(t.qty||0),0);
+  return qty>0?rows.reduce((n,t)=>n+Number(t.price||0)*Number(t.qty||0),0)/qty:null;};
+ return {tradeCount:owned.length,entryTradeCount:owned.filter(t=>String(t.orderId)===entryId).length,
+   exitTradeCount:owned.filter(t=>exitIds.has(String(t.orderId))).length,grossRealized:gross,commission,funding,
+   entryAvgPrice:weighted(entryRows),exitAvgPrice:weighted(exitRows),
+   entryQty:entryRows.reduce((n,t)=>n+Number(t.qty||0),0),exitQty:exitRows.reduce((n,t)=>n+Number(t.qty||0),0),
+   net:gross-commission+funding,settledAt:now()};
+}
+function demoTradeRecords(){return ledger.orders.filter(o=>o.actualSettlement).map(o=>({
+ id:o.clientOrderId,sourceId:o.sourceId,sourceType:o.sourceType||"TELEGRAM_CHANNEL",strategy:o.strategy||null,
+ symbol:o.symbol,side:o.side,status:o.status,entryOrderId:o.orderId,
+ exitOrderId:o.tpOrderId||o.stopActualOrderId||null,entryPrice:o.actualSettlement.entryAvgPrice??o.avgPrice,
+ exitPrice:o.actualSettlement.exitAvgPrice??null,quantity:o.actualSettlement.exitQty||o.filledQty,
+ exitReason:o.strategyExitReason||o.exitReason||null,grossRealized:o.actualSettlement.grossRealized,
+ commission:o.actualSettlement.commission,funding:o.actualSettlement.funding,
+ netPnlUsdt:o.actualSettlement.net,settledAt:o.actualSettlement.settledAt
+ }));}
+function donchianStats(){
+ const trades=demoTradeRecords().filter(x=>x.sourceType==="DONCHIAN");
+ const orders=ledger.orders.filter(x=>x.sourceType==="DONCHIAN");
+ const candidates=ledger.candidate.filter(x=>x.sourceType==="DONCHIAN");
+ const events=ledger.events.filter(x=>x.type==="DONCHIAN_SIGNAL");
+ const sum=key=>trades.reduce((n,x)=>n+Number(x[key]||0),0);
+ const wins=trades.filter(x=>Number(x.netPnlUsdt)>0).length;
+ const open=orders.filter(x=>!x.actualSettlement&&!['CLOSED','CANCELED','REJECTED','EXPIRED'].includes(String(x.status))).length;
+ const last=events.at(-1)||null;
+ const advisoryPositions=Object.entries(ledger.donchian).filter(([,s])=>s?.position&&s.position!=="FLAT").map(([symbol,s])=>{paperOpen(symbol,s);const t=ledger.donchianPaper.findLast(x=>x.symbol===symbol&&x.status==="OPEN"),quote=ledger.donchianMarks[symbol],mark=Number(quote?.price||s.lastObservedClose||s.entryPrice),exit=mark*(s.position==="LONG"?1-SLIP:1+SLIP),paperPnl=t?((t.side==="LONG"?exit-t.entryPrice:t.entryPrice-exit)*t.qty-t.feeEntry-exit*t.qty*FEE_FALLBACK):null;return {
+  symbol,side:s.position,strategyVersion:s.strategyVersion||LEGACY_DONCHIAN_STRATEGY,interval:s.interval||DONCHIAN_INTERVAL,entryPrice:s.entryPrice,stopLoss:s.stopLoss,takeProfit:s.takeProfit,
+  entryTime:s.entryTime,lastPrice:mark,lastPriceAt:quote?.observedAt||null,lastPriceSource:quote?.source||"LAST_CLOSED_15M_CANDLE",
+  signalClosePrice:s.lastObservedClose,chartUrl:donchianChartUrl(symbol,s.interval),status:"PAPER_OPEN",paperPnl};});
+ return {schemaVersion:1,ledger:"BINANCE_DEMO_DONCHIAN",mode:"DEMO_ONLY",strategy:ACTIVE_DONCHIAN_STRATEGY,
+  legacyStrategy:LEGACY_DONCHIAN_STRATEGY,activeParameters:{interval:ACTIVE_DONCHIAN_INTERVAL,entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,emaPeriod:ACTIVE_DONCHIAN_EMA_PERIOD,atrPeriod:ACTIVE_DONCHIAN_ATR_PERIOD,atrMultiplier:ACTIVE_DONCHIAN_ATR_MULTIPLIER,riskReward:DONCHIAN_TAKE_PROFIT_R},
+  updatedAt:now(),executionEnabled:DONCHIAN_EXECUTE,credentialsConfigured:!!KEY&&!!SECRET,
+  signals:{total:events.length,entries:events.filter(x=>String(x.detail?.action).startsWith("ENTER")).length,
+   exits:events.filter(x=>String(x.detail?.action).startsWith("EXIT")).length,last:last?{at:last.at,...last.detail}:null},
+  candidates:{total:candidates.length,actionable:candidates.filter(x=>x.status==="CANDIDATE").length,
+   blocked:candidates.filter(x=>String(x.status).startsWith("BLOCKED")).length},
+  orders:{tracked:orders.length,open,closed:trades.length},
+  performance:{closedTrades:trades.length,wins,losses:trades.length-wins,
+   winRatePct:trades.length?wins/trades.length*100:0,grossRealized:sum("grossRealized"),
+   commission:sum("commission"),funding:sum("funding"),netPnlUsdt:sum("netPnlUsdt")},
+  advisoryPositions,closedPaperPositions:paperClosedRecords(),paper:paperReport()};
+}
+function projectedNet(o,bid,ask,entryFee=0,funding=0){
+ if(!o.avgPrice||!o.filledQty)return null;
+ const closePrice=o.side==="long"?bid*(1-SLIP):ask*(1+SLIP);
+ const gross=(o.side==="long"?closePrice-o.avgPrice:o.avgPrice-closePrice)*o.filledQty;
+ const exitFee=closePrice*o.filledQty*FEE_FALLBACK;
+ return {gross,feeEntry:entryFee,feeExitEstimated:exitFee,funding,
+  net:gross-entryFee-exitFee+funding,rate:(gross-entryFee-exitFee+funding)/(o.avgPrice*o.filledQty)};
+}
+
+// Signed diagnostics intentionally safe even while execution flag is OFF.
+// The order/test endpoint validates signatures and parameters but does NOT match a real Demo order.
+async function demoSignedDiagnostics(placeTestOrder=false){
+ if(!KEY||!SECRET)throw Error("Binance Demo API Key/Secret not configured");
+ await serverTime();
+ const mode=await signedQuery("/fapi/v1/positionSide/dual");
+ const balances=await signedQuery("/fapi/v2/balance");
+ const balance=balances.find(x=>x.asset==="USDT");
+ if(!balance)throw Error("Demo USDT wallet not found");
+ let answer={environment:"BINANCE_DEMO_ONLY",signedAuthentication:true,
+   testOrderRequested:placeTestOrder,orderCreated:false,
+   oneWay:mode.dualSidePosition===false,
+   demoUsdtAvailable:Number(balance.availableBalance||0)};
+ if(!placeTestOrder)return answer;
+ if(mode.dualSidePosition!==false)throw Error("Enable One-Way position mode in Binance Demo first");
+ const ticker=await publicGet("/fapi/v1/premiumIndex",{symbol:"SOLUSDT"});
+ const price=Number(ticker.markPrice);
+ if(!Number.isFinite(price)||price<=0)throw Error("Bad DEMO mark price");
+ const info=exchangeInfoCache||await publicGet("/fapi/v1/exchangeInfo");
+ const specs=info.symbols?.find(x=>x.symbol==="SOLUSDT");
+ if(!specs)throw Error("Missing SOLUSDT Demo exchangeInfo");
+ const candidate={side:"long",stop:price*0.95};
+ const risk=riskParams(candidate,price,"SOLUSDT",balance,specs);
+ const testResponse=await signed("POST","/fapi/v1/order/test",{
+  symbol:"SOLUSDT",side:"BUY",positionSide:DIAGNOSTIC_POSITION_SIDE,type:"MARKET",quantity:risk.quantity,
+  newClientOrderId:"KSD_DIAGNOSTIC_TEST"
+ });
+ log("DEMO_TEST_ORDER_VALIDATED",{symbol:"SOLUSDT",qty:risk.quantity,api:"/fapi/v1/order/test"});
+ save();
+ return {...answer,valid:true,symbol:"SOLUSDT",quantity:risk.quantity,
+  testEndpointReturned:testResponse,orderCreated:false};
+}
+
+function safeStatus(){
+ return {service:"K Signal Demo Execution",mode:"BINANCE_USDM_DEMO_ONLY",endpoint:DEMO_HOST,
+  demoKeyConfigured:!!KEY,demoSecretConfigured:!!SECRET,armed:EXECUTE,
+  channelOrderEnabled:CHANNEL_EXECUTE,donchianOrderEnabled:DONCHIAN_EXECUTE,
+  halted:ledger.halted||!storageSafe,haltReason:ledger.haltReason,
+  readyToPlace:EXECUTE&&!!KEY&&!!SECRET&&!ledger.halted&&storageSafe&&ledger.baseline,
+  accountSource:"Binance Demo only",channel:"KCryptoBTC168",
+  lastSeen:ledger.lastSeen,lastChannelPoll:ledger.lastChannelPoll,lastDemoPoll:ledger.lastDemoPoll,
+  channelError:ledger.channelError,demoError:ledger.demoError,
+  candidateCount:ledger.candidate.length,orders:ledger.orders.length,
+  pendingNotifications:ledger.outbox.filter(x=>x.status==="PENDING").length,
+  exchangeConnected:!!ledger.lastGoodAccount,
+  backoffUntil:ledger.demoBackoffUntil?new Date(ledger.demoBackoffUntil).toISOString():null,
+  managedOpen:ledger.orders.filter(o=>!["CLOSED","CLOSED_UNFILLED"].includes(o.status)).length,
+  donchian:{independentFromTelegramChannel:true,strategy:ACTIVE_DONCHIAN_STRATEGY,interval:ACTIVE_DONCHIAN_INTERVAL,
+   entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,takeProfitRiskReward:DONCHIAN_TAKE_PROFIT_R,
+   emaPeriod:ACTIVE_DONCHIAN_EMA_PERIOD,atrPeriod:ACTIVE_DONCHIAN_ATR_PERIOD,atrMultiplier:ACTIVE_DONCHIAN_ATR_MULTIPLIER,
+   stopLoss:"signal-time 2 x ATR14",chartUrlTemplate:"https://www.tradingview.com/chart/?symbol=BINANCE%3A{symbol}.P&interval=60",symbols:DONCHIAN_SYMBOLS,
+   demoExecutionEnabled:DONCHIAN_EXECUTE,executionReady:DONCHIAN_EXECUTE&&!!KEY&&!!SECRET&&!ledger.halted&&storageSafe,
+   lastPoll:ledger.lastDonchianPoll,error:ledger.donchianError},
+  limit:{notionalUsdt:INITIAL_NOTIONAL,maxOpen:MAX_OPEN,maxAccountRiskFraction:MAX_LOSS,netTpFraction:TP_NET}};
+}
+function captureCandidates(posts){
+ if(!ledger.baseline){
+   ledger.baseline=true;ledger.lastSeen=Math.max(0,...posts.map(p=>p.id));
+   log("BASELINE",{lastSeen:ledger.lastSeen,count:posts.length});save();return;
+ }
+ const watermark=ledger.lastSeen;
+ for(const post of posts){
+  if(post.id<=watermark)continue;
+  ledger.lastSeen=Math.max(ledger.lastSeen,post.id);
+  if(!post.time||Math.abs(Date.now()-Date.parse(post.time))>5*60*1000){log("IGNORED_STALE",post.id);continue;}
+  const candidate=parseSignal(post);
+  if(!candidate){log("IGNORED_NON_TRADE",post.id);continue;}
+  if(ledger.candidate.some(c=>c.id===candidate.id))continue;
+  ledger.candidate.push(candidate);
+  log("CANDIDATE",{id:candidate.id,symbol:candidate.symbol,side:candidate.side});
+  enqueue("candidate:"+candidate.id,"📡 Binance DEMO 候選訊號\n"+
+     candidate.symbol+" "+candidate.side+"\n"+candidate.url+"\n狀態："+
+     (CHANNEL_EXECUTE?"風控檢查中":"頻道執行鎖定，不會下單"));
+ }
+ ledger.lastChannelPoll=now();save();
+}
+function pendingCandidates(){return ledger.candidate.filter(c=>c.status==="CANDIDATE"&&
+ Date.now()-Date.parse(c.receivedAt)<5*60*1000);}
+async function submitEntry(c){
+ if(!executionAllowed(c)||!KEY||!SECRET||ledger.halted||!storageSafe)return;
+ if(ledger.orders.some(o=>o.sourceId===c.id)||ledger.orders.some(o=>!["CLOSED","CLOSED_UNFILLED"].includes(o.status)))return;
+ const mark=await publicGet("/fapi/v1/premiumIndex",{symbol:c.symbol});
+ const px=Number(mark.markPrice);
+ if(!Number.isFinite(px)||px<c.entryLow||px>c.entryHigh){c.status="OUTSIDE_RANGE";save();return;}
+ const spec=exchangeInfoCache || await publicGet("/fapi/v1/exchangeInfo");
+ const info=spec.symbols?.find(x=>x.symbol===c.symbol&&x.status==="TRADING"&&x.contractType==="PERPETUAL");
+ if(!info)throw Error("Exchange symbol unavailable in DEMO");
+ const mode=await signedQuery("/fapi/v1/positionSide/dual");
+ if(mode.dualSidePosition!==false)throw Error("DEMO account must be One-Way mode");
+ const positions=await signedQuery("/fapi/v3/positionRisk",{});
+ if(!Array.isArray(positions)||positions.some(x=>Math.abs(Number(x.positionAmt||0))>1e-8))
+   throw Error("Demo account has a pre-existing/unmanaged position; fail closed");
+ const balances=await signedQuery("/fapi/v2/balance");
+ const usdt=balances.find(x=>x.asset==="USDT");
+ if(!usdt)throw Error("No USDT demo balance");
+ const orderInfo=riskParams(c,px,c.symbol,usdt,info);
+ // Demo-only isolated 1x. -4046 means margin already isolated, not a failure.
+ try{await signed("POST","/fapi/v1/marginType",{symbol:c.symbol,marginType:"ISOLATED"});}
+ catch(err){if(err.code!==-4046)throw err;}
+ await signed("POST","/fapi/v1/leverage",{symbol:c.symbol,leverage:1});
+ const cid=idFor(c,"ENTRY");
+ const o={sourceId:c.id,symbol:c.symbol,side:c.side,status:"SUBMIT_UNKNOWN",
+  sourceType:c.sourceType||"TELEGRAM_CHANNEL",strategy:c.strategy||null,
+  strategyEntryReference:c.sourceType==="DONCHIAN"?(c.entryLow+c.entryHigh)/2:null,
+  strategyTarget:c.strategyTarget??null,strategyExitReason:null,strategyExitReference:null,
+  clientOrderId:cid,stopClientId:idFor(c,"STOP"),tpClientId:idFor(c,"TP"),
+  qty:orderInfo.quantity,stop:orderInfo.stopPrice,signalTime:c.sourceTime,
+  orderId:null,exchangeStatus:null,filledQty:0,avgPrice:0,stopConfirmed:false,
+  stopStatus:null,stopAlgoId:null,stopActualOrderId:null,entryTerminal:false,
+  startedAt:now(),lastReconcile:null,lastError:null,entryFee:0,funding:0,
+  mode:c.mode,submittedAt:now(),cancelIntentAt:null,tpIntentAt:null,actualSettlement:null};
+ ledger.orders.push(o);c.status="SUBMITTING";save(); // write-ahead, prevents duplicate on timeout
+ try{
+   const remote=await signed("POST","/fapi/v1/order",
+    {symbol:c.symbol,side:c.side==="long"?"BUY":"SELL",
+     type:c.mode==="LIMIT"?"LIMIT":"MARKET",
+     ...(c.mode==="LIMIT"?{price:orderInfo.limitPrice,timeInForce:"GTC"}:{}),
+     quantity:orderInfo.quantity,newClientOrderId:cid,newOrderRespType:"RESULT"});
+   recordOrderStatus(o,remote);c.status="SUBMITTED";save();
+   enqueue("entry:"+cid,"🟡 Binance DEMO 開倉下單\n"+c.symbol+
+     "\n來源："+(o.sourceType==="DONCHIAN"?"Donchian 20期突破":"Telegram 頻道候選")+
+     "\nClient ID: "+cid+"\nOrder ID: "+String(o.orderId??"待對帳")+
+     "\n交易所狀態："+o.exchangeStatus+"\n僅 Demo 測試資金");
+ }catch(err){
+   noteBackoff(err);o.status=err?.unknown?"SUBMIT_UNKNOWN":"SUBMIT_REJECTED";
+   c.status=o.status;
+   o.lastError=String(err);if(err?.auth)halt("DEMO_AUTHENTICATION_REJECTED");else save();
+   enqueue("entry-error:"+cid,(err?.unknown?"⚠️ Binance DEMO 下單結果不明，暫停重送並先對帳":"⛔ Binance DEMO 開倉遭交易所拒絕")+
+     "\nClient ID: "+cid+"\n狀態："+o.status);
+ }
+}
+async function queryOrder(o){
+ try{
+  const r=await signedQuery("/fapi/v1/order",{symbol:o.symbol,origClientOrderId:o.clientOrderId});
+  recordOrderStatus(o,r);o.notFoundCount=0;o.lastError=null;save();return r;
+ }catch(err){
+  noteBackoff(err);o.lastError=String(err).slice(0,200);
+  if(Number(err?.code)===-2013)o.notFoundCount=(o.notFoundCount||0)+1;
+  save();throw err;
+ }
+}
+async function queryStop(o){
+ const r=await signedQuery("/fapi/v1/algoOrder",{clientAlgoId:o.stopClientId});
+ recordAlgoStatus(o,r);o.lastError=null;save();return r;
+}
+async function stopProtection(o){
+ if(!o.filledQty)return false;
+ if(o.stopAttemptedAt){
+  try{
+   await queryStop(o);
+   if(o.stopConfirmed)return true;
+   halt("DEMO_STOP_NOT_ACTIVE:"+o.clientOrderId);return false;
+  }
+  catch(err){if(Number(err?.code)!==-2013){noteBackoff(err);throw err;}}
+  if(o.stopState==="SUBMIT_UNKNOWN")return false;
+ }
+ o.stopAttemptedAt=now();o.stopState="SUBMITTING";save();
+ try{
+  const r=await signed("POST","/fapi/v1/algoOrder",{
+   algoType:"CONDITIONAL",symbol:o.symbol,
+   side:o.side==="long"?"SELL":"BUY",type:"STOP_MARKET",
+   positionSide:"BOTH",triggerPrice:o.stop,workingType:"MARK_PRICE",closePosition:"true",
+   clientAlgoId:o.stopClientId
+  });
+  recordAlgoStatus(o,r);o.stopState="CONFIRMED";
+  log("DEMO_STOP_CONFIRMED",{id:o.clientOrderId,algoId:o.stopAlgoId});
+  save();
+  enqueue("stop:"+o.clientOrderId,"🛡 Binance DEMO 止損保護已提交\n"+o.symbol+
+    "\nClient ID: "+o.clientOrderId+"\nAlgo ID: "+String(o.stopAlgoId??"待對帳")+
+    "\n交易所狀態："+o.stopStatus+"\n觸發價 "+o.stop+"\n僅 Demo 測試資金");
+  return true;
+ }catch(err){
+   noteBackoff(err);o.lastError=String(err);
+   if(err?.unknown){
+    o.stopState="SUBMIT_UNKNOWN";o.status="STOP_UNKNOWN";save();
+    try{if(await queryStop(o))return true;}catch(queryErr){o.lastError=String(queryErr).slice(0,200);save();}
+   }else{o.stopState="REJECTED";o.status="UNPROTECTED";save();}
+   halt("DEMO STOP PROTECTION UNCONFIRMED "+o.clientOrderId);
+   enqueue("stop-failed:"+o.clientOrderId,"🚨 DEMO 止損保護未確認："+o.clientOrderId+
+      "\n請在 Demo 介面檢查持倉，禁止繼續開倉");
+   return false;
+ }
+}
+async function cancelEntryRemainder(o,reason){
+ if(!isOrderActive(o.exchangeStatus))return true;
+ const newIntent=!o.cancelIntentAt;
+ if(newIntent){o.cancelIntentAt=now();o.cancelReason=reason;o.status="CANCELING_ENTRY";save();}
+ if(!newIntent){
+  if(Date.now()-Date.parse(o.cancelIntentAt)>5*60*1000)halt("DEMO_ENTRY_CANCEL_STILL_ACTIVE:"+o.clientOrderId);
+  return false;
+ }
+ try{
+  const r=await signed("DELETE","/fapi/v1/order",{symbol:o.symbol,origClientOrderId:o.clientOrderId});
+  recordOrderStatus(o,r);
+  if(!isOrderActive(o.exchangeStatus))o.cancelConfirmedAt=now();save();
+  enqueue("entry-cancel:"+o.clientOrderId,"⌛ Binance DEMO 掛單剩餘量已取消\n原因："+reason+"\nClient ID: "+
+    o.clientOrderId+"\nOrder ID: "+String(o.orderId??"待對帳")+"\n交易所狀態："+o.exchangeStatus+
+    (o.filledQty>0?"\n已部分成交數量仍由交易所止損保護。":""));
+  return !isOrderActive(o.exchangeStatus);
+ }catch(err){
+  noteBackoff(err);o.status=err?.unknown?"CANCEL_UNKNOWN":"CANCEL_FAILED";o.lastError=String(err);save();
+  try{await queryOrder(o);}catch{}
+  if(o.status==="CANCEL_UNKNOWN"||isOrderActive(o.exchangeStatus))halt("DEMO_STALE_CANCEL_UNCONFIRMED:"+o.clientOrderId);
+  return !isOrderActive(o.exchangeStatus);
+ }
+}
+async function cancelStaleEntry(o){if(shouldCancelEntry(o))return cancelEntryRemainder(o,"LIMIT_TTL_24H");return true;}
+async function queryTp(o){
+ try{
+  const r=await signedQuery("/fapi/v1/order",{symbol:o.symbol,origClientOrderId:o.tpClientId});
+  if(r.clientOrderId!==o.tpClientId||r.symbol!==o.symbol||r.reduceOnly!==true)
+    throw Error("Invalid DEMO TP response identity");
+  o.tpOrderId=r.orderId??o.tpOrderId;o.tpStatus=String(r.status||"UNKNOWN");
+  o.tpFilledQty=Number(r.executedQty||0);o.tpLastCheckedAt=now();o.lastError=null;save();return r;
+ }catch(err){noteBackoff(err);o.lastError=String(err).slice(0,200);save();throw err;}
+}
+async function submitTp(o,qty,quote,exitReason="NET_TP_1PCT",exitReference=null){
+ if(o.tpIntentAt)return false;
+ o.tpIntentAt=now();o.status="TP_SUBMITTING";o.exitReason=exitReason;
+ if(exitReason.startsWith("DONCHIAN_")){o.strategyExitReason=exitReason;o.strategyExitReference=exitReference?.referencePrice??null;}
+ save();
+ try{
+  const remote=await signed("POST","/fapi/v1/order",{
+   symbol:o.symbol,side:o.side==="long"?"SELL":"BUY",type:"MARKET",
+   positionSide:"BOTH",quantity:qty,reduceOnly:"true",newClientOrderId:o.tpClientId,newOrderRespType:"RESULT"
+  });
+  if(remote.clientOrderId!==o.tpClientId||remote.symbol!==o.symbol||remote.reduceOnly!==true)
+    throw Error("Invalid DEMO TP submission response");
+  o.tpOrderId=remote.orderId||null;o.tpStatus=remote.status;o.tpFilledQty=Number(remote.executedQty||0);
+  o.status="TP_SENT";save();
+  const title=exitReason.startsWith("DONCHIAN_")?"🔔 Binance DEMO Donchian 平倉執行":"🎯 Binance DEMO 預估扣費淨利達 1%";
+  enqueue("tp:"+o.clientOrderId,title+"\n"+o.symbol+
+   "\nClient ID: "+o.tpClientId+"\nOrder ID: "+String(o.tpOrderId??"待對帳")+
+   "\n交易所狀態："+o.tpStatus+"\n平倉原因："+exitReason+
+   (quote?"\n預估扣費淨利比例 "+(quote.rate*100).toFixed(3)+"%":"")+
+   (exitReference?.referencePrice?"\nDonchian 平倉參考價："+donchianPrice(exitReference.referencePrice):"")+
+   "\n已提交 reduceOnly 平倉，等待實際成交對帳。");
+  return true;
+ }catch(err){
+  noteBackoff(err);o.status=err?.unknown?"TP_UNKNOWN":"TP_REJECTED";o.lastError=String(err);save();
+  if(err?.unknown){try{await queryTp(o);}catch{}}
+  halt("DEMO_TP_ORDER_UNCONFIRMED:"+o.symbol);
+  return false;
+ }
+}
+async function cancelStopAfterClose(o){
+ if(!o.stopAttemptedAt||["CANCELED","EXPIRED","FINISHED","TRIGGERED"].includes(o.stopStatus))return true;
+ try{
+  await signed("DELETE","/fapi/v1/algoOrder",{clientAlgoId:o.stopClientId});
+  o.stopStatus="CANCELED";o.stopConfirmed=false;o.stopCanceledAt=now();save();return true;
+ }catch(err){
+  noteBackoff(err);o.lastError=String(err).slice(0,200);save();
+  try{await queryStop(o);if(!isAlgoActive(o.stopStatus))return true;}catch(queryErr){o.lastError=String(queryErr).slice(0,200);save();}
+  halt("DEMO_STOP_CANCEL_UNCONFIRMED:"+o.symbol);return false;
+ }
+}
+async function settleClosed(o){
+ const since=Date.parse(o.startedAt)-60000;
+ const trades=await signedQuery("/fapi/v1/userTrades",{symbol:o.symbol,limit:1000,startTime:since});
+ const income=await signedQuery("/fapi/v1/income",{symbol:o.symbol,incomeType:"FUNDING_FEE",startTime:since,limit:1000});
+ const settlement=actualSettlement(o,trades,income);
+ if(!settlement.entryTradeCount||!settlement.exitTradeCount)
+   throw Error("Incomplete owned DEMO entry/exit fills for settlement");
+ o.actualSettlement=settlement;o.status="CLOSED";o.exitObservedAt=now();save();
+ enqueue("closed:"+o.clientOrderId,"✅ Binance DEMO 持倉已完成交易所對帳\n"+o.symbol+
+   "\nEntry Client ID: "+o.clientOrderId+"\nExit Order ID: "+String(o.tpOrderId||o.stopActualOrderId||"交易所紀錄")+
+   "\n實際淨損益（成交損益－手續費＋Funding）："+settlement.net.toFixed(6)+" USDT"+
+   "\n成交筆數："+settlement.tradeCount+"\n僅 Demo 測試資金");
+}
+async function processDonchianExitRequests(){
+ if(!DONCHIAN_EXECUTE||!KEY||!SECRET||ledger.halted||!storageSafe)return;
+ for(const [symbol,state] of Object.entries(ledger.donchian)){
+  const request=state.executionExit;
+  if(!request||request.status!=="PENDING")continue;
+  const o=ledger.orders.find(row=>row.sourceType==="DONCHIAN"&&row.symbol===symbol&&row.side===request.side&&
+   !["CLOSED","CLOSED_UNFILLED"].includes(row.status));
+  if(!o){request.status="NO_MANAGED_DONCHIAN_POSITION";request.completedAt=now();save();continue;}
+  if(o.tpIntentAt){request.status="EXIT_ALREADY_PENDING";request.completedAt=now();save();continue;}
+  if(o.filledQty<=0){
+   if(isOrderActive(o.exchangeStatus))await cancelEntryRemainder(o,"DONCHIAN_EXIT_BEFORE_FILL");
+   request.status="ENTRY_NOT_FILLED";request.completedAt=now();save();continue;
+  }
+  const positions=await signedQuery("/fapi/v3/positionRisk",{symbol});
+  const row=Array.isArray(positions)?positions.find(x=>x.positionSide==="BOTH"&&x.symbol===symbol):null;
+  const signedQty=Number(row?.positionAmt||0),qty=Math.abs(signedQty);
+  const expectedSign=o.side==="long"?1:-1;
+  if(qty<1e-10){request.status="POSITION_ALREADY_FLAT";request.completedAt=now();save();continue;}
+  if(Math.sign(signedQty)!==expectedSign){halt("DEMO_DONCHIAN_POSITION_SIDE_MISMATCH:"+symbol);continue;}
+  if(isOrderActive(o.exchangeStatus)&&!await cancelEntryRemainder(o,"DONCHIAN_SIGNAL_EXIT"))continue;
+  const top=await publicGet("/fapi/v1/ticker/bookTicker",{symbol});
+  const quote=projectedNet(o,Number(top.bidPrice),Number(top.askPrice),o.entryFee,o.funding);
+  const sent=await submitTp(o,qty,quote,"DONCHIAN_"+request.reason,request);
+  request.status=sent?"SUBMITTED":"FAILED";request.completedAt=now();save();
+  log("DONCHIAN_DEMO_EXIT",{symbol,requestId:request.id,clientOrderId:o.tpClientId,status:request.status});
+ }
+}
+async function reconcile(){
+ if(!KEY||!SECRET||!storageSafe)return;
+ if(Date.now()<(ledger.demoBackoffUntil||0))return;
+ await serverTime();
+ const accountPositions=await signedQuery("/fapi/v3/positionRisk",{});
+ if(!Array.isArray(accountPositions))throw Error("invalid account position risk shape");
+ if(hasUnmanagedPosition(accountPositions,ledger.orders))halt("DEMO_UNMANAGED_ACCOUNT_POSITION");
+ // All existing orders always reconciled even if halted.
+ for(const o of ledger.orders){
+  if(["CLOSED","CLOSED_UNFILLED"].includes(o.status))continue;
+  try{
+   if(o.status==="SUBMIT_REJECTED"&&o.filledQty===0){o.status="CLOSED_UNFILLED";save();continue;}
+   if(!o.entryTerminal||["SUBMIT_UNKNOWN","CANCEL_UNKNOWN","ORDER_PENDING","NEEDS_STOP","PROTECTED"].includes(o.status)){
+    try{await queryOrder(o);}catch(err){
+     if(Number(err?.code)===-2013&&o.filledQty===0&&o.notFoundCount>=RECONCILE_NOT_FOUND_LIMIT&&
+       Date.now()-Date.parse(o.submittedAt)>60000){o.status="CLOSED_UNFILLED";o.exchangeStatus="NOT_FOUND_CONFIRMED";save();continue;}
+     throw err;
+    }
+   }
+   await cancelStaleEntry(o);
+   const position=await signedQuery("/fapi/v3/positionRisk",{symbol:o.symbol});
+   if(!Array.isArray(position))throw Error("invalid position risk shape");
+   const row=position.find(x=>x.positionSide==="BOTH"&&x.symbol===o.symbol);
+   const qty=Math.abs(Number(row?.positionAmt||0));
+   if(qty<1e-10){
+    if(o.filledQty<=0){if(o.entryTerminal){o.status="CLOSED_UNFILLED";save();}continue;}
+    if(isOrderActive(o.exchangeStatus)&&!await cancelEntryRemainder(o,"POSITION_FLAT_CLEANUP"))continue;
+    if(o.tpIntentAt){try{await queryTp(o);}catch{}}
+    if(o.stopAttemptedAt){try{await queryStop(o);}catch{}}
+    if(!await cancelStopAfterClose(o))continue;
+    await settleClosed(o);
+    continue;
+   }
+   if(o.filledQty<=0||qty-o.filledQty>Math.max(0.0000001,qty*0.001)||
+      (o.filledQty-qty>Math.max(0.0000001,qty*0.001)&&!o.tpIntentAt&&!o.stopActualOrderId)){
+     halt("DEMO_POSITION_MISMATCH:"+o.symbol);
+     continue;
+   }
+   if(!o.stopConfirmed){if(!await stopProtection(o))continue;}
+   else {await queryStop(o);if(!o.stopConfirmed){halt("DEMO_STOP_NOT_ACTIVE:"+o.symbol);continue;}}
+   if(o.exchangeStatus==="PARTIALLY_FILLED"&&!await cancelEntryRemainder(o,"PARTIAL_FILL_PROTECTED"))continue;
+   const trades=await signedQuery("/fapi/v1/userTrades",{symbol:o.symbol,limit:100,startTime:Date.parse(o.startedAt)-60000});
+   const entryTrades=trades.filter(t=>String(t.orderId)===String(o.orderId));
+   if(!entryTrades.length){o.tradeDataPending=(o.tradeDataPending||0)+1;o.lastError="Waiting for DEMO entry fills";save();
+    if(o.tradeDataPending>=5)halt("DEMO_ENTRY_FILLS_MISSING:"+o.symbol);continue;}
+   o.tradeDataPending=0;
+   o.entryFee=entryTrades.reduce((n,t)=>n+Number(t.commission||0),0);
+   const income=await signedQuery("/fapi/v1/income",{symbol:o.symbol,incomeType:"FUNDING_FEE",startTime:Date.parse(o.startedAt)-60000,limit:100});
+   o.funding=income.reduce((n,t)=>n+Number(t.income||0),0);
+   const top=await publicGet("/fapi/v1/ticker/bookTicker",{symbol:o.symbol});
+   const quote=projectedNet(o,Number(top.bidPrice),Number(top.askPrice),o.entryFee,o.funding);
+   o.projection=quote;ledger.lastQuote[o.symbol]={bid:Number(top.bidPrice),ask:Number(top.askPrice),at:now()};
+   if(o.tpIntentAt){try{await queryTp(o);}catch(err){if(Number(err?.code)!==-2013)throw err;}}
+   else if(quote && quote.rate>=TP_NET){
+    if(isOrderActive(o.exchangeStatus)&&!await cancelEntryRemainder(o,"NET_TP_PRE_CLOSE"))continue;
+    await submitTp(o,qty,quote);
+   }
+   o.lastReconcile=now();save();
+  }catch(err){noteBackoff(err);o.lastError=String(err).slice(0,200);
+   log("RECONCILE_ERROR",{id:o.clientOrderId,reason:o.lastError});save();
+   if(err?.auth)halt("DEMO_AUTHENTICATION_REJECTED");
+   else if(o.filledQty>0)halt("DEMO_RECONCILIATION_FAILED:"+o.symbol);
+  }
+ }
+ ledger.lastDemoPoll=now();save();
+}
+async function checkDemoPublic(){
+ const tm=await serverTime();
+ if(!exchangeInfoCache || Date.now()-lastExchangeInfoAt > 6*3600*1000){
+   exchangeInfoCache=await publicGet("/fapi/v1/exchangeInfo");lastExchangeInfoAt=Date.now();
+ }
+ const btc=exchangeInfoCache.symbols?.find(s=>s.symbol==="BTCUSDT");
+ if(!btc)throw Error("DEMO BTCUSDT not listed");
+ const mark=await publicGet("/fapi/v1/premiumIndex",{symbol:"BTCUSDT"});
+ if(!(Number(mark.markPrice)>0))throw Error("DEMO mark price invalid");
+ ledger.demoError=null;ledger.lastDemoPoll=now();
+ ledger.lastGoodAccount={publicOnly:true,serverTime:tm,btcStatus:btc.status,
+   markPrice:Number(mark.markPrice),observedAt:now()};
+ save();
+ if(Date.now()-lastPublicLogAt > 600000){
+    console.info("DEMO_PUBLIC_CONNECTED",JSON.stringify({host:DEMO_HOST,
+     btcMarkPrice:Number(mark.markPrice),btcStatus:btc.status,
+     credentialsConfigured:!!KEY&&!!SECRET,channelOrderEnabled:CHANNEL_EXECUTE,
+     donchianOrderEnabled:DONCHIAN_EXECUTE}));
+    lastPublicLogAt=Date.now();
+ }
+ return {demo:true,time:tm,btcStatus:btc.status,btcMarkPrice:Number(mark.markPrice)};
+}
+let busy=false,telegramBusy=false;
+async function tick(){
+ if(busy)return;busy=true;
+ try{
+   const r=await fetch(CHANNEL,{redirect:"error",signal:AbortSignal.timeout(18000),
+     headers:{"User-Agent":"Mozilla/5.0 (compatible; KSignalDemo/1.0)"}});
+   if(!r.ok)throw Error("Telegram public channel HTTP "+r.status);
+   const posts=parseHTML(await r.text());if(!posts.length)throw Error("Telegram page changed/empty");
+   captureCandidates(posts);ledger.channelError=null;ledger.lastChannelPoll=now();save();
+ }catch(err){ledger.channelError=String(err).slice(0,180);console.error("DEMO_CHANNEL_ERROR",ledger.channelError);}
+ try{
+   await checkDemoPublic();
+   if(KEY && SECRET){
+     await reconcile();
+   }
+ }catch(err){noteBackoff(err);ledger.demoError=String(err).slice(0,200);
+   if(EXECUTE&&err?.auth)halt("DEMO_AUTHENTICATION_REJECTED");
+   console.error("DEMO_API_ERROR",ledger.demoError);}
+ try{await pollDonchian();}
+ catch(err){ledger.donchianError=String(err).slice(0,200);
+   console.error("DONCHIAN_ERROR",ledger.donchianError);}
+ try{
+  if(KEY&&SECRET&&!ledger.halted&&storageSafe){
+   await processDonchianExitRequests();
+   const c=pendingCandidates().find(executionAllowed);if(c)await submitEntry(c);
+  }
+ }catch(err){noteBackoff(err);ledger.demoError=String(err).slice(0,200);
+  if(EXECUTE&&err?.auth)halt("DEMO_AUTHENTICATION_REJECTED");
+  console.error("DEMO_EXECUTION_ERROR",ledger.demoError);}
+ try{save();}catch{} finally{busy=false;}
+}
+async function flushNotifications(){
+ if(telegramBusy)return;telegramBusy=true;
+ try{await telegramDeliver();}finally{telegramBusy=false;}
+}
+function bdd(){
+ const old=ledger, prev=synthetic, results=[];
+ const check=(id,description,fn)=>{
+  synthetic=true;ledger=blank();ledger.baseline=true;
+  try{fn();results.push({id,description,pass:true})}
+  catch(e){results.push({id,description,pass:false,error:String(e)})}
+  finally{ledger=old;synthetic=prev;}
+ };
+ const base={id:101,text:"#SOL 市價 100-102附近多 止損 95",time:now()};
+ check(1,"BDD1",()=>{if(DEMO_HOST!=="https://demo-fapi.binance.com")throw Error("host");});
+ check(2,"BDD2",()=>{if(!KEY||!SECRET){if(EXECUTE&&KEY&&SECRET)throw Error("unsafe")};});
+ check(3,"BDD3",()=>{let x=parseSignal(base);if(x?.side!=="long"||x.symbol!=="SOLUSDT")throw Error("parse");});
+ check(4,"BDD4",()=>{let x=parseSignal({...base,text:"#SOL 掛單 101-102附近空 止損 105"});if(x?.side!=="short")throw Error("parse");});
+ check(5,"BDD5",()=>{if(parseSignal({...base,text:"#SOL 市價 100-102附近多"}))throw Error("allowed");});
+ check(6,"BDD6",()=>{if(parseSignal({...base,text:"#NOTREAL 市價 100-102附近多 止損 95"}))throw Error("allowed");});
+ check(7,"BDD7",()=>{if(parseSignal({...base,text:"#BTC 市場可能上漲"}))throw Error("allowed");});
+ check(8,"BDD8",()=>{if(parseSignal({...base,text:"#SOL 市價 100-102附近多 止損 110"}))throw Error("allowed");});
+ check(9,"BDD9",()=>{let h='<div data-post="KCryptoBTC168/100"><div class="tgme_widget_message_text js-message_text">hello</div></div>';
+ if(parseHTML(h)[0]?.id!==100)throw Error("HTML");});
+ check(10,"BDD10",()=>{ledger.baseline=false;captureCandidates([base]);if(ledger.candidate.length)throw Error("history");});
+ check(11,"BDD11",()=>{ledger.baseline=false;captureCandidates([base]);captureCandidates([base,{...base,id:102}]);captureCandidates([{...base,id:102}]);
+ if(ledger.candidate.length!==1)throw Error("duplicates");});
+ check(12,"BDD12",()=>{ledger.baseline=false;captureCandidates([base]);captureCandidates([{...base,id:102,time:new Date(Date.now()-3600000).toISOString()}]);
+ if(ledger.candidate.length)throw Error("stale");});
+ check(13,"BDD13",()=>{if(idFor({id:109},"ENTRY")!==idFor({id:109},"ENTRY"))throw Error("key");});
+ check(14,"BDD14",()=>{if(idFor({id:123456789},"ENTRY").length>36)throw Error("length");});
+ const spec={filters:[{filterType:"MARKET_LOT_SIZE",stepSize:"0.01",minQty:"0.01"},
+ {filterType:"PRICE_FILTER",tickSize:"0.01"},{filterType:"MIN_NOTIONAL",notional:"5"}]};
+ const candidate={...parseSignal(base),stop:95};
+ check(15,"BDD15",()=>{const v=riskParams(candidate,100,"SOLUSDT",{availableBalance:"1000"},spec);if(v.quantity*100>100.01)throw Error("notional");});
+ check(16,"BDD16",()=>{try{riskParams(candidate,100,"SOLUSDT",{availableBalance:"0"},spec);throw Error("not blocked")}
+ catch(e){if(String(e).includes("not blocked"))throw e;}});
+ check(17,"BDD17",()=>{try{riskParams(candidate,100,"SOLUSDT",{availableBalance:"1000"},{filters:[]});throw Error("not blocked")}
+ catch(e){if(String(e).includes("not blocked"))throw e;}});
+ check(18,"BDD18",()=>{try{riskParams(candidate,100,"SOLUSDT",{availableBalance:"2"},spec);throw Error("not blocked")}
+ catch(e){if(String(e).includes("not blocked"))throw e;}});
+ check(19,"BDD19",()=>{let v=riskParams({...candidate,stop:95.005},100,"SOLUSDT",{availableBalance:"1000"},spec);if(v.stopPrice>95.005)throw Error("round");});
+ check(20,"BDD20",()=>{let v=riskParams({...candidate,side:"short",stop:105.005},100,"SOLUSDT",{availableBalance:"1000"},spec);if(v.stopPrice<105.005)throw Error("round");});
+ check(21,"BDD21",()=>{let x=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0);if(x.net<=0)throw Error("net");});
+ check(22,"BDD22",()=>{let x=projectedNet({side:"short",avgPrice:100,filledQty:1},98,98.1,0.04,0);if(x.net<=0)throw Error("net");});
+ check(23,"BDD23",()=>{let a=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0,0);
+ let b=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,1,0);if(b.net>=a.net)throw Error("fee");});
+ check(24,"BDD24",()=>{let a=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0,0);
+ let b=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0,-1);if(b.net>=a.net)throw Error("funding");});
+ check(25,"BDD25",()=>{let x=projectedNet({side:"long",avgPrice:100,filledQty:1},101,101,0,0);if(x.rate>=.01)throw Error("fees ignored");});
+ check(26,"BDD26",()=>{enqueue("x","TEST");if(ledger.outbox.length)throw Error("leaked");});
+ check(27,"BDD27",()=>{save();if(ledger.events.length)throw Error("write");});
+ check(28,"BDD28",()=>{if(safeStatus().mode!=="BINANCE_USDM_DEMO_ONLY")throw Error("mode");});
+ check(29,"BDD29",()=>{let x={status:"SUBMIT_UNKNOWN",stopConfirmed:false,filledQty:0};
+ recordOrderStatus(x,{status:"NEW",executedQty:"0",avgPrice:"0"});if(x.status!=="ORDER_PENDING")throw Error("state");});
+ check(30,"BDD30",()=>{let x={status:"ORDER_PENDING",stopConfirmed:false,filledQty:0};
+ recordOrderStatus(x,{status:"PARTIALLY_FILLED",executedQty:"0.2",avgPrice:"100"});if(x.status!=="NEEDS_STOP")throw Error("state");});
+ check(31,"BDD31",()=>{let x={status:"ORDER_PENDING",stopConfirmed:false};
+ recordOrderStatus(x,{status:"FILLED",executedQty:"0.4",avgPrice:"101"});if(x.filledQty!==.4||x.avgPrice!==101)throw Error("fill");});
+ check(32,"BDD32",()=>{let x={status:"ORDER_PENDING",stopConfirmed:false};
+ recordOrderStatus(x,{status:"CANCELED",executedQty:"0",avgPrice:"0"});if(x.status!=="CLOSED_UNFILLED")throw Error("cancel");});
+ check(33,"BDD33",()=>{let x={status:"ORDER_PENDING",stopConfirmed:false};
+ try{recordOrderStatus(x,{status:"FILLED",executedQty:"NaN",avgPrice:"50"});throw Error("not blocked")}
+ catch(e){if(String(e).includes("not blocked"))throw e;}});
+ check(34,"BDD34",()=>{if(DEMO_HOST.includes("://fapi.binance.com"))throw Error("production");});
+ check(35,"BDD35",()=>{if(MAX_OPEN!==1)throw Error("multiple");});
+ check(36,"BDD36",()=>{if(INITIAL_NOTIONAL>100)throw Error("notional");});
+ check(37,"BDD37",()=>{if(JSON.stringify(safeStatus()).includes(SECRET)&&SECRET)throw Error("secret");});
+ check(38,"BDD38",()=>{if(KEY===""&&SECRET!==""&&safeStatus().readyToPlace)throw Error("keys");});
+ check(39,"BDD39",()=>{if(ledger.orders.length!==0)throw Error("order");});
+ check(40,"BDD40",()=>{if(JSON.stringify(ledger).includes(SECRET)&&SECRET)throw Error("secret");});
+ check(41,"BDD41",()=>{const x=parseSignal({...base,text:"#SOL 掛單 100-102附近多 止損 95"});if(x?.mode!=="LIMIT")throw Error("limit mode missing");});
+ check(42,"BDD42",()=>{const x=parseSignal(base);if(x?.mode!=="MARKET")throw Error("market mode missing");});
+ check(43,"BDD43",()=>{if(!DEMO_HOST.startsWith("https://demo-fapi."))throw Error("bad domain");});
+ check(44,"BDD44",()=>{if(!KEY&&!SECRET&&safeStatus().readyToPlace)throw Error("armed without key");});
+ check(45,"BDD45",()=>{const allow=["/fapi/v1/order/test","/fapi/v1/order"];if(allow[0]==="/fapi/v1/order")throw Error("wrong test path");});
+ check(46,"BDD46",()=>{if(!demoSignedDiagnostics.toString().includes("/fapi/v1/order/test"))throw Error("test path absent");});
+ check(47,"BDD47",()=>{if(!"/fapi/v1/order/test".endsWith("/order/test")||DEMO_HOST!=="https://demo-fapi.binance.com")throw Error("unsafe");});
+ check(48,"BDD48",()=>{let x={symbol:"SOLUSDT",clientOrderId:"A",qty:1,stopConfirmed:false};
+  recordOrderStatus(x,{symbol:"SOLUSDT",clientOrderId:"A",status:"PARTIALLY_FILLED",origQty:"1",executedQty:"0.4",avgPrice:"100"});
+  if(x.status!=="NEEDS_STOP"||x.remainingQty!==0.6||x.entryTerminal)throw Error("partial state");});
+ check(49,"BDD49",()=>{let x={symbol:"SOLUSDT",clientOrderId:"A",qty:1,stopConfirmed:false};
+  recordOrderStatus(x,{symbol:"SOLUSDT",clientOrderId:"A",status:"CANCELED",origQty:"1",executedQty:"0.4",avgPrice:"100"});
+  if(x.status!=="NEEDS_STOP"||!x.entryTerminal)throw Error("partial cancel lost fill");});
+ check(50,"BDD50",()=>{for(const x of ["NEW","PARTIALLY_FILLED","PENDING_CANCEL"])if(!isOrderActive(x))throw Error(x);});
+ check(51,"BDD51",()=>{for(const x of ["FILLED","CANCELED","EXPIRED","EXPIRED_IN_MATCH","REJECTED"])if(!isOrderTerminal(x))throw Error(x);});
+ check(52,"BDD52",()=>{const x=failureFlags("POST",503,0);if(!x.unknown||!x.transient||x.auth)throw Error("flags");});
+ check(53,"BDD53",()=>{const x=failureFlags("GET",503,0);if(x.unknown||!x.transient)throw Error("flags");});
+ check(54,"BDD54",()=>{if(!failureFlags("GET",400,-2015).auth||!failureFlags("POST",401,0).auth)throw Error("auth");});
+ check(55,"BDD55",()=>{const x=failureFlags("GET",429,0);if(!x.transient||x.unknown)throw Error("429");
+  noteBackoff({...x,status:429});if(!(ledger.demoBackoffUntil>Date.now()))throw Error("no backoff");});
+ check(56,"BDD56",()=>{const x={symbol:"SOLUSDT",stopClientId:"STOP",status:"NEEDS_STOP"};
+  if(!recordAlgoStatus(x,{symbol:"SOLUSDT",clientAlgoId:"STOP",algoId:9,algoType:"CONDITIONAL",orderType:"STOP_MARKET",closePosition:true,algoStatus:"NEW"})||x.stopAlgoId!==9)throw Error("stop");});
+ check(57,"BDD57",()=>{const x={symbol:"SOLUSDT",stopClientId:"STOP"};
+  if(recordAlgoStatus(x,{symbol:"SOLUSDT",clientAlgoId:"STOP",algoType:"CONDITIONAL",orderType:"STOP_MARKET",closePosition:true,algoStatus:"CANCELED"}))throw Error("canceled protected");});
+ check(58,"BDD58",()=>{try{recordAlgoStatus({symbol:"SOLUSDT",stopClientId:"STOP"},{symbol:"SOLUSDT",clientAlgoId:"OTHER"});throw Error("accepted")}
+  catch(e){if(String(e).includes("accepted"))throw e;}});
+ check(59,"BDD59",()=>{try{recordAlgoStatus({symbol:"SOLUSDT",stopClientId:"STOP"},{symbol:"SOLUSDT",clientAlgoId:"STOP",algoType:"CONDITIONAL",orderType:"LIMIT",closePosition:false});throw Error("accepted")}
+  catch(e){if(String(e).includes("accepted"))throw e;}});
+ check(60,"BDD60",()=>{const x=actualSettlement({orderId:1,tpOrderId:2},[
+   {orderId:1,realizedPnl:"0",commission:"0.04"},{orderId:2,realizedPnl:"1.2",commission:"0.05"}],
+   [{income:"-0.01"}]);if(Math.abs(x.net-1.10)>1e-9||x.tradeCount!==2)throw Error("settlement");});
+ check(61,"BDD61",()=>{const x=actualSettlement({orderId:1},[
+   {orderId:1,realizedPnl:"0",commission:"0.04"},{orderId:999,realizedPnl:"50",commission:"2"}],[]);
+   if(x.tradeCount!==1||x.grossRealized!==0||x.commission!==0.04)throw Error("foreign fill");});
+ check(62,"BDD62",()=>{if(!shouldCancelEntry({mode:"LIMIT",exchangeStatus:"NEW",submittedAt:new Date(0).toISOString()},LIMIT_TTL))throw Error("ttl");});
+ check(63,"BDD63",()=>{if(shouldCancelEntry({mode:"LIMIT",exchangeStatus:"NEW",submittedAt:new Date(0).toISOString()},LIMIT_TTL-1))throw Error("early");});
+ check(64,"BDD64",()=>{if(shouldCancelEntry({mode:"MARKET",exchangeStatus:"NEW",submittedAt:new Date(0).toISOString()},LIMIT_TTL*2))throw Error("market cancel");});
+ check(65,"BDD65",()=>{if(!hasUnmanagedPosition([{symbol:"BTCUSDT",positionSide:"BOTH",positionAmt:"0.01"}],[]))throw Error("external");});
+ check(66,"BDD66",()=>{if(hasUnmanagedPosition([{symbol:"SOLUSDT",positionSide:"BOTH",positionAmt:"1"}],[{symbol:"SOLUSDT",status:"PROTECTED"}]))throw Error("owned");});
+ check(67,"BDD67",()=>{if(!hasUnmanagedPosition([{symbol:"SOLUSDT",positionSide:"LONG",positionAmt:"1"}],[{symbol:"SOLUSDT",status:"PROTECTED"}]))throw Error("hedge");});
+ check(68,"BDD68",()=>{if(!SIGNED_PATHS.has("/fapi/v1/algoOrder")||!SIGNED_PATHS.has("/fapi/v1/openAlgoOrders"))throw Error("algo path");});
+ check(69,"BDD69",()=>{if([...SIGNED_PATHS].some(x=>x.includes("binance.com")))throw Error("host injection");});
+ check(70,"BDD70",()=>{const c={id:123};if(idFor(c,"STOP")===idFor(c,"TP")||idFor(c,"ENTRY")===idFor(c,"STOP"))throw Error("collision");});
+ check(71,"BDD71",()=>{try{recordOrderStatus({symbol:"SOLUSDT",clientOrderId:"A",qty:1},{symbol:"BTCUSDT",clientOrderId:"A",status:"NEW",origQty:"1",executedQty:"0"});throw Error("accepted")}
+  catch(e){if(String(e).includes("accepted"))throw e;}});
+ check(72,"BDD72",()=>{try{recordOrderStatus({symbol:"SOLUSDT",clientOrderId:"A",qty:1},{symbol:"SOLUSDT",clientOrderId:"B",status:"NEW",origQty:"1",executedQty:"0"});throw Error("accepted")}
+  catch(e){if(String(e).includes("accepted"))throw e;}});
+ check(73,"BDD73",()=>{try{recordOrderStatus({symbol:"SOLUSDT",clientOrderId:"A",qty:1},{symbol:"SOLUSDT",clientOrderId:"A",status:"FILLED",origQty:"1",executedQty:"1.1"});throw Error("accepted")}
+  catch(e){if(String(e).includes("accepted"))throw e;}});
+ check(74,"BDD74",()=>{let a=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0);
+  let b=projectedNet({side:"long",avgPrice:100,filledQty:1},102,103,0.04,0.1);if(b.net<=a.net)throw Error("funding");});
+ check(75,"BDD75",()=>{const x=blank();if(x.schema!==4||x.demoBackoffUntil!==0||!Array.isArray(x.orders)||!x.donchian||!Array.isArray(x.donchianPaper))throw Error("schema");});
+ check(76,"BDD76",()=>{if(DIAGNOSTIC_POSITION_SIDE!=="BOTH")throw Error("position side");});
+ check(77,"BDD77",()=>{if(Bun.env.DEMO_ORDER_ENABLED!=="true"&&Bun.env.DEMO_DONCHIAN_ORDER_ENABLED!=="true"&&EXECUTE)throw Error("unsafe env parsing");});
+ check(78,"BDD78",()=>{if(LOCAL_BDD_ONLY&&EXECUTE)throw Error("unsafe local mode");});
+ check(79,"BDD79",()=>{const previous=storageSafe;
+  try{markPersistenceFailure("synthetic disk readonly");if(storageSafe||!ledger.halted||ledger.haltReason!=="PERSISTENCE_FAILURE")throw Error("not halted");}
+  finally{storageSafe=previous;}});
+ check(80,"BDD80",()=>{if(!tagDemoNotice("order update").startsWith("BINANCE DEMO\n")||tagDemoNotice("Binance DEMO ok").toUpperCase().split("BINANCE DEMO").length!==2)throw Error("prefix");});
+ const limitSpec={filters:[{filterType:"LOT_SIZE",stepSize:"0.01",minQty:"0.01"},
+  {filterType:"MARKET_LOT_SIZE",stepSize:"0.3",minQty:"0.3"},
+  {filterType:"PRICE_FILTER",tickSize:"0.1",minPrice:"1",maxPrice:"1000"},
+  {filterType:"MIN_NOTIONAL",notional:"5"}]};
+ check(81,"BDD81",()=>{const x=riskParams({...candidate,mode:"LIMIT",entryLow:100.07,entryHigh:101},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);if(x.limitPrice!==100)throw Error("limit tick");});
+ check(82,"BDD82",()=>{const x=riskParams({...candidate,mode:"LIMIT",side:"short",entryLow:99,entryHigh:100.07,stop:105},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);if(x.limitPrice!==100.1)throw Error("limit tick");});
+ check(83,"BDD83",()=>{const x=riskParams({...candidate,mode:"LIMIT",entryLow:100,entryHigh:101},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);if(x.quantity!==0.5||Math.abs(x.quantity/0.3-Math.round(x.quantity/0.3))<1e-9)throw Error("lot step");});
+ check(84,"BDD84",()=>{try{riskParams({...candidate,stop:0.5},100,"SOLUSDT",{availableBalance:"1000"},limitSpec);throw Error("accepted")}
+  catch(e){if(String(e).includes("accepted"))throw e;}});
+ check(85,"BDD85",()=>{try{actualSettlement({orderId:1,tpOrderId:2},[{orderId:1,commission:"0.1",commissionAsset:"BNB"}],[]);throw Error("accepted")}
+  catch(e){if(String(e).includes("accepted"))throw e;}});
+ const donchianCandles=(lastClose,count=21,offset=0)=>Array.from({length:count},(_,i)=>({
+  high:i===count-1?Math.max(110,lastClose):110,low:i===count-1?Math.min(90,lastClose):90,
+  close:i===count-1?lastClose:100,closeTime:(offset+i+1)*900000
+ }));
+ const filteredCandles=(lastClose,earlyClose=100,count=202)=>Array.from({length:count},(_,i)=>{
+  const recent=i>=count-21,close=i===count-1?lastClose:(recent?100:earlyClose);
+  return {high:i===count-1?Math.max(101,lastClose):(recent?101:earlyClose+1),low:i===count-1?Math.min(99,lastClose):(recent?99:earlyClose-1),close,closeTime:(i+1)*3600000};
+ });
+ check(86,"BDD86",()=>{if(evaluateDonchian(donchianCandles(111))?.action!=="ENTER_LONG")throw Error("long");});
+ check(87,"BDD87",()=>{if(evaluateDonchian(donchianCandles(89))?.action!=="ENTER_SHORT")throw Error("short");});
+ check(88,"BDD88",()=>{if(evaluateDonchian(donchianCandles(100)))throw Error("false entry");});
+ check(89,"BDD89",()=>{if(evaluateDonchian(donchianCandles(89),"LONG")?.action!=="EXIT_LONG")throw Error("long exit");});
+ check(90,"BDD90",()=>{if(evaluateDonchian(donchianCandles(111),"SHORT")?.action!=="EXIT_SHORT")throw Error("short exit");});
+ check(91,"BDD91",()=>{if(evaluateDonchian(donchianCandles(110))||evaluateDonchian(donchianCandles(90)))throw Error("boundary");});
+ check(92,"BDD92",()=>{if(evaluateDonchian(donchianCandles(111,20)))throw Error("short history");});
+ check(93,"BDD93",()=>{const x=applyDonchian("BTCUSDT",donchianCandles(111));if(x||ledger.donchian.BTCUSDT.position!=="FLAT"||ledger.orders.length)throw Error("stale alert");});
+ check(94,"BDD94",()=>{applyDonchian("BTCUSDT",donchianCandles(100));
+  const x=applyDonchian("BTCUSDT",donchianCandles(111,21,1));if(x?.action!=="ENTER_LONG"||ledger.donchian.BTCUSDT.position!=="LONG"||ledger.orders.length)throw Error("coupled");});
+ check(95,"BDD95",()=>{applyDonchian("BTCUSDT",donchianCandles(100));
+  const candles=donchianCandles(111,21,1);applyDonchian("BTCUSDT",candles);if(applyDonchian("BTCUSDT",candles))throw Error("duplicate");});
+ check(96,"BDD96",()=>{applyDonchian("BTCUSDT",donchianCandles(100));
+  applyDonchian("BTCUSDT",donchianCandles(111,21,1));const x=applyDonchian("BTCUSDT",donchianCandles(89,21,2));
+  if(x?.action!=="EXIT_LONG"||ledger.donchian.BTCUSDT.position!=="FLAT"||ledger.donchian.BTCUSDT.entryPrice!==null)throw Error("exit state");});
+ check(97,"BDD97",()=>{const x=safeStatus().donchian;if(!x.independentFromTelegramChannel||x.strategy!==ACTIVE_DONCHIAN_STRATEGY||x.interval!=="1h"||x.entryPeriod!==20||x.exitPeriod!==10||x.emaPeriod!==200||x.atrPeriod!==14)throw Error("status");});
+ check(98,"BDD98",()=>{const x=evaluateDonchian(donchianCandles(111));if(x.stopLoss!==90||x.takeProfit!==153||x.riskReward!==2)throw Error("long levels");});
+ check(99,"BDD99",()=>{const x=evaluateDonchian(donchianCandles(89));if(x.stopLoss!==110||x.takeProfit!==47||x.riskReward!==2)throw Error("short levels");});
+ check(100,"BDD100",()=>{const x=evaluateDonchian(donchianCandles(153),{position:"LONG",stopLoss:90,takeProfit:153});if(x?.action!=="EXIT_LONG"||x.reason!=="TAKE_PROFIT_2R")throw Error("long tp");});
+ check(101,"BDD101",()=>{const x=evaluateDonchian(donchianCandles(111),{position:"SHORT",stopLoss:110,takeProfit:47});if(x?.action!=="EXIT_SHORT"||x.reason!=="STOP_LOSS")throw Error("short sl");});
+ check(102,"BDD102",()=>{const x=evaluateDonchian(donchianCandles(111));const m=donchianNotification("BTCUSDT",x,{},"FLAT");
+  if(!m.includes("幣別：BTC/USDT（BTCUSDT）")||!m.includes("建倉參考價：111")||!m.includes("停損參考價：90")||!m.includes("停利參考價：153")||!m.includes("2R"))throw Error("entry message");});
+ check(103,"BDD103",()=>{const state={entryPrice:111,stopLoss:90,takeProfit:153};const event=evaluateDonchian(donchianCandles(153),{position:"LONG",...state});const m=donchianNotification("BTCUSDT",event,state,"LONG");
+  if(!m.includes("本次平倉參考價：153")||!m.includes("原停損參考價：90")||!m.includes("原停利參考價：153")||!m.includes("到達 2R 停利"))throw Error("exit message");});
+ check(104,"BDD104",()=>{const x=evaluateDonchian(donchianCandles(111));const m=donchianNotification("ETHUSDT",x,{},"FLAT");
+  if(!m.includes("TradingView K線（15m）：https://www.tradingview.com/chart/?symbol=BINANCE%3AETHUSDT.P&interval=15")||!m.includes("不會送出 Binance Demo 或正式交易訂單"))throw Error("chart link");});
+ check(105,"BDD105",()=>{const event=evaluateDonchian(donchianCandles(111));const c=donchianExecutionCandidate("BTCUSDT",event,true);
+  if(c.status!=="CANDIDATE"||c.sourceType!=="DONCHIAN"||c.side!=="long"||c.stop!==90||c.strategyTarget!==153||c.entryLow>=111||c.entryHigh<=111)throw Error("candidate");});
+ check(106,"BDD106",()=>{const event=evaluateDonchian(donchianCandles(89));const c=donchianExecutionCandidate("BTCUSDT",event,false);
+  if(c.status!=="BLOCKED_DONCHIAN_EXECUTION_DISABLED"||c.reason!=="DONCHIAN_EXECUTION_DISABLED")throw Error("not blocked");});
+ check(107,"BDD107",()=>{if(executionAllowed({sourceType:"TELEGRAM_CHANNEL"},false,true)||!executionAllowed({sourceType:"DONCHIAN"},false,true))throw Error("scope leak");});
+ check(108,"BDD108",()=>{const event=evaluateDonchian(donchianCandles(153),{position:"LONG",stopLoss:90,takeProfit:153});const r=donchianExitRequest("BTCUSDT",event,true);
+  if(r.status!=="PENDING"||r.side!=="long"||r.reason!=="TAKE_PROFIT_2R"||!r.id.includes("BTCUSDT"))throw Error("exit request");});
+ check(109,"BDD109",()=>{const o={orderId:1,tpOrderId:2,clientOrderId:"KSDTEST",sourceId:"D1",sourceType:"DONCHIAN",strategy:LEGACY_DONCHIAN_STRATEGY,symbol:"BTCUSDT",side:"long",status:"CLOSED",filledQty:1};
+  o.actualSettlement=actualSettlement(o,[{orderId:1,price:"100",qty:"1",realizedPnl:"0",commission:"0.04",commissionAsset:"USDT"},{orderId:2,price:"102",qty:"1",realizedPnl:"2",commission:"0.04",commissionAsset:"USDT"}],[]);ledger.orders=[o];const row=demoTradeRecords()[0];
+  if(row.entryPrice!==100||row.exitPrice!==102||Math.abs(row.netPnlUsdt-1.92)>1e-9||row.sourceType!=="DONCHIAN")throw Error("trade record");});
+ check(110,"BDD110",()=>{applyDonchian("BTCUSDT",donchianCandles(100));applyDonchian("BTCUSDT",donchianCandles(111,21,1));
+  const c=ledger.candidate[0];if(c?.sourceType!=="DONCHIAN"||ledger.orders.length)throw Error("entry intent");});
+ check(111,"BDD111",()=>{applyDonchian("BTCUSDT",donchianCandles(100));applyDonchian("BTCUSDT",donchianCandles(111,21,1));applyDonchian("BTCUSDT",donchianCandles(153,21,2));
+  const s=ledger.donchian.BTCUSDT;if(s.position!=="FLAT"||!s.executionExit||s.executionExit.action!=="EXIT_LONG")throw Error("exit intent");});
+ check(112,"BDD112",()=>{const settlement={entryAvgPrice:100,exitAvgPrice:102,exitQty:1,grossRealized:2,commission:.08,funding:0,net:1.92,settledAt:now()};
+  ledger.orders=[{sourceType:"DONCHIAN",clientOrderId:"D",symbol:"BTCUSDT",side:"long",status:"CLOSED",actualSettlement:settlement},{sourceType:"TELEGRAM_CHANNEL",clientOrderId:"T",symbol:"SOLUSDT",side:"long",status:"CLOSED",actualSettlement:{...settlement,net:99}}];
+  const x=donchianStats();if(x.performance.closedTrades!==1||x.performance.netPnlUsdt!==1.92||x.orders.closed!==1)throw Error("cross-source leak");});
+ check(113,"BDD113",()=>{const raw=JSON.stringify(donchianStats());if(raw.includes("clientOrderId")||raw.includes("orderId")||raw.includes(APP_PASSWORD))throw Error("sensitive stats");});
+ check(114,"BDD114",()=>{ledger.donchian.SOLUSDT={position:"LONG",entryPrice:93.96,stopLoss:86.46,takeProfit:108.96,entryTime:now(),lastObservedClose:93.96};
+  const s=donchianStats(),x=s.advisoryPositions[0];if(x.symbol!=="SOLUSDT"||x.entryPrice!==93.96||x.stopLoss!==86.46||x.takeProfit!==108.96||x.status!=="PAPER_OPEN"||s.paper.openPositions!==1)throw Error("paper detail");});
+ check(115,"BDD115",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:100};ledger.donchian.BTCUSDT=s;paperOpen("BTCUSDT",s);paperClose("BTCUSDT",{price:110,closeTime:Date.now(),reason:"TAKE_PROFIT_2R"});const x=ledger.donchianPaper[0];if(x.status!=="CLOSED"||x.netPnl>=x.grossPnl||paperReport().closedTrades!==1)throw Error("paper close");});
+ check(116,"BDD116",()=>{const x=evaluateDonchian(donchianCandles(111)),m=donchianNotification("SOLUSDT",x,{},"FLAT");if(!m.startsWith("DONCHIAN PAPER")||!m.includes("已建立 Paper 模擬持倉")||m.includes("BINANCE DEMO\n"))throw Error("paper label");});
+ check(117,"BDD117",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:100};ledger.donchian.ETHUSDT=s;paperOpen("ETHUSDT",s);paperClose("ETHUSDT",{price:110,closeTime:Date.now(),reason:"TAKE_PROFIT_2R"});const x=donchianStats().closedPaperPositions[0];if(x.symbol!=="ETHUSDT"||x.status!=="PAPER_CLOSED"||x.netPnl<=0||!x.exitTime||!x.chartUrl||"id" in x||"orderId" in x||"clientOrderId" in x)throw Error("closed Paper record");});
+ check(118,"BDD118",()=>{const s={position:"LONG",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:101};ledger.donchian.SOLUSDT=s;ledger.donchianMarks.SOLUSDT={price:105,observedAt:now(),source:"BINANCE_DEMO_MARK_PRICE"};paperOpen("SOLUSDT",s);const x=donchianStats().advisoryPositions[0];if(x.lastPrice!==105||x.signalClosePrice!==101||x.lastPriceSource!=="BINANCE_DEMO_MARK_PRICE"||x.paperPnl<4)throw Error("mark price reporting");});
+ check(119,"BDD119",()=>{const x=evaluateFilteredDonchian(filteredCandles(105));const risk=x?.price-x?.stopLoss;if(x?.action!=="ENTER_LONG"||!(x.price>x.ema200)||Math.abs(risk-2*x.atr14)>1e-9||Math.abs(x.takeProfit-x.price-2*risk)>1e-9||x.interval!=="1h")throw Error("filtered long");});
+ check(120,"BDD120",()=>{if(evaluateFilteredDonchian(filteredCandles(105,120)))throw Error("EMA filter bypassed");});
+ check(121,"BDD121",()=>{const s={position:"LONG",strategyVersion:LEGACY_DONCHIAN_STRATEGY,interval:"15m",entryPrice:100,stopLoss:90,takeProfit:120,entryTime:now(),lastObservedClose:100};ledger.donchian.BTCUSDT=s;paperOpen("BTCUSDT",s);const x=donchianStats().advisoryPositions[0];if(x.strategyVersion!==LEGACY_DONCHIAN_STRATEGY||x.interval!=="15m")throw Error("legacy changed");});
+ check(122,"BDD122",()=>{const x=evaluateFilteredDonchian(filteredCandles(105)),s={strategyVersion:ACTIVE_DONCHIAN_STRATEGY,interval:"1h"},m=donchianNotification("BTCUSDT",x,s,"FLAT");if(!m.includes("1H Donchian + EMA200 + ATR")||!m.includes("2 × ATR14")||!m.includes("interval=60"))throw Error("active notice");});
+ return {mode:"SYNTHETIC_BDD",total:results.length,passed:results.filter(t=>t.pass).length,
+  failed:results.filter(t=>!t.pass).length,results,at:now()};
+}
+const tested=bdd();
+console.info("BINANCE_DEMO_BDD",JSON.stringify({passed:tested.passed,failed:tested.failed,total:tested.total,
+ errors:tested.results.filter(x=>!x.pass)}));
+if(tested.failed)throw Error("Demo BDD regression failed");
+const page='<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'+
+'<title>K Signal Binance Demo</title><style>body{font:16px system-ui;margin:0;background:#0b1323;color:#e5eefb}main{max-width:1000px;margin:38px auto;padding:20px}'+
+'section{background:#141f34;border:1px solid #34415c;border-radius:16px;padding:20px;margin:16px 0}'+
+'.tag{color:#73e7bb}a{color:#8bbbff}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style>'+
+'<main><h1>K Signal — Binance Demo Trading</h1><p class="tag">DEMO ONLY · 不連正式 Binance · 不使用真實資金</p>'+
+'<section><h2>環境與風控</h2><pre id="status">載入中</pre></section>'+
+'<section><h2>候選交易訊號</h2><pre id="candidates">載入中</pre></section>'+
+'<section><h2>1H Donchian + EMA200 + ATR Paper 策略</h2><p>新建倉使用 1 小時已收盤 K 線：20 期突破、EMA200 方向過濾、2×ATR14 固定停損、2R 停利與 10 期通道平倉。既有 Legacy 15m Paper 持倉依原規則結束；不讀取 Telegram 頻道，也不會自動下單。</p><pre id="donchian">載入中</pre></section>'+
+'<section><h2>Demo 交易與對帳</h2><pre id="orders">載入中</pre></section><section><h2>已平倉損益紀錄</h2><pre id="trades">載入中</pre></section>'+
+'<section><a href="/api/bdd">執行 BDD 測試</a> · <a href="/api/donchian">Donchian 狀態</a> · <a href="/api/trades">已平倉損益</a> · <a href="/api/audit">審計事件</a> · <a href="https://t.me/KCryptoBTC168">原始頻道</a></section>'+
+'<p>所有交易必須使用 Demo API 專用金鑰，並在 Railway 環境變數手動設定 DEMO_ORDER_ENABLED=true。單筆名目上限 100 USDT、僅允許一個持倉。'+
+'首次同步歷史貼文只建立基線。正式 Paper Lab 的交易資料完全獨立。</p></main>'+
+'<script>async function f(){for(let [p,id] of [["/api/status","status"],["/api/candidates","candidates"],["/api/donchian","donchian"],["/api/orders","orders"],["/api/trades","trades"]]){try{const r=await fetch(p);document.getElementById(id).textContent=JSON.stringify(await r.json(),null,2)}catch(e){document.getElementById(id).textContent=String(e)}}}f();setInterval(f,15000)</script></html>';
+const app=Bun.serve({hostname:"0.0.0.0",port:Number(Bun.env.PORT||8080),async fetch(req){
+ const u=new URL(req.url);
+ if(u.pathname==="/healthz")return response({ok:true,mode:"DEMO_ONLY",ready:!ledger.halted&&storageSafe});
+ if(u.pathname==="/api/stats"&&req.method==="GET"){
+  if(STATS_SHARED_TOKEN.length<32)return response({error:"Statistics integration not configured"},503);
+  if(!statsAuth(req))return response({error:"Unauthorized"},401);
+  return response(donchianStats());
+ }
+ if(!auth(req))return new Response("Login required",{status:401,headers:{"WWW-Authenticate":'Basic realm="K Signal DEMO"',"Cache-Control":"no-store"}});
+ if(u.pathname==="/api/demo/credentials" && req.method==="GET"){
+   if(!KEY||!SECRET)return response({valid:false,blocked:true,reason:"Configure DEMO credentials in Railway"},428);
+   try{return response(await demoSignedDiagnostics(false));}
+   catch(err){return response({valid:false,error:String(err)},502);}
+ }
+ if(u.pathname==="/api/demo/order-test" && req.method==="POST"){
+   if(req.headers.get("x-demo-confirm")!=="DEMO_ONLY_TEST")return response({error:"Missing X-Demo-Confirm: DEMO_ONLY_TEST"},400);
+   if(!KEY||!SECRET)return response({valid:false,blocked:true,reason:"DEMO credentials missing"},428);
+   try{return response(await demoSignedDiagnostics(true));}
+   catch(err){return response({valid:false,error:String(err)},502);}
+ }
+ if(req.method!=="GET")return response({error:"Read-only dashboard; execution is environment-gated"},405);
+ if(u.pathname==="/")return new Response(page,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"}});
+ if(u.pathname==="/api/status")return response(safeStatus());
+ if(u.pathname==="/api/candidates")return response(ledger.candidate);
+ if(u.pathname==="/api/donchian")return response({strategy:{independentFromTelegramChannel:true,
+   name:ACTIVE_DONCHIAN_STRATEGY,interval:ACTIVE_DONCHIAN_INTERVAL,entryPeriod:DONCHIAN_ENTRY_PERIOD,exitPeriod:DONCHIAN_EXIT_PERIOD,
+   emaPeriod:ACTIVE_DONCHIAN_EMA_PERIOD,atrPeriod:ACTIVE_DONCHIAN_ATR_PERIOD,atrMultiplier:ACTIVE_DONCHIAN_ATR_MULTIPLIER,
+   takeProfitRiskReward:DONCHIAN_TAKE_PROFIT_R,stopLoss:"signal-time 2 x ATR14",
+   chartUrlTemplate:"https://www.tradingview.com/chart/?symbol=BINANCE%3A{symbol}.P&interval=60",
+   legacyOpenPositionsRemainOn:LEGACY_DONCHIAN_STRATEGY,
+   demoExecutionEnabled:DONCHIAN_EXECUTE,executionReady:DONCHIAN_EXECUTE&&!!KEY&&!!SECRET&&!ledger.halted&&storageSafe,
+   symbols:DONCHIAN_SYMBOLS,lastPoll:ledger.lastDonchianPoll,error:ledger.donchianError},states:ledger.donchian});
+ if(u.pathname==="/api/orders")return response(ledger.orders);
+ if(u.pathname==="/api/trades")return response(demoTradeRecords());
+ if(u.pathname==="/api/audit")return response(ledger.events.slice(-300));
+ if(u.pathname==="/api/bdd")return response(bdd());
+ return response({error:"Not found"},404);
+}});
+async function loop(){
+ await tick();await flushNotifications();setTimeout(loop,60000);
+}
+void loop();
