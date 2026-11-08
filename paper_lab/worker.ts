@@ -642,7 +642,7 @@ const t = Date.now();
 const symbols = new Set(["BTCUSDT"]);
 for (const o of readablePaperOrders()) {
 if (o.status === "pending" && t - Date.parse(o.receivedAt) > TTL) {
-o.status = "expired"; o.reason = "pending_ttl";
+o.status = "expired"; o.reason = "pending_ttl"; notifyOrderStatus(o);
 } else if (o.status === "waiting_price" && t - Date.parse(o.receivedAt) > AGE) {
 o.status = "rejected"; o.reason = "price_timeout"; notifyOrderStatus(o);
 } else if (["open", "waiting_price", "pending"].includes(o.status)) symbols.add(o.symbol);
