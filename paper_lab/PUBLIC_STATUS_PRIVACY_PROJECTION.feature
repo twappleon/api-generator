@@ -23,6 +23,7 @@ Feature: Anonymous Paper status must not expose corrupt legacy metadata
     Then the status returns zero counts instead of a TypeError
     And the malformed raw values remain in the untouched audit state
 
-  # Verified 2026-11-08: source-defined BDD209-211 read back from GitHub and
-  # executed with a V8 function-level harness: 3 PASS / 0 FAIL.
-  # Entire 211-case Bun worker suite, HTTP listener, Railway deployment: NOT TESTED.
+  # Verified 2026-11-08: source-defined BDD209-211 and the existing suite
+  # read back from committed GitHub worker and run in isolated mocked V8:
+  # 211 / 211 PASS, 0 FAIL; persistentStateUnchanged=true. This is NOT
+  # native Bun execution, network HTTP, browser or Railway acceptance.
