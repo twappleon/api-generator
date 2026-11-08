@@ -798,6 +798,32 @@ let text = String(value ?? "").replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, " "
 if (!numeric && /^[\s\u200b\u2060\ufeff]*[=+\-@]/u.test(text)) text = "'" + text;
 return '"' + text.replace(/"/g, '""') + '"';
 }
+// Anonymous CSV uses explicit public schema, never raw persisted legacy strings.
+const CSV_PUBLIC_REASONS=new Set([
+"awaiting_verified_price","verified_mark_price_fill","invalid_input_price_or_stop",
+"invalid_position_size","channel_cancelled_before_fill","quote_arrived_too_late",
+"market_price_outside_entry_range","pending_ttl","price_timeout","stop_loss",
+"take_profit","net_take_profit_1pct","channel_close","channel_close_requested",
+"channel_partial_take_profit","partial"
+]);
+const CSV_PUBLIC_ENUMS={
+side:new Set(["long","short"]),kind:new Set(["limit","market"]),
+status:new Set(["pending","waiting_price","open","closed","cancelled","rejected","expired"]),
+reason:CSV_PUBLIC_REASONS
+};
+function publicCsvTime(value){
+if(typeof value!=="string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value))return "";
+const millis=Date.parse(value);
+return Number.isFinite(millis)?new Date(millis).toISOString():"";
+}
+function publicCsvValue(key,value){
+if(key==="symbol")return typeof value==="string"&&/^[A-Z0-9]{3,16}$/.test(value)?value:"";
+if(CSV_PUBLIC_ENUMS[key])return CSV_PUBLIC_ENUMS[key].has(value)?value:"";
+if(["receivedAt","entryTime","exitTime","lastPartialTime"].includes(key))return publicCsvTime(value);
+if(["entryLow","entryHigh","entryPrice","stop","target","qty","exitPrice","feeEntry",
+"feeExit","grossPnl","netPnl","initialQty"].includes(key))return typeof value==="number"&&Number.isFinite(value)?value:"";
+return "";
+}
 // Public CSV is anonymous: project nested exit events, never serialize raw state objects.
 // Preserve documented partial-close accounting, but drop debug/credential/unknown fields.
 function publicCsvExitEvents(events) {
@@ -805,7 +831,9 @@ if (!Array.isArray(events)) return "[]";
 const numericKeys = ["price","qty","fractionOfRemaining","grossPnl","feeExit","allocatedEntryFee","netPnl"];
 return JSON.stringify(events.filter(e => e && typeof e === "object" && !Array.isArray(e)).map(e => {
 const row = {};
-for (const key of ["at","reason"]) if (typeof e[key] === "string") row[key] = e[key].slice(0,180);
+const at=publicCsvTime(e.at);
+if(at)row.at=at;
+if(CSV_PUBLIC_REASONS.has(e.reason))row.reason=e.reason;
 for (const key of numericKeys) if (typeof e[key] === "number" && Number.isFinite(e[key])) row[key] = e[key];
 if (Number.isSafeInteger(e.messageId) && e.messageId > 0) row.messageId = e.messageId;
 if (typeof e.assumedRatio === "boolean") row.assumedRatio = e.assumedRatio;
@@ -819,7 +847,7 @@ const fields = ["messageId", "symbol", "side", "kind", "status", "entryLow", "en
 return [fields.join(","), ...readablePaperOrders().map(o => fields.map(k => {
 const v = k === "messageId"
 ? (Number.isSafeInteger(o[k]) && o[k] > 0 ? "https://t.me/KCryptoBTC168/" + o[k] : "")
-: (k === "exitEvents" ? publicCsvExitEvents(o[k]) : (o[k] ?? ""));
+: (k === "exitEvents" ? publicCsvExitEvents(o[k]) : publicCsvValue(k,o[k]));
 return csvCell(v);
 }).join(","))].join("\n");
 }
@@ -1444,7 +1472,9 @@ content.includes("netPnl") && content.includes("exitEvents"),"CSV fields incompl
 test("BDD109",()=>{
 state.orders=[mock({reason:'alert "incorrect" text'})];
 const content=csv();
-assert(content.includes('""incorrect""') && content.split("\n").length===2,"CSV quote escape failed");
+assert(csvCell('alert "incorrect" text').includes('""incorrect""') &&
+content.split("\n").length===2 && !content.includes("incorrect"),
+"CSV quote escaping or confidential-legacy-text projection failed");
 });
 test("BDD110",()=>{
 state.orders=[mock()];
@@ -2193,6 +2223,39 @@ assert(result.snapshots.length===3 && Math.abs(result.maxDrawdownPct-5)<1e-9 &&
 !JSON.stringify(result).includes("PRIVATE_HISTORY_205") && state.snapshots.length===6 &&
 state.snapshots.every((x,i)=>x===originals[i]),
 "malformed archived snapshots broke drawdown, leaked metadata or changed audit rows");
+});
+
+
+test("BDD206",()=>{
+const secret="PRIVATE_CSV_FIELD_206";
+const original=mock({messageId:5001,reason:"Authorization: Bearer "+secret,
+receivedAt:secret,entryTime:secret,exitTime:secret,lastPartialTime:secret,qty:secret});
+state.orders=[original];
+const exported=csv();
+assert(!exported.includes(secret) && exported.includes("https://t.me/KCryptoBTC168/5001") &&
+exported.split("\n").length===2 && original.reason.includes(secret) && original.qty===secret,
+"public CSV leaked private legacy scalar fields or altered the audit ledger");
+});
+test("BDD207",()=>{
+const secret="PRIVATE_CSV_EVENT_207";
+const event={at:"Authorization: "+secret,reason:"Authorization: "+secret,
+price:secret,netPnl:3,messageId:5002,debug:{secret}};
+const original=mock({status:"closed",reason:"stop_loss",netPnl:3,exitEvents:[event]});
+state.orders=[original];
+const exported=csv();
+assert(!exported.includes(secret) && exported.includes("5002") && exported.includes("netPnl") &&
+event.debug.secret===secret,
+"public CSV nested event leaked secret metadata or changed archived event");
+});
+test("BDD208",()=>{
+const at="2026-11-08T01:00:00Z";
+state.orders=[mock({messageId:5003,status:"closed",reason:"net_take_profit_1pct",
+entryPrice:100,exitPrice:102,netPnl:-1.25,receivedAt:at,entryTime:at,exitTime:at,
+exitEvents:[{at,reason:"net_take_profit_1pct",netPnl:-1.25,messageId:5010}]})];
+const exported=csv();
+assert(exported.includes("net_take_profit_1pct") && exported.includes("2026-11-08T01:00:00.000Z") &&
+exported.includes('"-1.25"') && exported.includes("5010") &&
+exported.split("\n").length===2,"valid public CSV history lost exit, time or negative PnL");
 });
 
 const failed=results.filter(x=>!x.pass);
