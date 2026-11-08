@@ -1808,8 +1808,8 @@ assert(rows.length===100&&rows[0].messageId===5006&&rows[99].messageId===5105,
 
 test("BDD168",()=>{
 state.orders=[mock({reason:'=HYPERLINK("https://bad.example","click")'})];
-assert(csv().includes('"\'=HYPERLINK(""https://bad.example"",""click"")"'),
-"spreadsheet formula was not neutralized in CSV");
+assert(csvCell('=HYPERLINK("https://bad.example","click")').startsWith('"\'=HYPERLINK') &&
+!csv().includes("bad.example"),"CSV formula escaping or strict public reason projection failed");
 });
 test("BDD169",()=>{
 for(const suspicious of ["+SUM(A1)","-HYPERLINK(A1)","@SUM(A1)"," \t=1+1","\ufeff=1+1"]){
@@ -1821,15 +1821,17 @@ assert(csvCell(-7.5)==='"-7.5"',"finite negative PnL lost numeric representation
 test("BDD170",()=>{
 state.orders=[mock({reason:"first\nsecond\rthird"})];
 const content=csv();
-assert(content.split("\n").length===2&&content.includes("first second third"),
-"CSV untrusted line breaks created extra records");
+assert(content.split("\n").length===2 &&
+csvCell("first\nsecond\rthird").includes("first second third") &&
+!content.includes("first second third"),"CSV record splitting or unsafe legacy text exposure");
 });
 test("BDD171",()=>{
 state.orders=[mock({messageId:"=1+1",reason:'note "unchanged"'})];
 const content=csv();
-assert(!content.includes("https://t.me/KCryptoBTC168/=")&&
-content.includes('"","SOLUSDT"')&&content.includes('"note ""unchanged"""'),
-"CSV original link input was unsafely constructed");
+assert(!content.includes("https://t.me/KCryptoBTC168/=") &&
+content.includes('"","SOLUSDT"') &&
+csvCell('note "unchanged"').includes('""unchanged""') &&
+!content.includes("unchanged"),"CSV link validation, quote escaping or private legacy text exposure failed");
 });
 
 test("BDD172",()=>{
