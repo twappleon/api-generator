@@ -425,6 +425,14 @@ const price = o.side === "long"
 : (o.entryPrice * (1 - NET_TAKE_PROFIT) - entryFeePerQty) / ((1+SLIP)*(1+FEE));
 return price > 0 && Number.isFinite(price) ? price : null;
 }
+// Normalize only on a simulated-trade write; preserve malformed source values for audit.
+function writableLedgerArray(order, field, originalField) {
+ if (Array.isArray(order[field])) return order[field];
+ if (order[field] != null && !Object.prototype.hasOwnProperty.call(order, originalField))
+ order[originalField] = order[field];
+ order[field] = [];
+ return order[field];
+}
 function closeOrder(o, price, reason, fraction = 1, messageId = null, inferredRatio = false) {
 if(o.status !== "open" || !Number.isFinite(fraction) || fraction <= 0 ||
 !Number.isFinite(price) || price<=0) return;
@@ -435,8 +443,8 @@ const feeExit = quantity * px * FEE;
 const grossPnl = (o.side === "long" ? px - o.entryPrice : o.entryPrice - px) * quantity;
 const allocatedEntryFee = (o.feeEntry || 0) * quantity / initial;
 const at = nowISO();
-o.exitEvents ||= [];
-o.exitEvents.push({ at, price: px, qty: quantity, fractionOfRemaining: fraction,
+const exits = writableLedgerArray(o, "exitEvents", "legacyExitEventsOriginal");
+exits.push({ at, price: px, qty: quantity, fractionOfRemaining: fraction,
 grossPnl, feeExit, allocatedEntryFee, netPnl: grossPnl-feeExit-allocatedEntryFee,
 reason, messageId, assumedRatio: inferredRatio });
 o.feeExit = (o.feeExit||0) + feeExit;
@@ -491,11 +499,11 @@ o.status = "cancelled"; o.reason = "channel_cancelled_before_fill"; m.classifica
 const f = closeFraction(m.text);
 if (!(f > 0 && f <= 1)) m.classification = "invalid_close_fraction";
 else {
-o.pendingCloseCommands ||= [];
-// Commands are uniquely keyed by Telegram message, avoiding double exits.
-if (!o.pendingCloseCommands.some(x=>x.messageId===m.id) &&
-!o.exitEvents?.some(x=>x.messageId===m.id)) {
-o.pendingCloseCommands.push({ messageId:m.id, fraction:f,
+const pending = writableLedgerArray(o,"pendingCloseCommands","legacyPendingCloseCommandsOriginal");
+// Compare only valid event objects; legacy arrays can contain null or scalars.
+if (!pending.some(x=>x && typeof x==="object" && x.messageId===m.id) &&
+!(Array.isArray(o.exitEvents) && o.exitEvents.some(x=>x && typeof x==="object" && x.messageId===m.id))) {
+pending.push({ messageId:m.id, fraction:f,
 reason:partialMsg(m.text)?"channel_partial_take_profit":"channel_close",
 inferredRatio:partialMsg(m.text) && !/(\d+\s*%|一半|減半|减半|半倉|半仓|\d+\s*\/\s*\d+)/.test(m.text) });
 }
@@ -573,11 +581,16 @@ closeOrder(o, price, "take_profit");
 else if (projectedNetReturn(o, price) >= NET_TAKE_PROFIT)
 closeOrder(o, price, "net_take_profit_1pct");
 else {
-// Backward compatibility with a pending full-close request from the previous version.
-if(o.reason === "channel_close_requested" && !o.pendingCloseCommands?.length)
+// Backward compatibility: malformed persisted commands cannot crash quote polling.
+const pending = writableLedgerArray(o,"pendingCloseCommands","legacyPendingCloseCommandsOriginal");
+if(o.reason === "channel_close_requested" && !pending.length)
 closeOrder(o, price, "channel_close");
-while(o.status === "open" && o.pendingCloseCommands?.length) {
-const cmd = o.pendingCloseCommands.shift();
+while(o.status === "open" && pending.length) {
+const cmd = pending.shift();
+if (!cmd || typeof cmd !== "object" || Array.isArray(cmd)) {
+(o.unreadablePendingCloseCommands ||= []).push(cmd); // preserve corrupt audit entries
+continue;
+}
 closeOrder(o, price, cmd.reason, cmd.fraction, cmd.messageId, cmd.inferredRatio);
 }
 }
@@ -2051,6 +2064,58 @@ const result=report();
 assert(result.partialExits===1&&result.daily["2026-11-08"].pnl===3&&
 result.daily["2026-11-08"].trades===2&&state.orders[0].exitEvents===events&&
 events.length===5,"mixed legacy exitEvents crashed or changed valid partial totals");
+});
+
+
+// Closed archived trades stay read-only; open orders repair only when a new action writes.
+test("BDD195",()=>{
+const o=mock();state.orders=[o];openOrder(o,100);
+const raw={raw:"old_bad_shape"};o.exitEvents=raw;
+handlePrice("SOLUSDT",94);
+assert(o.status==="closed"&&o.exitEvents.length===1&&
+o.legacyExitEventsOriginal===raw&&Number.isFinite(o.netPnl),
+"legacy non-array exitEvents blocked simulated stop or erased raw audit data");
+});
+test("BDD196",()=>{
+const o=mock();state.orders=[o];openOrder(o,100);
+const history=[null,{messageId:5002,at:current(),netPnl:0}];
+o.exitEvents=history;state.lastSeenId=5001;
+ingest([{id:5002,text:"全部平倉",replyTo:5001,publishedAt:current()},
+{id:5003,text:"全部平倉",replyTo:5001,publishedAt:current()}],()=>{});
+assert(o.exitEvents===history&&o.pendingCloseCommands.length===1&&
+o.pendingCloseCommands[0].messageId===5003,
+"mixed legacy exit events crashed reply dedupe or duplicated close");
+handlePrice("SOLUSDT",100);
+assert(o.status==="closed"&&o.exitEvents.length===3&&
+o.exitEvents[2].messageId===5003,
+"legitimate new close failed with mixed legacy events");
+});
+test("BDD197",()=>{
+const o=mock();state.orders=[o];openOrder(o,100);
+const raw="old_pending_corruption";o.pendingCloseCommands=raw;state.lastSeenId=5001;
+ingest([{id:5002,text:"全部平倉",replyTo:5001,publishedAt:current()}],()=>{});
+assert(Array.isArray(o.pendingCloseCommands)&&o.pendingCloseCommands.length===1&&
+o.legacyPendingCloseCommandsOriginal===raw,
+"malformed pending command was lost or blocked a valid reply");
+handlePrice("SOLUSDT",100);
+assert(o.status==="closed"&&o.exitEvents.length===1&&o.exitEvents[0].messageId===5002,
+"valid requested close failed after recovery");
+});
+test("BDD198",()=>{
+const o=mock();state.orders=[o];openOrder(o,100);
+o.exitEvents={privateRaw:"DO_NOT_EXPOSE_RAW_AUDIT"};
+closeOrder(o,94,"stop_loss");
+assert(!JSON.stringify(publicOrders()).includes("DO_NOT_EXPOSE_RAW_AUDIT")&&
+!csv().includes("DO_NOT_EXPOSE_RAW_AUDIT"),
+"recovered private raw event leaked into public orders or CSV");
+});
+test("BDD199",()=>{
+const o=mock();state.orders=[o];openOrder(o,100);
+o.pendingCloseCommands=[null,{messageId:5002,reason:"channel_close",fraction:1,inferredRatio:false}];
+handlePrice("SOLUSDT",100);
+assert(o.status==="closed"&&o.exitEvents.length===1&&
+o.unreadablePendingCloseCommands?.length===1&&o.unreadablePendingCloseCommands[0]===null,
+"corrupted queued command crashed price loop or erased original unreadable command");
 });
 
 const failed=results.filter(x=>!x.pass);
