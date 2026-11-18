@@ -86,3 +86,36 @@ test("daily AI Telegram summary is idempotent and not emitted outside UTC window
  assert.equal(s.outbox.filter(x=>x.id==="ai-diag-daily:2026-11-19").length,1);
  assert.match(s.outbox[0].text,/PAPER ONLY/);
 });
+
+test("7-day return and drawdown stay null until observations cover the entire window",()=>{
+ const at=T+60000,s=initialState();
+ s.marketLastGoodAt=new Date(at).toISOString();s.marketSampleCount=4;
+ let d=analyzeCycle(s,{at,marks:{},candles:{},previousProcessed:{},positionIdBefore:null});
+ let snap=safeAiSnapshot(s,at,d);
+ assert.equal(snap.evaluation.days7.verified,false);
+ assert.equal(snap.evaluation.days7.netAssetReturnPct,null);
+ assert.equal(snap.evaluation.days30.netAssetReturnPct,null);
+ const ms=15*60000;
+ s.equitySamples=Array.from({length:7*24*4+1},(_,i)=>({
+   t:at-7*24*3600000+i*ms,equity:100+i/(7*24*4),cash:100+i/(7*24*4)
+ }));
+ d=analyzeCycle(s,{at,marks:{},candles:{},previousProcessed:{},positionIdBefore:null});
+ snap=safeAiSnapshot(s,at,d);
+ assert.equal(snap.evaluation.days7.verified,true);
+ assert.equal(snap.evaluation.days7.netAssetReturnPct,1);
+ assert.equal(snap.evaluation.days7.observedMaxDrawdownPct,0);
+ assert.equal(snap.evaluation.days30.verified,false);
+ assert.equal(snap.evaluation.days30.netAssetReturnPct,null);
+});
+test("never disclose arbitrary persisted trade reasons or malformed timestamps in AI snapshots",()=>{
+ const s=initialState(),at=T+60000;
+ s.trades=[{symbol:"BTCUSDT",side:"LONG",netPnl:0,reason:"SENSITIVE_BOT_TOKEN",closedAt:"SENSITIVE_LINK"}];
+ s.winCount=1;
+ const diag=analyzeCycle(s,{at,marks:{},candles:{},previousProcessed:{},positionIdBefore:null});
+ const snap=safeAiSnapshot(s,at,diag);
+ const j=JSON.stringify(snap);
+ assert.equal(j.includes("SENSITIVE_BOT_TOKEN"),false);
+ assert.equal(j.includes("SENSITIVE_LINK"),false);
+ assert.equal(snap.lastTrades[0].reason,"OTHER");
+ assert.equal(snap.lastTrades[0].closedAt,null);
+});
