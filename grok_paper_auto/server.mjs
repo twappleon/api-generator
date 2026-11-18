@@ -4,6 +4,7 @@ import {dirname} from "node:path";
 import {timingSafeEqual,randomBytes} from "node:crypto";
 import {POLICY,initialState,tick,equityAt,freshMark,enqueue} from "./engine.mjs";
 import {recordEquitySnapshot,makeDashboardData} from "./dashboard-data.mjs";
+import {analyzeCycle,safeAiSnapshot,maybeQueueDailyDiagnostic} from "./diagnostics.mjs";
 
 // Coinbase Exchange anonymous public USD spot-reference feed; PAPER ONLY. No exchange order routes.
 const HOST="https://api.exchange.coinbase.com";
@@ -134,6 +135,9 @@ async function cycle(){
       if(c.status==="fulfilled")candles[s]=c.value;else errors.push(s+":CANDLES_UNAVAILABLE");
     });
     await Promise.all(tasks);
+    // Analysis is strictly observational; preserve pre-tick candle baselines and trade counts.
+    const before={processed:{...state.processed},positionId:state.position?.id||null,
+      closedCount:state.winCount+state.lossCount};
     tick(state,{at,marks,candles});
     // Rotate capability link after 30 days. No trade state or strategy changes.
     if(state.dashboardLinkRevision!==LINK_REVISION||Date.now()-state.dashboardAccessCreatedAt>=MAGIC_LINK_TTL){
@@ -157,6 +161,22 @@ async function cycle(){
     }
     console.info("PAPER_MARKET_SCAN",validSymbols+"/"+POLICY.allowedSymbols.length, "SOURCE",MARKET_SOURCE,"PAPER_ONLY");
     lastError=errors.length?errors.join(", "):null;
+    const diagnostic=analyzeCycle(state,{
+      at,marks,candles,previousProcessed:before.processed,
+      positionIdBefore:before.positionId,closedCountBefore:before.closedCount,
+      marketSource:MARKET_SOURCE
+    });
+    // This snapshot is an allowlisted projection: no password, chat ID, bot token, private URL or ledger identifiers.
+    const safe=safeAiSnapshot(state,Date.now(),diagnostic);
+    if(validSymbols===POLICY.allowedSymbols.length){
+      maybeQueueDailyDiagnostic(state,{at,snapshot:safe});
+    }
+    const lastAi=Number.isSafeInteger(state.aiLastSnapshotAt)?state.aiLastSnapshotAt:0;
+    if(at-lastAi>=900000||diagnostic.closedThisScan>0||
+       diagnostic.symbols.some(x=>x.reason==="OPEN_EXECUTED")){
+      console.info("PAPER_AI_SNAPSHOT "+JSON.stringify(safe));
+      state.aiLastSnapshotAt=at;
+    }
     persist();
     await drainTelegram();
   }catch(e){
@@ -209,10 +229,10 @@ const server=http.createServer((req,res)=>{
       return res.end();
     }
   }
-  if((p==="/dashboard"||p==="/dashboard.js"||p==="/api/dashboard")&&!dashboardAccess(req)){
+  if((p==="/dashboard"||p==="/dashboard.js"||p==="/api/dashboard"||p==="/api/diagnostics")&&!dashboardAccess(req)){
     return send(res,401,{error:"PRIVATE_TELEGRAM_LINK_REQUIRED"});
   }
-  if(p!=="/dashboard"&&p!=="/dashboard.js"&&p!=="/api/dashboard"&&!authorized(req)){
+  if(p!=="/dashboard"&&p!=="/dashboard.js"&&p!=="/api/dashboard"&&p!=="/api/diagnostics"&&!authorized(req)){
     res.setHeader("WWW-Authenticate",'Basic realm="Grok Paper Auto"');
     return send(res,401,{error:"AUTH_REQUIRED"});
   }
@@ -226,12 +246,29 @@ const server=http.createServer((req,res)=>{
     });
     return res.end(p==="/dashboard"?DASHBOARD_HTML:DASHBOARD_JS);
   }
+  if(p==="/api/diagnostics"){
+    try{
+      if(!state.aiDiagnostics)return send(res,503,{error:"DIAGNOSTICS_NOT_YET_AVAILABLE"});
+      return send(res,200,safeAiSnapshot(state,Date.now(),state.aiDiagnostics));
+    }catch(e){console.error("PAPER_DIAGNOSTIC_PROJECTION_ERROR");return send(res,503,{error:"DIAGNOSTICS_UNAVAILABLE"});}
+  }
   if(p==="/api/dashboard"){
     try{
-      return send(res,200,makeDashboardData(state,Date.now(),{
+      const data=makeDashboardData(state,Date.now(),{
         marketSource:MARKET_SOURCE,telegramConfigured:Boolean(TG_TOKEN&&TG_CHAT),
         startupNoticeSent:Boolean(state.outbox.find(x=>x.id===STARTUP_NOTICE_ID)?.sentAt)
-      }));
+      });
+      data.diagnostics=state.aiDiagnostics?{
+        asOf:state.aiDiagnostics.asOf,
+        symbols:state.aiDiagnostics.symbols.map(x=>({
+          symbol:POLICY.allowedSymbols.includes(x.symbol)?x.symbol:null,
+          reason:x.reason,decision:x.decision,lastClosedAt:x.lastClosedAt,
+          nextCloseAt:x.nextCloseAt,breakout:x.breakout,
+          distanceToBreakoutPct:x.distanceToBreakoutPct,atrStopPct:x.atrStopPct,
+          markDeviationPct:x.markDeviationPct
+        }))
+      }:null;
+      return send(res,200,data);
     }catch(e){console.error("PAPER_DASHBOARD_PROJECTION_ERROR",String(e));return send(res,503,{error:"DASHBOARD_UNAVAILABLE"});}
   }
   if(p==="/api/status"){
