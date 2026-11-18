@@ -85,7 +85,7 @@ export function closePaper(state,quote,at,reason){
 }
 
 export function openPaper(state,sym,sig,quote,at){
-  if(state.position||state.dailyHalt||!freshMark(quote,at)||state.cash<=0)return false;
+  if(state.position||state.dailyHalt||!freshMark(quote,at)||state.cash<=0||state.outbox.filter(x=>!x.sentAt).length>=300)return false;
   const deviation=Math.abs(quote.price-sig.reference)/sig.reference;
   const distance=2*sig.atr;
   if(deviation>POLICY.maxPriceDeviationPct||distance/quote.price>POLICY.maxStopPct||distance<=0)return false;
