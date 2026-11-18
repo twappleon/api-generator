@@ -18,6 +18,8 @@ const DASHBOARD_BASE="https://grok-paper-auto-production.up.railway.app";
 const MAGIC_COOKIE="paper_view";
 const MAGIC_LINK_TTL=30*24*60*60*1000;
 const MAGIC_COOKIE_SECONDS=7*24*60*60;
+const LINK_REVISION=process.env.DASHBOARD_LINK_REVISION||"v1";
+if(!/^[A-Za-z0-9_-]{1,40}$/.test(LINK_REVISION))throw Error("FAIL_CLOSED_INVALID_LINK_REVISION");
 const DASHBOARD_HTML=readFileSync(new URL("./dashboard.html",import.meta.url),"utf8");
 const DASHBOARD_JS=readFileSync(new URL("./dashboard.js",import.meta.url),"utf8");
 if(!FILE.startsWith("/data/")||PASSWORD.length<16||!Number.isSafeInteger(PORT)||PORT<1||PORT>65535)throw Error("FAIL_CLOSED_INVALID_CONFIG");
@@ -43,10 +45,11 @@ state.bootstrapNoticeQueued=state.bootstrapNoticeQueued===true;
 const tokenFormat=/^[A-Za-z0-9_-]{43}$/;
 if(state.dashboardAccessToken!==undefined&&!tokenFormat.test(state.dashboardAccessToken))throw Error("FAIL_CLOSED_INVALID_DASHBOARD_TOKEN");
 if(state.dashboardAccessToken!==undefined&&(!Number.isSafeInteger(state.dashboardAccessCreatedAt)||state.dashboardAccessCreatedAt<=0))throw Error("FAIL_CLOSED_INVALID_DASHBOARD_TOKEN_TIME");
-if(!state.dashboardAccessToken||Date.now()-state.dashboardAccessCreatedAt>=MAGIC_LINK_TTL){
+if(!state.dashboardAccessToken||state.dashboardLinkRevision!==LINK_REVISION||Date.now()-state.dashboardAccessCreatedAt>=MAGIC_LINK_TTL){
   state.dashboardAccessToken=randomBytes(32).toString("base64url");
   state.dashboardAccessCreatedAt=Date.now();
   state.dashboardAccessVersion=(Number.isSafeInteger(state.dashboardAccessVersion)&&state.dashboardAccessVersion>0?state.dashboardAccessVersion:0)+1;
+  state.dashboardLinkRevision=LINK_REVISION;
 }
 persist();
 const iso=()=>new Date().toISOString();
@@ -133,10 +136,11 @@ async function cycle(){
     await Promise.all(tasks);
     tick(state,{at,marks,candles});
     // Rotate capability link after 30 days. No trade state or strategy changes.
-    if(Date.now()-state.dashboardAccessCreatedAt>=MAGIC_LINK_TTL){
+    if(state.dashboardLinkRevision!==LINK_REVISION||Date.now()-state.dashboardAccessCreatedAt>=MAGIC_LINK_TTL){
       state.dashboardAccessToken=randomBytes(32).toString("base64url");
       state.dashboardAccessCreatedAt=Date.now();
       state.dashboardAccessVersion=(state.dashboardAccessVersion||1)+1;
+      state.dashboardLinkRevision=LINK_REVISION;
       persist();
       queueDashboardLinkNotice();
     }
