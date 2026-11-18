@@ -1,6 +1,11 @@
 const nativeFetch=globalThis.fetch;
 globalThis.fetch=async function(input,opts){
  const u=new URL(String(input));
+ if(u.hostname==="api.telegram.org"){
+   if(opts?.method!=="POST"||!u.pathname.endsWith("/sendMessage"))throw Error("SMOKE_DENIED_TELEGRAM_METHOD");
+   const body=JSON.parse(opts.body);if(!String(body.text||"").startsWith("PAPER ONLY | "))throw Error("SMOKE_DENIED_UNTAGGED_TELEGRAM");
+   return Response.json({ok:true,result:{message_id:1234}});
+ }
  if(u.hostname!=="demo-fapi.binance.com")throw Error("SMOKE_DENIED_OUTBOUND_HOST:"+u.hostname);
  if(opts?.method&&opts.method!=="GET")throw Error("SMOKE_DENIED_NON_GET");
  if(u.pathname==="/fapi/v1/premiumIndex")return Response.json({symbol:u.searchParams.get("symbol"),markPrice:"100",time:Date.now()});
