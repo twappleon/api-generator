@@ -76,6 +76,48 @@ function paintProgress(days,key,v){
   const coverage=Number.isFinite(v?.coveragePct)?v.coveragePct.toFixed(1)+"%":"—";
   set(key+"Status",v?.passed?"資料覆蓋率 "+coverage+" · 觀測條件達標":"資料覆蓋率 "+coverage+" · "+(v?.reason||"收集真實行情中"));
 }
+const DIAG_REASONS={
+  MARK_STALE:"行情過期，暫停判定",
+  CANDLES_INSUFFICIENT:"有效 K 線不足 220 根",
+  CANDLE_NOT_CLOSED:"最新 K 線尚未收盤",
+  CANDLE_INVALID:"K 線數據不完整",
+  INITIAL_BASELINE:"建立基準，等待下一根收盤",
+  NO_NEW_CLOSED_CANDLE:"本小時沒有新的已收盤 K 線",
+  NO_DONCHIAN_BREAKOUT:"未突破前 20 根高點／低點",
+  EMA200_FILTER:"突破方向不符合 EMA200",
+  ATR_INVALID:"ATR 波動率無效",
+  STOP_DISTANCE_GT_5PCT:"ATR 停損距離大於價格 5%",
+  PRICE_DEVIATION_GT_3PCT:"即時價偏離訊號超過 3%",
+  DAILY_HALT:"當日 2% 停損已觸發",
+  POSITION_ALREADY_OPEN:"已有模擬持倉",
+  NOTIFICATION_QUEUE_FULL:"通知佇列已滿，暫停新倉",
+  CASH_UNAVAILABLE:"模擬資金不足",
+  OPEN_ELIGIBLE:"進場條件已通過，未產生新倉",
+  OPEN_EXECUTED:"本輪已建立模擬持倉",
+  OPEN_BLOCKED_OTHER:"其他限制，請查 AI 診斷日誌"
+};
+function paintDiagnostics(d){
+  const body=$("diagBody");while(body.firstChild)body.removeChild(body.firstChild);
+  const list=Array.isArray(d?.symbols)?d.symbols:[];
+  set("diagAsOf",d?.asOf?"最近更新："+dt(d.asOf):"尚未取得診斷資料");
+  if(!list.length){
+    const tr=document.createElement("tr"),td=document.createElement("td");
+    td.colSpan=5;td.style.textAlign="center";td.style.padding="24px";
+    td.textContent="AI 訊號診斷尚未產生";tr.appendChild(td);body.appendChild(tr);return;
+  }
+  for(const s of list){
+    const tr=document.createElement("tr");
+    const name=String(s.symbol||"—").replace("USDT","");
+    const decision=s.decision==="OPENED"?"模擬開倉":s.decision==="BLOCKED"?"條件未通過":"等待";
+    const reason=DIAG_REASONS[s.reason]||"未識別狀態";
+    const breakout=s.breakout==="LONG"?"多方突破":s.breakout==="SHORT"?"空方突破":"未突破";
+    const next=dt(s.nextCloseAt);
+    for(const val of [name,decision,reason,breakout,next]){
+      const td=document.createElement("td");td.textContent=val;tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  }
+}
 function render(x){
   payload=x;const m=x.metrics||{},v=x.validation||{},p=x.position||null;
   const stale=x.equityFresh===false,eq=stale?null:m.equity,net=stale?null:m.netPnl;
@@ -110,6 +152,7 @@ function render(x){
   set("riskState",x.dailyHalt?"本交易日已觸發 2% 風控停止新開倉":"每日風控已啟用。限額不保證跳空時的最大虧損。");
   paintProgress(7,"seven",v.days7);paintProgress(30,"thirty",v.days30);
   set("trackingStarted","開始觀測 "+dt(v.trackingStartedAt)+" · 資料不得回填或冒充歷史績效");
+  paintDiagnostics(x.diagnostics);
   drawTrades(x.trades);
 }
 async function refresh(){
