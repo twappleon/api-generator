@@ -122,3 +122,26 @@ test("mock Telegram notification is sent once and persisted across restart",asyn
    assert.equal(saved.outbox.filter(x=>x.id==="service-ready:grok-paper-auto:v1").length,1);
  }finally{second.child.kill("SIGTERM");await sleep(150);if(existsSync(FILE))unlinkSync(FILE);}
 });
+
+test("incomplete 3/4 market feed cannot count toward 7/30-day equity coverage",async()=>{
+ const {child,errors}=await start({MOCK_STALE_SYMBOL:"ZEC-USD"});
+ try{
+   let observed=false;
+   for(let i=0;i<80;i++){
+     if(child.exitCode!==null)throw Error("server exited "+errors());
+     try{
+       const r=await fetch(BASE+"/ready"),d=await r.json();
+       if(d.market?.validSymbols===3){
+         assert.equal(r.status,503);
+         assert.equal(d.ready,false);
+         observed=true;break;
+       }
+     }catch(error){if(error instanceof assert.AssertionError)throw error;}
+     await sleep(100);
+   }
+   assert.equal(observed,true);
+   const persisted=JSON.parse(readFileSync(FILE,"utf8"));
+   assert.equal(persisted.equitySamples?.length??0,0);
+   assert.equal(persisted.marketLastGoodAt??null,null);
+ }finally{child.kill("SIGTERM");await sleep(150);if(existsSync(FILE))unlinkSync(FILE);}
+});
