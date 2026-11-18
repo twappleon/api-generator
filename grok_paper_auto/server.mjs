@@ -1,7 +1,7 @@
 import http from "node:http";
 import {existsSync,mkdirSync,readFileSync,renameSync,writeFileSync,openSync,fsyncSync,closeSync} from "node:fs";
 import {dirname} from "node:path";
-import {timingSafeEqual} from "node:crypto";
+import {timingSafeEqual,randomBytes} from "node:crypto";
 import {POLICY,initialState,tick,equityAt,freshMark,enqueue} from "./engine.mjs";
 import {recordEquitySnapshot,makeDashboardData} from "./dashboard-data.mjs";
 
@@ -14,6 +14,10 @@ const PASSWORD=process.env.APP_PASSWORD||"";
 const TG_TOKEN=process.env.TELEGRAM_BOT_TOKEN||"";
 const TG_CHAT=process.env.TELEGRAM_CHAT_ID||"";
 const PORT=Number(process.env.PORT||8080);
+const DASHBOARD_BASE="https://grok-paper-auto-production.up.railway.app";
+const MAGIC_COOKIE="paper_view";
+const MAGIC_LINK_TTL=30*24*60*60*1000;
+const MAGIC_COOKIE_SECONDS=7*24*60*60;
 const DASHBOARD_HTML=readFileSync(new URL("./dashboard.html",import.meta.url),"utf8");
 const DASHBOARD_JS=readFileSync(new URL("./dashboard.js",import.meta.url),"utf8");
 if(!FILE.startsWith("/data/")||PASSWORD.length<16||!Number.isSafeInteger(PORT)||PORT<1||PORT>65535)throw Error("FAIL_CLOSED_INVALID_CONFIG");
@@ -34,9 +38,41 @@ function persist(){
 }
 state.bootCount=(Number.isSafeInteger(state.bootCount)&&state.bootCount>=0?state.bootCount:0)+1;
 state.bootstrapNoticeQueued=state.bootstrapNoticeQueued===true;
+// Secure random capability URL: stable across restarts, rotated every 30 days.
+// The token never appears in public APIs or logs. Anyone holding its Telegram link can view the read-only paper ledger.
+const tokenFormat=/^[A-Za-z0-9_-]{43}$/;
+if(state.dashboardAccessToken!==undefined&&!tokenFormat.test(state.dashboardAccessToken))throw Error("FAIL_CLOSED_INVALID_DASHBOARD_TOKEN");
+if(state.dashboardAccessToken!==undefined&&(!Number.isSafeInteger(state.dashboardAccessCreatedAt)||state.dashboardAccessCreatedAt<=0))throw Error("FAIL_CLOSED_INVALID_DASHBOARD_TOKEN_TIME");
+if(!state.dashboardAccessToken||Date.now()-state.dashboardAccessCreatedAt>=MAGIC_LINK_TTL){
+  state.dashboardAccessToken=randomBytes(32).toString("base64url");
+  state.dashboardAccessCreatedAt=Date.now();
+  state.dashboardAccessVersion=(Number.isSafeInteger(state.dashboardAccessVersion)&&state.dashboardAccessVersion>0?state.dashboardAccessVersion:0)+1;
+}
 persist();
 const iso=()=>new Date().toISOString();
 const STARTUP_NOTICE_ID="service-ready:grok-paper-auto:v1";
+const dashboardLink=()=>DASHBOARD_BASE+"/dashboard?access="+state.dashboardAccessToken;
+function secureEquals(got,expected){
+  if(typeof got!=="string"||typeof expected!=="string"||got.length!==expected.length||!tokenFormat.test(got))return false;
+  return timingSafeEqual(Buffer.from(got),Buffer.from(expected));
+}
+function cookieValue(req,name){
+  const raw=req.headers.cookie||"";
+  const part=raw.split(";").map(x=>x.trim()).find(x=>x.startsWith(name+"="));
+  return part?part.slice(name.length+1):"";
+}
+function dashboardAccess(req){
+  return secureEquals(cookieValue(req,MAGIC_COOKIE),state.dashboardAccessToken)||authorized(req);
+}
+function queueDashboardLinkNotice(){
+  if(!TG_TOKEN||!TG_CHAT)return;
+  const id="dashboard-access:v"+state.dashboardAccessVersion;
+  if(!state.outbox.some(x=>x.id===id)){
+    enqueue(state,id,"📊 Dashboard 手機免輸入密碼連結已啟用。僅限持有此連結的人查看純模擬帳本，請勿轉傳；連結每 30 天自動更換。",Date.now());
+    persist();
+  }
+}
+queueDashboardLinkNotice();
 let scanning=false,lastError=null,lastSuccessfulMarketPoll=state.marketLastGoodAt||null;
 async function getJson(relative){
   if(!/^\/products\/(?:BTC|ETH|SOL|ZEC)-USD\/(?:ticker|candles\?granularity=3600)$/.test(relative))throw Error("DISALLOWED_MARKET_PATH");
@@ -71,7 +107,7 @@ async function drainTelegram(){
     try{
       const r=await fetch("https://api.telegram.org/bot"+TG_TOKEN+"/sendMessage",{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({chat_id:TG_CHAT,text:msg.text,disable_web_page_preview:true}),
+        body:JSON.stringify({chat_id:TG_CHAT,text:String(msg.text).slice(0,3850)+"\n📊 Dashboard（免輸入密碼，請勿轉傳）："+dashboardLink(),disable_web_page_preview:true}),
         signal:AbortSignal.timeout(9000)});
       const a=await r.json();if(!r.ok||a.ok!==true)throw Error("TELEGRAM_HTTP_"+r.status);
       msg.sentAt=iso();persist();
@@ -96,6 +132,14 @@ async function cycle(){
     });
     await Promise.all(tasks);
     tick(state,{at,marks,candles});
+    // Rotate capability link after 30 days. No trade state or strategy changes.
+    if(Date.now()-state.dashboardAccessCreatedAt>=MAGIC_LINK_TTL){
+      state.dashboardAccessToken=randomBytes(32).toString("base64url");
+      state.dashboardAccessCreatedAt=Date.now();
+      state.dashboardAccessVersion=(state.dashboardAccessVersion||1)+1;
+      persist();
+      queueDashboardLinkNotice();
+    }
     const validSymbols=POLICY.allowedSymbols.filter(sym=>freshMark(marks[sym],at)&&candles[sym]?.length>=220&&candles[sym].at(-1)?.time<at).length;
     state.marketSampleCount=validSymbols;
     if(validSymbols===POLICY.allowedSymbols.length){
@@ -149,12 +193,31 @@ const server=http.createServer((req,res)=>{
       telegram:{configured:Boolean(TG_TOKEN&&TG_CHAT),startupNoticeSent:Boolean(notice?.sentAt),pending:state.outbox.filter(x=>!x.sentAt).length}};
     return send(res,readiness.ready?200:503,readiness);
   }
-  if(!authorized(req)){res.setHeader("WWW-Authenticate",'Basic realm="Grok Paper Auto"');return send(res,401,{error:"AUTH_REQUIRED"});}
+  if(p==="/dashboard"){
+    const token=new URL(req.url,DASHBOARD_BASE).searchParams.get("access");
+    if(token!==null){
+      if(!secureEquals(token,state.dashboardAccessToken))return send(res,401,{error:"PRIVATE_LINK_INVALID"});
+      res.writeHead(302,{
+        "Location":"/dashboard","Cache-Control":"no-store","Referrer-Policy":"no-referrer",
+        "X-Robots-Tag":"noindex, nofollow",
+        "Set-Cookie":MAGIC_COOKIE+"="+token+"; Path=/; Max-Age="+MAGIC_COOKIE_SECONDS+"; Secure; HttpOnly; SameSite=Lax"
+      });
+      return res.end();
+    }
+  }
+  if((p==="/dashboard"||p==="/dashboard.js"||p==="/api/dashboard")&&!dashboardAccess(req)){
+    return send(res,401,{error:"PRIVATE_TELEGRAM_LINK_REQUIRED"});
+  }
+  if(p!=="/dashboard"&&p!=="/dashboard.js"&&p!=="/api/dashboard"&&!authorized(req)){
+    res.setHeader("WWW-Authenticate",'Basic realm="Grok Paper Auto"');
+    return send(res,401,{error:"AUTH_REQUIRED"});
+  }
   if(p==="/dashboard"||p==="/dashboard.js"){
     res.writeHead(200,{
       "Content-Type":p==="/dashboard"?"text/html; charset=utf-8":"text/javascript; charset=utf-8",
       "Cache-Control":"no-store","X-Content-Type-Options":"nosniff",
       "Referrer-Policy":"no-referrer",
+      "X-Robots-Tag":"noindex, nofollow",
       "Content-Security-Policy":"default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; connect-src 'self'; script-src 'self'; style-src 'unsafe-inline'"
     });
     return res.end(p==="/dashboard"?DASHBOARD_HTML:DASHBOARD_JS);
