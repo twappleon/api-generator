@@ -52,3 +52,17 @@ The existing mobile Dashboard is **not publicly accessible without a link**. It 
 - The link rotates automatically after 30 days. To revoke it immediately, change the optional Railway variable DASHBOARD_LINK_REVISION from v1 to a new value and redeploy. Previous link and cookies then stop working; a new link notice goes to Telegram.
 - Anyone who can read or forward the link may view the balance, positions and trades. Treat the link like a secret: do not post it publicly. The owner can request rotation if shared accidentally.
 - Tests exercise 401 without token, bad-link refusal, token redemption, cookie access, /api/status isolation, Telegram link insertion, replay-safe persistence and four viewport browser tests without Basic Auth.
+
+## v1.4 — Read-only AI diagnostics and no-entry root causes
+
+- Retains 100 USDT PAPER_ONLY, 5% maximum one-position notional and 2% UTC daily equity halt. Trading engine.mjs remains byte-identical; no Binance Demo or live order calls.
+- Every market poll independently analyzes four closed 1-hour candle series and labels no-entry reasons including missing data, initial baseline, no new candle, Donchian no breakout, EMA200 direction, ATR wide stop, >3% price deviation, existing position, daily halt or Telegram queue saturation.
+- Analysis follows the original trading tick; it has no control over trade execution or risk settings.
+- Private GET /api/diagnostics requires the same Telegram magic link or admin authentication as /dashboard. The status is a sanitized projection, not raw ledger state.
+- PAPER_AI_SNAPSHOT JSON log is emitted once per 15 minutes, plus immediately for entry or completed trade. The allowlisted data contains equity, realized/net PnL, fees, open position size, up to five recent trades, per-symbol decisions and evidence-gated 7/30-day evaluation.
+- Never log admin passwords, Telegram bot tokens/chat IDs, private dashboard URLs, cookies, raw ledger contents or credentials. Railway log access is restricted to authorized operations.
+- At 00:10–00:59 UTC, one idempotent PAPER ONLY diagnostic Telegram report per UTC day is queued with equity, net PnL, daily risk, reasons and 7/30-day coverage. Existing UTC daily report remains intact.
+- 7/30-day ROI and observed drawdown are only verified if the full actual sample window passes 95% coverage with no long data gaps. Partial/missing periods return null instead of invented performance.
+- AI can review sanitized information from authorized Railway get_logs calls, filtering PAPER_AI_SNAPSHOT. Logs are not a durable database or public API.
+- Dashboard renders the four latest symbol reasons and next candle close with safe DOM textContent.
+- State continues on the same isolated /data volume with bounded reason history; original trades are preserved.
