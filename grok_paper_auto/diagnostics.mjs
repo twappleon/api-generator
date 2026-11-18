@@ -1,7 +1,7 @@
 // PAPER ONLY read-only analysis of closed-candle decisions and sanitized metrics.
 // Never imports order clients, secrets, admin cookies, or Telegram URLs.
 import {POLICY,ema,freshMark,signalFromClosed,equityAt,enqueue} from "./engine.mjs";
-import {makeDashboardData} from "./dashboard-data.mjs";
+import {makeDashboardData,observedMaxDrawdownPct} from "./dashboard-data.mjs";
 
 const MAX_REASON_HISTORY=320;
 const SAFE_REASONS=new Set([
@@ -81,6 +81,34 @@ export function analyzeCycle(state,{at,marks,candles,previousProcessed,positionI
  state.aiDiagnostics={version:1,asOf:iso(at),marketSource,symbols,counts,history:history.slice(-MAX_REASON_HISTORY),
    closedCount:closedAfter,closedThisScan:Math.max(0,closedAfter-closedCountBefore)};
  return state.aiDiagnostics;
+}
+// A performance score is only published when the underlying forward-observation window passes its coverage gate.
+// Partial windows explicitly have null return/risk estimates; never backfill missing observations.
+function evaluateWindow(state,at,days,coverage){
+ const start=at-days*86400000;
+ const samples=(Array.isArray(state.equitySamples)?state.equitySamples:[])
+   .filter(x=>x&&Number.isSafeInteger(x.t)&&x.t>=start&&x.t<=at&&Number.isFinite(x.equity)&&x.equity>0)
+   .sort((a,b)=>a.t-b.t);
+ const complete=coverage?.passed===true&&samples.length>=2
+    &&samples[0].t<=start+15*60000&&samples.at(-1).t>=at-15*60000;
+ const first=samples[0],last=samples.at(-1);
+ const allTrades=Array.isArray(state.trades)?state.trades:[];
+ const historicalLost=(state.winCount+state.lossCount)>allTrades.length;
+ const oldestTradeAt=Date.parse(allTrades[0]?.closedAt||"");
+ const tradeHistoryComplete=!historicalLost||(Number.isFinite(oldestTradeAt)&&oldestTradeAt<=start);
+ const closes=allTrades.filter(x=>{
+   const t=Date.parse(x.closedAt||"");
+   return Number.isFinite(t)&&t>=start&&t<=at;
+ });
+ const wins=closes.filter(x=>Number.isFinite(x.netPnl)&&x.netPnl>=0).length;
+ const pnl=closes.reduce((sum,x)=>sum+(Number.isFinite(x.netPnl)?x.netPnl:0),0);
+ return {verified:complete,coveragePct:rounded(coverage?.coveragePct,2),
+   realizedTrades:tradeHistoryComplete?closes.length:null,
+   tradeWinRatePct:tradeHistoryComplete&&closes.length?rounded(100*wins/closes.length,2):null,
+   closedNetPnl:tradeHistoryComplete?rounded(pnl):null,
+   netAssetReturnPct:complete?rounded(100*(last.equity/first.equity-1),3):null,
+   observedMaxDrawdownPct:complete?rounded(observedMaxDrawdownPct(samples),3):null,
+   reason:complete?"FORWARD_DATA_COVERAGE_VERIFIED":"INSUFFICIENT_FORWARD_OBSERVATIONS"};
 }
 export function safeAiSnapshot(state,at,diagnostic){
  if(state.mode!=="PAPER_ONLY"||state.startCapital!==100)throw Error("FAIL_CLOSED_NOT_PAPER_ONLY");
