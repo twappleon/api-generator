@@ -98,7 +98,7 @@ async function cycle(){
     tick(state,{at,marks,candles});
     const validSymbols=POLICY.allowedSymbols.filter(sym=>freshMark(marks[sym],at)&&candles[sym]?.length>=220&&candles[sym].at(-1)?.time<at).length;
     state.marketSampleCount=validSymbols;
-    if(validSymbols>0){
+    if(validSymbols===POLICY.allowedSymbols.length){
       recordEquitySnapshot(state,marks,at,true);
       state.marketLastGoodAt=iso();
       lastSuccessfulMarketPoll=state.marketLastGoodAt;
