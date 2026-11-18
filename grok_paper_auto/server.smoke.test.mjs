@@ -10,11 +10,11 @@ async function start(env={}){
  const child=spawn(process.execPath,["--import",new URL("./mock-market.mjs",import.meta.url).pathname,new URL("./server.mjs",import.meta.url).pathname],{
   env:{...process.env,DATA_FILE:FILE,APP_PASSWORD:"synthetic-test-password-never-use",PORT:String(PORT),...env},stdio:["ignore","pipe","pipe"]
  });
- let stderr="";child.stderr.on("data",b=>{stderr+=String(b)});
- return {child,errors:()=>stderr};
+ let stderr="",stdout="";child.stderr.on("data",b=>{stderr+=String(b)});child.stdout.on("data",b=>{stdout+=String(b)});
+ return {child,errors:()=>stderr,logs:()=>stdout};
 }
 test("read-only HTTP auth, paper-only mode, safe restart state",async()=>{
- const {child,errors}=await start();
+ const {child,errors,logs}=await start();
  try{
    let ready=false;
    for(let i=0;i<90;i++){
@@ -30,12 +30,32 @@ test("read-only HTTP auth, paper-only mode, safe restart state",async()=>{
      await sleep(100);
    }
    assert.ok(marketReady,"readiness must require valid closed candles and fresh marks");
+   let aiLogsReady=false;
+   for(let i=0;i<20;i++){
+     if(logs().includes("PAPER_AI_SNAPSHOT ")){aiLogsReady=true;break}
+     await sleep(100);
+   }
+   assert.equal(aiLogsReady,true,"sanitized AI log emitted at first market scan");
+   assert.equal(logs().includes("fake-not-real-token"),false);
+   const noLoginDiagnosis=await fetch(BASE+"/api/diagnostics");
+   assert.equal(noLoginDiagnosis.status,401);
    const h=await fetch(BASE+"/health");assert.equal((await h.json()).mode,"PAPER_ONLY");
    const anon=await fetch(BASE+"/api/status");assert.equal(anon.status,401);
    const auth={Authorization:"Basic "+Buffer.from("admin:synthetic-test-password-never-use").toString("base64")};
    const status=await fetch(BASE+"/api/status",{headers:auth});
    assert.equal(status.status,200);
    const result=await status.json();
+   const diagResult=await fetch(BASE+"/api/diagnostics",{headers:auth});
+   assert.equal(diagResult.status,200);
+   const diag=await diagResult.json();
+   assert.equal(diag.mode,"PAPER_ONLY");
+   assert.equal(diag.reasons.length,4);
+   assert.equal(diag.capital,100);
+   assert.equal(diag.risk.maxPositionPct,5);
+   assert.equal(diag.risk.dailyLossLimitPct,2);
+   assert.equal(diag.equity,100);
+   assert.equal(diag.trades,0);
+   assert.equal(JSON.stringify(diag).includes("dashboardAccessToken"),false);
    assert.equal(result.mode,"PAPER_ONLY");assert.equal(result.capital,100);
    assert.equal(result.telegram.configured,false);
    assert.ok(!JSON.stringify(result).includes("synthetic-test-password-never-use"),"no admin password in API response");
@@ -62,6 +82,12 @@ test("read-only HTTP auth, paper-only mode, safe restart state",async()=>{
    const magicApi=await fetch(BASE+"/api/dashboard",{headers:{Cookie:cookie}});
    assert.equal(magicApi.status,200);
    assert.equal((await magicApi.json()).mode,"PAPER_ONLY");
+   const privateDiag=await fetch(BASE+"/api/diagnostics",{headers:{Cookie:cookie}});
+   assert.equal(privateDiag.status,200);
+   const diagByCookie=await privateDiag.json();
+   assert.equal(diagByCookie.reasons.length,4);
+   assert.equal(diagByCookie.mode,"PAPER_ONLY");
+   assert.equal(logs().includes(token),false,"private magic token must not appear in AI Railway logs");
    assert.equal((await fetch(BASE+"/dashboard.js")).status,401);
    assert.equal((await fetch(BASE+"/api/status",{headers:{Cookie:cookie}})).status,401);
    assert.equal(JSON.stringify(await (await fetch(BASE+"/ready")).json()).includes(token),false);
@@ -77,6 +103,9 @@ test("read-only HTTP auth, paper-only mode, safe restart state",async()=>{
    assert.equal(data.validation.days7.passed,false);assert.equal(data.metrics.winRatePct,null);
    assert.equal(data.equitySeries.length,1);assert.equal(data.position,null);
    assert.equal(data.trades.length,0);
+   assert.equal(data.diagnostics.symbols.length,4);
+   assert.ok(data.diagnostics.symbols.every(x=>typeof x.reason==="string"));
+   assert.equal(JSON.stringify(data.diagnostics).includes("dashboardAccessToken"),false);
    await sleep(400);
    const ledger=JSON.parse(readFileSync(FILE,"utf8"));
    assert.equal(ledger.mode,"PAPER_ONLY");assert.equal(ledger.startCapital,100);

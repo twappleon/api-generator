@@ -89,6 +89,12 @@ tfoot td{text-align:center;color:var(--muted);padding:30px 10px}
 <div class="card"><div class="panelhead"><div><h2>服務健康</h2><div class="mini">僅報告已驗證的狀態</div></div><dl class="datalist"><dt>公開行情來源</dt><dd>Coinbase USD Spot</dd><dt>行情有效標的</dt><dd id="marketCount">—</dd><dt>Telegram</dt><dd id="telegram">—</dd><dt>最新交易掃描</dt><dd id="scanAt">—</dd></dl></div>
 </div>
 </section>
+<section class="card tablecard" aria-label="AI 交易訊號診斷">
+<div class="panelhead"><div><h2>為什麼沒有開倉？</h2><div class="mini">每分鐘分析最近已收盤 K 線，記錄未觸發原因；沒有訊號不代表服務故障</div></div><span class="badge">READ ONLY</span></div>
+<div class="tablewrap"><table><thead><tr><th>標的</th><th>本輪決策</th><th>原因</th><th>突破狀態</th><th>下一根收盤</th></tr></thead>
+<tbody id="diagBody"><tr><td colspan="5">正在取得策略診斷資料…</td></tr></tbody></table></div>
+<div class="metas"><span id="diagAsOf">診斷尚未更新</span><span>資訊只供解讀，不會改變開平倉規則</span></div>
+</section>
 <section class="card tablecard" aria-label="已平倉交易紀錄">
 <div class="panelhead"><div><h2>逐筆模擬交易</h2><div class="mini" id="tradeHint">只列已平倉交易，不產生測試假資料</div></div><div class="filters" aria-label="篩選交易日期"><button type="button" class="selected" data-range="all">全部</button><button type="button" data-range="7">7 天</button><button type="button" data-range="30">30 天</button></div></div>
 <div class="tablewrap"><table><thead><tr><th>標的</th><th>方向</th><th>進場／出場</th><th>模擬淨損益</th><th>平倉時間</th><th>原因</th></tr></thead><tbody id="tradeBody"><tr><td colspan="6">載入中…</td></tr></tbody></table></div>

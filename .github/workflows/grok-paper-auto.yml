@@ -23,6 +23,7 @@ jobs:
       - run: node --check grok_paper_auto/server.mjs
       - run: node --test grok_paper_auto/engine.test.mjs
       - run: node --test grok_paper_auto/dashboard-data.test.mjs
+      - run: node --test grok_paper_auto/diagnostics.test.mjs
       - run: sudo mkdir -p /data && sudo chmod 777 /data
       - run: node --test grok_paper_auto/server.smoke.test.mjs
       - run: docker build --pull -f Dockerfile -t grok-paper-auto-safety .

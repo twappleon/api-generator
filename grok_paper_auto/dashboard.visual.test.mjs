@@ -74,6 +74,7 @@ test("browser viewport regression with live DOM, private auth and real persisted
         assert.ok(qa.cards.every(c=>c.width>0&&c.right<=qa.viewport+2),model.name+": metric card off screen");
         assert.equal(qa.virtualEquity,"100.00",model.name+" no synthetic profit should appear");
         assert.ok(qa.chartVisible,model.name+" chart absent");
+        assert.equal(await page.locator("#diagBody tr").count(),4,model.name+" must show four independent signal diagnoses");
         if(model.width<=390)assert.equal(qa.metricColumns,2,model.name+" expected two metric columns");
         const filename="qa-screenshots/"+model.name+".png";
         await page.screenshot({path:filename,fullPage:true});
