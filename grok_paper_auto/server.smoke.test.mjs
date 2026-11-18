@@ -30,6 +30,8 @@ test("read-only HTTP auth, paper-only mode, safe restart state",async()=>{
    assert.equal(status.status,200);
    const result=await status.json();
    assert.equal(result.mode,"PAPER_ONLY");assert.equal(result.capital,100);
+   assert.equal(result.telegram.configured,false);
+   assert.ok(!JSON.stringify(result).includes("synthetic-test-password-never-use"),"no admin password in API response");
    assert.ok(result.position===null);assert.equal(result.trades.length,0);
    const rejected=await fetch(BASE+"/api/status",{method:"POST",headers:auth});assert.equal(rejected.status,405);
    await sleep(400);
