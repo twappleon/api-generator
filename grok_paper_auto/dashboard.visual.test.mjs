@@ -1,7 +1,7 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
-import {existsSync,unlinkSync,mkdirSync} from "node:fs";
+import {existsSync,unlinkSync,mkdirSync,readFileSync} from "node:fs";
 import {chromium} from "playwright";
 
 const PORT=19000+process.pid%25000;
@@ -36,12 +36,20 @@ test("browser viewport regression with live DOM, private auth and real persisted
       const context=await browser.newContext({
         viewport:{width:model.width,height:model.height},
         deviceScaleFactor:3,isMobile:model.width<=844,hasTouch:model.width<=844,
-        httpCredentials:{username:"admin",password:AUTH}
+        // no Basic Auth; must pass private Telegram URL
       });
       try{
         const page=await context.newPage();
-        const response=await page.goto(BASE+"/dashboard",{waitUntil:"networkidle"});
-        assert.equal(response?.status(),200,model.name+" dashboard should be authenticated");
+        const token=JSON.parse(readFileSync(FILE,"utf8")).dashboardAccessToken;
+        assert.match(token,/^[A-Za-z0-9_-]{43}$/);
+        const response=await page.goto(BASE+"/dashboard?access="+token,{waitUntil:"networkidle"});
+        assert.equal(response?.status(),200,model.name+" Telegram link should open without password");
+        assert.equal(new URL(page.url()).pathname,"/dashboard",model.name+" URL must hide the token after redirect");
+        assert.equal(new URL(page.url()).search,"",model.name+" link token must not remain in address bar");
+        const cookies=await context.cookies();
+        assert.ok(cookies.some(x=>x.name==="paper_view"&&x.httpOnly),model.name+" session cookie");
+        const admin=await context.request.get(BASE+"/api/status");
+        assert.equal(admin.status(),401,"magic link must not unlock admin API");
         await page.locator("#equity").waitFor();
         await page.waitForFunction(()=>document.querySelector("#equity")?.textContent==="100.00",{timeout:10000}).catch(async()=>{
           await page.reload({waitUntil:"networkidle"});
