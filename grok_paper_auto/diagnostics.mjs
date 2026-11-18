@@ -12,6 +12,7 @@ const SAFE_REASONS=new Set([
  "CASH_UNAVAILABLE","OPEN_ELIGIBLE","OPEN_EXECUTED","OPEN_BLOCKED_OTHER"
 ]);
 const rounded=(v,d=4)=>Number.isFinite(v)?Number(v.toFixed(d)):null;
+const TRADE_REASONS=new Set(["STOP","NET_TP_1PCT","TARGET_2R","DAILY_DRAWDOWN","BDD_CLOSE"]);
 const iso=t=>new Date(t).toISOString();
 const limitSymbol=s=>POLICY.allowedSymbols.includes(s)?s:"UNKNOWN";
 function safeReason(x){return SAFE_REASONS.has(x)?x:"OPEN_BLOCKED_OTHER";}
@@ -86,9 +87,9 @@ export function safeAiSnapshot(state,at,diagnostic){
  const projected=makeDashboardData(state,at,{marketSource:"COINBASE_SPOT_USD"});
  const m=projected.metrics;
  const t=(state.trades||[]).slice(-5).map(x=>({
-   symbol:limitSymbol(x.symbol),side:x.side==="SHORT"?"SHORT":"LONG",closedAt:x.closedAt||null,
+   symbol:limitSymbol(x.symbol),side:x.side==="SHORT"?"SHORT":"LONG",closedAt:Number.isFinite(Date.parse(x.closedAt||""))?new Date(x.closedAt).toISOString():null,
    notional:rounded(x.notional),entry:rounded(x.entry),exit:rounded(x.exit),
-   netPnl:rounded(x.netPnl),fees:rounded((x.entryFee||0)+(x.exitFee||0)),reason:String(x.reason||"OTHER").slice(0,32)
+   netPnl:rounded(x.netPnl),fees:rounded((x.entryFee||0)+(x.exitFee||0)),reason:TRADE_REASONS.has(x.reason)?x.reason:"OTHER"
  }));
  return {
    version:"v1.4",mode:"PAPER_ONLY",at:iso(at),marketSource:"COINBASE_SPOT_USD",
