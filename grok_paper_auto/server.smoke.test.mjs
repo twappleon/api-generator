@@ -41,6 +41,19 @@ test("read-only HTTP auth, paper-only mode, safe restart state",async()=>{
    assert.ok(!JSON.stringify(result).includes("synthetic-test-password-never-use"),"no admin password in API response");
    assert.ok(result.position===null);assert.equal(result.trades.length,0);
    const rejected=await fetch(BASE+"/api/status",{method:"POST",headers:auth});assert.equal(rejected.status,405);
+   const blocked=await fetch(BASE+"/dashboard");assert.equal(blocked.status,401);
+   const blockedApi=await fetch(BASE+"/api/dashboard");assert.equal(blockedApi.status,401);
+   const dash=await fetch(BASE+"/dashboard",{headers:auth});
+   assert.equal(dash.status,200);assert.match(dash.headers.get("content-security-policy")||"",/frame-ancestors 'none'/);
+   const page=await dash.text();assert.match(page,/Paper Auto/);assert.ok(!page.includes("synthetic-test-password-never-use"));
+   const script=await fetch(BASE+"/dashboard.js",{headers:auth});
+   assert.equal(script.status,200);assert.match(await script.text(),/api\/dashboard/);
+   const api=await fetch(BASE+"/api/dashboard",{headers:auth});assert.equal(api.status,200);
+   const data=await api.json();assert.equal(data.mode,"PAPER_ONLY");
+   assert.equal(data.metrics.equity,100);assert.equal(data.market.source,"COINBASE_SPOT_USD");
+   assert.equal(data.validation.days7.passed,false);assert.equal(data.metrics.winRatePct,null);
+   assert.equal(data.equitySeries.length,1);assert.equal(data.position,null);
+   assert.equal(data.trades.length,0);
    await sleep(400);
    const ledger=JSON.parse(readFileSync(FILE,"utf8"));
    assert.equal(ledger.mode,"PAPER_ONLY");assert.equal(ledger.startCapital,100);
@@ -108,4 +121,27 @@ test("mock Telegram notification is sent once and persisted across restart",asyn
    assert.equal(saved.bootCount,firstBoots+1);
    assert.equal(saved.outbox.filter(x=>x.id==="service-ready:grok-paper-auto:v1").length,1);
  }finally{second.child.kill("SIGTERM");await sleep(150);if(existsSync(FILE))unlinkSync(FILE);}
+});
+
+test("incomplete 3/4 market feed cannot count toward 7/30-day equity coverage",async()=>{
+ const {child,errors}=await start({MOCK_STALE_SYMBOL:"ZEC-USD"});
+ try{
+   let observed=false;
+   for(let i=0;i<80;i++){
+     if(child.exitCode!==null)throw Error("server exited "+errors());
+     try{
+       const r=await fetch(BASE+"/ready"),d=await r.json();
+       if(d.market?.validSymbols===3){
+         assert.equal(r.status,503);
+         assert.equal(d.ready,false);
+         observed=true;break;
+       }
+     }catch(error){if(error instanceof assert.AssertionError)throw error;}
+     await sleep(100);
+   }
+   assert.equal(observed,true);
+   const persisted=JSON.parse(readFileSync(FILE,"utf8"));
+   assert.equal(persisted.equitySamples?.length??0,0);
+   assert.equal(persisted.marketLastGoodAt??null,null);
+ }finally{child.kill("SIGTERM");await sleep(150);if(existsSync(FILE))unlinkSync(FILE);}
 });

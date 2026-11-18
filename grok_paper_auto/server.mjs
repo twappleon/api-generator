@@ -3,6 +3,7 @@ import {existsSync,mkdirSync,readFileSync,renameSync,writeFileSync,openSync,fsyn
 import {dirname} from "node:path";
 import {timingSafeEqual} from "node:crypto";
 import {POLICY,initialState,tick,equityAt,freshMark,enqueue} from "./engine.mjs";
+import {recordEquitySnapshot,makeDashboardData} from "./dashboard-data.mjs";
 
 // Coinbase Exchange anonymous public USD spot-reference feed; PAPER ONLY. No exchange order routes.
 const HOST="https://api.exchange.coinbase.com";
@@ -13,6 +14,8 @@ const PASSWORD=process.env.APP_PASSWORD||"";
 const TG_TOKEN=process.env.TELEGRAM_BOT_TOKEN||"";
 const TG_CHAT=process.env.TELEGRAM_CHAT_ID||"";
 const PORT=Number(process.env.PORT||8080);
+const DASHBOARD_HTML=readFileSync(new URL("./dashboard.html",import.meta.url),"utf8");
+const DASHBOARD_JS=readFileSync(new URL("./dashboard.js",import.meta.url),"utf8");
 if(!FILE.startsWith("/data/")||PASSWORD.length<16||!Number.isSafeInteger(PORT)||PORT<1||PORT>65535)throw Error("FAIL_CLOSED_INVALID_CONFIG");
 const unsafeSecret=Object.keys(process.env).some(k=>/^(BINANCE|DEMO)_.*(API_KEY|API_SECRET)$/.test(k)&&Boolean(process.env[k]));
 if(unsafeSecret||process.env.DEMO_ORDER_ENABLED==="true"||process.env.DEMO_DONCHIAN_ORDER_ENABLED==="true"||process.env.LIVE_TRADING==="true"||process.env.EXECUTE_TRADES==="true")throw Error("FAIL_CLOSED_TRADING_CREDENTIALS_OR_EXECUTION_FLAG_NOT_ALLOWED");
@@ -95,7 +98,8 @@ async function cycle(){
     tick(state,{at,marks,candles});
     const validSymbols=POLICY.allowedSymbols.filter(sym=>freshMark(marks[sym],at)&&candles[sym]?.length>=220&&candles[sym].at(-1)?.time<at).length;
     state.marketSampleCount=validSymbols;
-    if(validSymbols>0){
+    if(validSymbols===POLICY.allowedSymbols.length){
+      recordEquitySnapshot(state,marks,at,true);
       state.marketLastGoodAt=iso();
       lastSuccessfulMarketPoll=state.marketLastGoodAt;
       if(TG_TOKEN&&TG_CHAT&&!state.bootstrapNoticeQueued){
@@ -133,6 +137,7 @@ const server=http.createServer((req,res)=>{
   const p=(req.url||"").split("?")[0];
   if(req.method!=="GET")return send(res,405,{error:"METHOD_NOT_ALLOWED"});
   if(p==="/health")return send(res,200,{alive:true,mode:"PAPER_ONLY"});
+  if(p==="/"){res.writeHead(302,{Location:"/dashboard","Cache-Control":"no-store"});return res.end();}
   if(p==="/ready"){
     const marketAge=Date.now()-Date.parse(state.marketLastGoodAt||"");
     const marketFresh=Number.isFinite(marketAge)&&marketAge>=0&&marketAge<=180000;
@@ -145,6 +150,23 @@ const server=http.createServer((req,res)=>{
     return send(res,readiness.ready?200:503,readiness);
   }
   if(!authorized(req)){res.setHeader("WWW-Authenticate",'Basic realm="Grok Paper Auto"');return send(res,401,{error:"AUTH_REQUIRED"});}
+  if(p==="/dashboard"||p==="/dashboard.js"){
+    res.writeHead(200,{
+      "Content-Type":p==="/dashboard"?"text/html; charset=utf-8":"text/javascript; charset=utf-8",
+      "Cache-Control":"no-store","X-Content-Type-Options":"nosniff",
+      "Referrer-Policy":"no-referrer",
+      "Content-Security-Policy":"default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; connect-src 'self'; script-src 'self'; style-src 'unsafe-inline'"
+    });
+    return res.end(p==="/dashboard"?DASHBOARD_HTML:DASHBOARD_JS);
+  }
+  if(p==="/api/dashboard"){
+    try{
+      return send(res,200,makeDashboardData(state,Date.now(),{
+        marketSource:MARKET_SOURCE,telegramConfigured:Boolean(TG_TOKEN&&TG_CHAT),
+        startupNoticeSent:Boolean(state.outbox.find(x=>x.id===STARTUP_NOTICE_ID)?.sentAt)
+      }));
+    }catch(e){console.error("PAPER_DASHBOARD_PROJECTION_ERROR",String(e));return send(res,503,{error:"DASHBOARD_UNAVAILABLE"});}
+  }
   if(p==="/api/status"){
     const equity=equityAt(state,state.lastMarks,Date.now());
     return send(res,200,{mode:"PAPER_ONLY",marketSource:MARKET_SOURCE,marketReferenceQuote:"USD",config:POLICY,capital:100,cash:state.cash,equity,equityFresh:equity!==null,

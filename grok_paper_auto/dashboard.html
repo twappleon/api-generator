@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light"><meta name="theme-color" content="#f7f9f8">
+<title>Paper Auto｜模擬交易監控</title>
+<style>
+:root{--ink:#152522;--muted:#6b7975;--line:#e2e9e6;--paper:#f7f9f8;--white:#fff;--accent:#16705c;--accentSoft:#e5f5ee;--red:#b53e4a;--redSoft:#fff0f1}
+*{box-sizing:border-box}html{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink);background:var(--paper)}
+body{margin:0;min-width:280px}button{font:inherit;cursor:pointer}.page{max-width:1160px;padding:30px 24px 72px;margin:auto}
+.header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:6px 0 24px}
+.brand{display:flex;align-items:center;gap:12px}.logo{background:#152b25;color:#c2f4da;font-size:22px;font-weight:800;letter-spacing:-.12em;width:42px;height:42px;display:grid;place-items:center;border-radius:13px;transform:rotate(-5deg)}
+.brand b{display:block;letter-spacing:-.035em;font-size:19px}.brand small{display:block;color:var(--muted);margin-top:3px;font-size:11px;letter-spacing:.025em}.headright{display:flex;align-items:center;gap:9px}
+.pill{display:inline-flex;align-items:center;gap:7px;border-radius:99px;padding:7px 11px;background:var(--accentSoft);font-size:11px;font-weight:700;color:var(--accent)}
+.pill .dot{width:7px;height:7px;border-radius:50%;background:#28a478}.pill.warn{color:#966627;background:#fff4dc}.pill.warn .dot{background:#e0a02d}
+.outline{border:1px solid var(--line);background:white;border-radius:10px;padding:9px 12px;font-size:12px;font-weight:600;color:var(--ink)}.outline:hover{background:#f0f6f3}
+.hero{background:linear-gradient(114deg,#132a24 0%,#1c4437 65%,#234d3d 100%);border-radius:22px;color:white;padding:27px 30px 29px;position:relative;overflow:hidden}
+.hero:before{content:"";position:absolute;width:320px;height:320px;border:1px solid #ffffff1f;border-radius:50%;right:-100px;top:-190px;box-shadow:0 0 0 62px #ffffff09,0 0 0 124px #ffffff06;pointer-events:none}
+.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:10px;font-weight:700;color:#b6dac9}
+.herohead{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.hero h1{font-size:clamp(25px,3.6vw,39px);letter-spacing:-.05em;line-height:1.2;margin:11px 0 9px;font-weight:730}
+.hero p{color:#c7ded2;line-height:1.6;font-size:13px;margin:0;max-width:630px}.hero .mono{font-size:11px;color:#d3e6dc;background:#ffffff16;padding:8px 10px;border-radius:9px;white-space:nowrap}
+.herofoot{margin-top:25px;display:flex;gap:10px;flex-wrap:wrap}.herofoot span{border:1px solid #ffffff26;padding:7px 10px;font-size:11px;border-radius:8px;color:#d7eae1}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;margin:17px 0}
+.card{border:1px solid var(--line);background:var(--white);border-radius:17px;padding:21px;min-width:0}
+.metric .label{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;font-weight:550}
+.value{font-size:clamp(25px,2.8vw,35px);font-weight:750;line-height:1.22;margin:12px 0 9px;letter-spacing:-.048em;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.sub{color:var(--muted);font-size:11px;line-height:1.5}
+.positive{color:var(--accent)}.negative{color:var(--red)}
+.layout{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(300px,1fr);gap:15px}
+.panelhead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:18px}
+h2{font-size:16px;letter-spacing:-.026em;margin:0 0 5px;font-weight:720}
+.mini{font-size:11px;color:var(--muted);line-height:1.5}
+.chartframe{border-radius:11px;background:linear-gradient(180deg,#f7fcf9,#fff);border:1px solid #edf1ef;position:relative;padding:9px 5px 0}
+#curve{width:100%;height:228px;display:block;overflow:visible}#emptyChart{position:absolute;inset:20px;display:flex;flex-direction:column;justify-content:center;align-items:center;color:var(--muted);font-size:12px;pointer-events:none;text-align:center;padding:14px;gap:6px}
+#emptyChart b{color:#41574e;font-size:14px}
+.metas{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:13px;color:var(--muted);font-size:11px}.metas strong{color:var(--ink)}
+.stack{display:flex;flex-direction:column;gap:15px}
+.progressrow{margin-top:17px}.progresslabel{display:flex;justify-content:space-between;gap:8px;font-size:12px;font-weight:650}
+.track{height:7px;background:#e8efeb;border-radius:20px;margin:11px 0 7px;overflow:hidden}.fill{height:100%;background:#268e71;border-radius:20px;width:0;transition:width .4s ease}
+.statusline{font-size:11px;color:var(--muted);line-height:1.45}
+.datalist{display:grid;grid-template-columns:1fr auto;gap:12px 8px;font-size:12px;margin-top:13px}.datalist dt{color:var(--muted)}.datalist dd{margin:0;font-weight:680;text-align:right;font-variant-numeric:tabular-nums}
+.sepline{height:1px;background:var(--line);margin:17px 0}
+.badge{display:inline-block;padding:5px 8px;border-radius:7px;background:#f1f5f3;color:#3d6f5c;font-size:10px;font-weight:750;letter-spacing:.035em}
+.badge.off{background:#f5f5f5;color:#8d9691}
+.tablecard{margin-top:15px}.filters{display:flex;gap:5px;background:#f1f5f3;border-radius:10px;padding:3px}
+.filters button{background:transparent;border:0;padding:7px 11px;border-radius:7px;color:var(--muted);font-size:11px}.filters button.selected{background:white;color:var(--ink);font-weight:700;box-shadow:0 1px 4px #18302417}
+.tablewrap{width:100%;overflow-x:auto}table{width:100%;border-collapse:collapse;text-align:left;font-size:12px;min-width:610px}
+th{color:var(--muted);font-size:11px;font-weight:600;padding:12px 8px;border-bottom:1px solid var(--line)}
+td{padding:15px 8px;border-bottom:1px solid #edf1ef;font-variant-numeric:tabular-nums}tr:last-child td{border-bottom:0}
+td strong{display:block;font-size:12px}td small{display:block;margin-top:3px;color:var(--muted);font-size:10px}
+tfoot td{text-align:center;color:var(--muted);padding:30px 10px}
+.footer{font-size:11px;color:#75847e;line-height:1.7;margin-top:22px;max-width:950px}
+.alert{background:#fff7e6;color:#805921;border:1px solid #f2dbaf;padding:10px 13px;border-radius:10px;margin-bottom:15px;font-size:12px;display:none}
+.skeleton{animation:pulse 1.5s infinite}@keyframes pulse{50%{opacity:.55}}
+@media(max-width:900px){.layout{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:580px){.page{padding:12px 12px 50px}.header{padding:7px 4px 19px}.brand b{font-size:17px}.logo{width:37px;height:37px}.header .outline{font-size:11px;padding:8px}.hero{padding:23px 21px;border-radius:17px}.hero .mono{display:none}.hero h1{font-size:28px}.herofoot{margin-top:19px}.herofoot span{font-size:10px}.metrics{gap:9px;margin:10px 0}.card{padding:16px;border-radius:14px}.value{font-size:26px}.metric .label{font-size:11px}#curve{height:195px}.filters button{padding:7px 9px}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<main class="page">
+<header class="header">
+<div class="brand"><span class="logo" aria-hidden="true">PA</span><div><b>Paper Auto</b><small>SIMULATION MONITOR · v1.2</small></div></div>
+<div class="headright"><span class="pill" id="healthPill"><span class="dot"></span><span id="healthLabel">讀取中</span></span><button class="outline" id="refreshBtn" type="button" aria-label="重新整理資料">重新整理</button></div>
+</header>
+<div class="alert" id="notice" role="alert"></div>
+<section class="hero" aria-label="交易模式與帳戶說明">
+<div class="herohead"><div><span class="eyebrow">01 / Virtual account</span><h1>每一筆交易，都有跡可循。</h1><p>100 USDT 獨立模擬帳本 · Coinbase USD 現貨參考價 · 不連接 Binance Demo 或任何實盤下單。</p></div><span class="mono">PAPER ONLY</span></div>
+<div class="herofoot"><span>單筆持倉 ≤ 5%</span><span>每日虧損停止門檻 2%</span><span>每分鐘檢查</span><span>不保證收益</span></div>
+</section>
+<section class="metrics" aria-label="績效摘要">
+<div class="card metric"><div class="label">帳戶淨值<span>USDT</span></div><div class="value" id="equity">—</div><div class="sub" id="equitySub">等待觀測</div></div>
+<div class="card metric"><div class="label">總淨損益<span>USDT</span></div><div class="value" id="pnl">—</div><div class="sub" id="pnlSub">不含未驗證成交</div></div>
+<div class="card metric"><div class="label">已平倉勝率<span>%</span></div><div class="value" id="winrate">—</div><div class="sub" id="winrateSub">尚無已平倉交易</div></div>
+<div class="card metric"><div class="label">觀測最大回撤<span>%</span></div><div class="value" id="drawdown">—</div><div class="sub">依持久化淨值取樣計算</div></div>
+</section>
+<section class="layout">
+<div class="card">
+<div class="panelhead"><div><h2>淨值走勢</h2><div class="mini">歷史觀測點 · 每 15 分鐘取樣，平倉時加記</div></div><span class="badge">PAPER ONLY</span></div>
+<div class="chartframe"><svg id="curve" viewBox="0 0 680 240" preserveAspectRatio="none" role="img" aria-label="模擬帳戶淨值走勢"></svg><div id="emptyChart"><b>建立真實觀測紀錄中</b><span>至少 2 個不同時間的觀測點後顯示曲線</span></div></div>
+<div class="metas"><span>起始 <strong>100.00 USDT</strong></span><span id="chartRange">—</span><span id="chartCount">觀測點 0</span></div>
+<div class="sepline"></div>
+<div class="panelhead"><div><h2>模擬帳本</h2><div class="mini">不混入既有 Telegram／Donchian 策略帳本</div></div></div>
+<dl class="datalist"><dt>可用帳面資金</dt><dd id="cash">—</dd><dt>累計已實現淨損益</dt><dd id="realized">—</dd><dt>未實現淨損益</dt><dd id="unrealized">—</dd><dt>累計模擬手續費</dt><dd id="fees">—</dd><dt>交易筆數</dt><dd id="trades">—</dd><dt>最近一次行情觀測</dt><dd id="marketAt">—</dd></dl>
+</div>
+<div class="stack">
+<div class="card"><div class="panelhead"><div><h2>持倉狀態</h2><div class="mini">只顯示目前模擬持倉</div></div><span class="badge off" id="positionPill">無持倉</span></div><dl class="datalist"><dt>標的</dt><dd id="positionSymbol">—</dd><dt>方向</dt><dd id="positionSide">—</dd><dt>模擬持倉額</dt><dd id="positionNotional">—</dd><dt>模擬進場價</dt><dd id="positionEntry">—</dd><dt>停損／目標</dt><dd id="positionExit">—</dd></dl><div class="sepline"></div><div class="statusline" id="riskState">等待風控狀態</div></div>
+<div class="card"><div class="panelhead"><div><h2>前向驗證</h2><div class="mini">連續性與資料覆蓋率，不代表策略獲利</div></div><div class="progressrow"><div class="progresslabel"><span>7 天觀測</span><strong id="sevenText">0 / 7 天</strong></div><div class="track"><div class="fill" id="sevenBar"></div></div><div class="statusline" id="sevenStatus">收集資料中</div></div><div class="progressrow"><div class="progresslabel"><span>30 天觀測</span><strong id="thirtyText">0 / 30 天</strong></div><div class="track"><div class="fill" id="thirtyBar"></div></div><div class="statusline" id="thirtyStatus">收集資料中</div></div><div class="sepline"></div><div class="mini" id="trackingStarted">從第一筆真實觀測資料開始計算</div></div>
+<div class="card"><div class="panelhead"><div><h2>服務健康</h2><div class="mini">僅報告已驗證的狀態</div></div><dl class="datalist"><dt>公開行情來源</dt><dd>Coinbase USD Spot</dd><dt>行情有效標的</dt><dd id="marketCount">—</dd><dt>Telegram</dt><dd id="telegram">—</dd><dt>最新交易掃描</dt><dd id="scanAt">—</dd></dl></div>
+</div>
+</section>
+<section class="card tablecard" aria-label="已平倉交易紀錄">
+<div class="panelhead"><div><h2>逐筆模擬交易</h2><div class="mini" id="tradeHint">只列已平倉交易，不產生測試假資料</div></div><div class="filters" aria-label="篩選交易日期"><button type="button" class="selected" data-range="all">全部</button><button type="button" data-range="7">7 天</button><button type="button" data-range="30">30 天</button></div></div>
+<div class="tablewrap"><table><thead><tr><th>標的</th><th>方向</th><th>進場／出場</th><th>模擬淨損益</th><th>平倉時間</th><th>原因</th></tr></thead><tbody id="tradeBody"><tr><td colspan="6">載入中…</td></tr></tbody></table></div>
+</section>
+<footer class="footer">所有損益、手續費與滑點均為模擬計算。USD 現貨參考價與 USDT 記帳幣別不完全等值；系統不使用真實成交資料，不包含期貨資金費率、市場深度或強制平倉。回撤為觀測取樣值，不能代表完整日內最大回撤。新功能不會重置既有模擬帳本。</footer>
+</main>
+<script src="/dashboard.js" defer></script>
+</body></html>
