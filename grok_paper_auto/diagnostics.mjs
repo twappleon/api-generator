@@ -68,7 +68,7 @@ export function analyzeSymbol({symbol,candles,quote,at,previousCandle,positionId
  if(distance/quote.price>POLICY.maxStopPct)return done("STOP_DISTANCE_GT_5PCT","BLOCKED");
  result.markDeviationPct=rounded(100*Math.abs(quote.price-last.close)/last.close,3);
  if(Math.abs(quote.price-last.close)/last.close>POLICY.maxPriceDeviationPct)return done("PRICE_DEVIATION_GT_3PCT","BLOCKED");
- if(openedIdAfter&&openedIdAfter!==positionIdBefore)return done("OPEN_EXECUTED","OPENED");
+ if(openedIdAfter&&openedIdAfter!==positionIdBefore&&openedIdAfter.startsWith(sym+":"))return done("OPEN_EXECUTED","OPENED");
  return done("OPEN_ELIGIBLE","ELIGIBLE");
 }
 export function analyzeCycle(state,{at,marks,candles,previousProcessed,positionIdBefore,closedCountBefore=0,marketSource="COINBASE_SPOT_USD"}){
