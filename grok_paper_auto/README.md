@@ -1,0 +1,42 @@
+# Grok Paper Auto — independent Binance Demo market-data simulator
+
+Standalone PAPER ONLY engine in the existing K Signal repository. No xAI Grok API is used; no claim of guaranteed profits.
+
+## Fixed risk policy
+
+- Initial 100 USDT separate ledger; NEVER merge with existing Telegram/Donchian 10,000 USDT balances.
+- Maximum simulated notional 5% of current account equity; one concurrent position. Initially max 5 USDT.
+- Daily mark-to-market loss halt at 2% of start-of-UTC-day equity, initially 2 USDT. New orders resume next UTC day.
+- Stop monitoring remains active while daily halt is in force. A gap or stale market quote can exceed the 2% threshold.
+- Closed 1-hour candles only: Donchian-20 breakout with EMA200 direction, ATR14 2x stop and 2R target.
+- Net take profit >=1% of entry notional after simulated 0.04% fee each side and 0.02% adverse slippage each side.
+- Excludes funding, real spread-depth, latency and exchange minimum order notional. Paper marks are not actual fills.
+- First closed candle observation is a baseline, so historical trades are never replayed as new opportunities.
+- Market-data GET only: demo-fapi.binance.com/fapi/v1/klines and /fapi/v1/premiumIndex. Absolutely no order APIs, signed calls or trading credentials.
+- All fill calculations are simulated; the only outbound POST is to Telegram sendMessage for notification.
+
+## Runtime and observability
+
+- Node 22, no third-party runtime packages. Run: node grok_paper_auto/server.mjs.
+- Isolated mounted /data/grok-paper-auto.json with temporary file, fsync and atomic rename. Corrupt storage fails closed.
+- Polls every 60 seconds; missing or stale quotes block entries and exits that cannot be priced.
+- Read-only GET /health is liveness only, NOT readiness. GET /api/status uses Basic auth username admin and APP_PASSWORD >=16.
+- Persisted Telegram notification outbox; optional TELEGRAM_BOT_TOKEN and numeric TELEGRAM_CHAT_ID. All notices prefixed PAPER ONLY.
+- Tests: node --test grok_paper_auto/engine.test.mjs; syntax check: node --check grok_paper_auto/server.mjs.
+- Environment flags for Binance keys and demo-order execution are rejected on startup. There is no live trading mode.
+
+## Separate Railway staging plan
+
+- Existing project: k-signal-paper-lab; proposed separate service: grok-paper-auto (do not alter 4 existing services).
+- Source: twappleon/api-generator branch feature/grok-paper-auto-20261118. Root directory /grok_paper_auto; Dockerfile there.
+- 1 instance and an isolated 512 MB /data volume; GET /health check; no cron.
+- DATA_FILE=/data/grok-paper-auto.json, PORT=8080.
+- APP_PASSWORD references the existing k-signal-paper-monitor APP_PASSWORD (do not read or copy plaintext).
+- TELEGRAM_BOT_TOKEN references k-signal-binance-demo TELEGRAM_BOT_TOKEN.
+- TELEGRAM_CHAT_ID references k-signal-binance-demo DEMO_TELEGRAM_CHAT_ID; do not put @crytotradebot as chat ID.
+
+## Acceptance and limitations
+
+- Draft PR changes do not deploy to Railway. The existing production Demo execution gates remain untouched.
+- Before going live as a paper simulation worker, verify CI, persistent-volume startup, protected HTTP endpoint, Telegram delivery and rollback.
+- This is a small-risk experimental baseline; historical backtesting, regime controls and >=7–30 days of out-of-sample paper evidence are still needed.
