@@ -82,6 +82,12 @@ test("read-only HTTP auth, paper-only mode, safe restart state",async()=>{
    const magicApi=await fetch(BASE+"/api/dashboard",{headers:{Cookie:cookie}});
    assert.equal(magicApi.status,200);
    assert.equal((await magicApi.json()).mode,"PAPER_ONLY");
+   const privateDiag=await fetch(BASE+"/api/diagnostics",{headers:{Cookie:cookie}});
+   assert.equal(privateDiag.status,200);
+   const diagByCookie=await privateDiag.json();
+   assert.equal(diagByCookie.reasons.length,4);
+   assert.equal(diagByCookie.mode,"PAPER_ONLY");
+   assert.equal(logs().includes(token),false,"private magic token must not appear in AI Railway logs");
    assert.equal((await fetch(BASE+"/dashboard.js")).status,401);
    assert.equal((await fetch(BASE+"/api/status",{headers:{Cookie:cookie}})).status,401);
    assert.equal(JSON.stringify(await (await fetch(BASE+"/ready")).json()).includes(token),false);
