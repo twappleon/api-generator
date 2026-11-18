@@ -23,6 +23,13 @@ test("read-only HTTP auth, paper-only mode, safe restart state",async()=>{
      await sleep(100);
    }
    assert.ok(ready,"health should start");
+   let marketReady=false;
+   for(let i=0;i<80;i++){
+     const resp=await fetch(BASE+"/ready");
+     if(resp.status===200){const data=await resp.json();assert.equal(data.market.validSymbols,4);assert.equal(data.mode,"PAPER_ONLY");marketReady=true;break;}
+     await sleep(100);
+   }
+   assert.ok(marketReady,"readiness must require valid closed candles and fresh marks");
    const h=await fetch(BASE+"/health");assert.equal((await h.json()).mode,"PAPER_ONLY");
    const anon=await fetch(BASE+"/api/status");assert.equal(anon.status,401);
    const auth={Authorization:"Basic "+Buffer.from("admin:synthetic-test-password-never-use").toString("base64")};
@@ -67,4 +74,38 @@ test("an enabled exchange order flag is rejected even in simulation mode",async(
    assert.match(errors(),/FAIL_CLOSED_TRADING_CREDENTIALS_OR_EXECUTION_FLAG_NOT_ALLOWED/);
    assert.equal(existsSync(FILE),false);
  }finally{child.kill("SIGTERM");}
+});
+
+test("mock Telegram notification is sent once and persisted across restart",async()=>{
+ const env={TELEGRAM_BOT_TOKEN:"fake-not-real-token",TELEGRAM_CHAT_ID:"1111"};
+ const first=await start(env);
+ try{
+   let delivered=false;
+   for(let i=0;i<80;i++){
+     try{
+       const r=await fetch(BASE+"/ready"),d=await r.json();
+       if(d.telegram?.startupNoticeSent){delivered=true;assert.equal(d.telegram.configured,true);break;}
+     }catch{}
+     if(first.child.exitCode!==null)throw Error("server died "+first.errors());
+     await sleep(100);
+   }
+   assert.ok(delivered,"verification Telegram must deliver using mock");
+ }finally{first.child.kill("SIGTERM");await sleep(200);}
+ const ledger=JSON.parse(readFileSync(FILE,"utf8"));
+ const notices=ledger.outbox.filter(x=>x.id==="service-ready:grok-paper-auto:v1");
+ assert.equal(notices.length,1);assert.ok(notices[0].sentAt);
+ assert.equal(ledger.bootstrapNoticeQueued,true);const firstBoots=ledger.bootCount;
+ const second=await start(env);
+ try{
+   let live=false;
+   for(let i=0;i<80;i++){
+     try{const r=await fetch(BASE+"/ready");if(r.status===200){live=true;break;}}catch{}
+     if(second.child.exitCode!==null)throw Error("restarted server died "+second.errors());
+     await sleep(100);
+   }
+   assert.equal(live,true);
+   const saved=JSON.parse(readFileSync(FILE,"utf8"));
+   assert.equal(saved.bootCount,firstBoots+1);
+   assert.equal(saved.outbox.filter(x=>x.id==="service-ready:grok-paper-auto:v1").length,1);
+ }finally{second.child.kill("SIGTERM");await sleep(150);if(existsSync(FILE))unlinkSync(FILE);}
 });
