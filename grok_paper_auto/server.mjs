@@ -2,7 +2,7 @@ import http from "node:http";
 import {existsSync,mkdirSync,readFileSync,renameSync,writeFileSync,openSync,fsyncSync,closeSync} from "node:fs";
 import {dirname} from "node:path";
 import {timingSafeEqual} from "node:crypto";
-import {POLICY,initialState,tick,equityAt} from "./engine.mjs";
+import {POLICY,initialState,tick,equityAt,freshMark,enqueue} from "./engine.mjs";
 
 // Fixed public Binance Demo market-data GETs, without keys, signing or any order route.
 const HOST="https://demo-fapi.binance.com";
@@ -27,9 +27,12 @@ function persist(){
   renameSync(temp,FILE);
   const dd=openSync(dirname(FILE),"r");try{fsyncSync(dd);}finally{closeSync(dd);}
 }
+state.bootCount=(Number.isSafeInteger(state.bootCount)&&state.bootCount>=0?state.bootCount:0)+1;
+state.bootstrapNoticeQueued=state.bootstrapNoticeQueued===true;
 persist();
 const iso=()=>new Date().toISOString();
-let scanning=false,lastError=null,lastSuccessfulMarketPoll=null;
+const STARTUP_NOTICE_ID="service-ready:grok-paper-auto:v1";
+let scanning=false,lastError=null,lastSuccessfulMarketPoll=state.marketLastGoodAt||null;
 async function getJson(relative){
   if(!relative.startsWith("/fapi/v1/klines?")&&!relative.startsWith("/fapi/v1/premiumIndex?"))throw Error("DISALLOWED_MARKET_PATH");
   const r=await fetch(HOST+relative,{method:"GET",signal:AbortSignal.timeout(8000),headers:{"Accept":"application/json"}});
@@ -59,6 +62,7 @@ async function drainTelegram(){
         signal:AbortSignal.timeout(9000)});
       const a=await r.json();if(!r.ok||a.ok!==true)throw Error("TELEGRAM_HTTP_"+r.status);
       msg.sentAt=iso();persist();
+      console.info("PAPER_TELEGRAM_SENT",msg.id);
     }catch(e){
       msg.attempts=(msg.attempts||0)+1;
       msg.nextAttempt=Date.now()+Math.min(3600000,10000*2**Math.min(8,msg.attempts));
@@ -79,7 +83,17 @@ async function cycle(){
     });
     await Promise.all(tasks);
     tick(state,{at,marks,candles});
-    if(Object.keys(marks).length&&Object.keys(candles).length)lastSuccessfulMarketPoll=iso();
+    const validSymbols=POLICY.allowedSymbols.filter(sym=>freshMark(marks[sym],at)&&candles[sym]?.length>=220&&candles[sym].at(-1)?.time<at).length;
+    state.marketSampleCount=validSymbols;
+    if(validSymbols>0){
+      state.marketLastGoodAt=iso();
+      lastSuccessfulMarketPoll=state.marketLastGoodAt;
+      if(TG_TOKEN&&TG_CHAT&&!state.bootstrapNoticeQueued){
+        enqueue(state,STARTUP_NOTICE_ID,"Grok Paper Auto ready: PAPER ONLY, 100 USDT virtual capital, no Binance Demo or live exchange orders. This is a single verification notice.",at);
+        state.bootstrapNoticeQueued=true;
+      }
+    }
+    console.info("PAPER_MARKET_SCAN",validSymbols+"/"+POLICY.allowedSymbols.length, "PAPER_ONLY");
     lastError=errors.length?errors.join(", "):null;
     persist();
     await drainTelegram();
@@ -109,6 +123,17 @@ const server=http.createServer((req,res)=>{
   const p=(req.url||"").split("?")[0];
   if(req.method!=="GET")return send(res,405,{error:"METHOD_NOT_ALLOWED"});
   if(p==="/health")return send(res,200,{alive:true,mode:"PAPER_ONLY"});
+  if(p==="/ready"){
+    const marketAge=Date.now()-Date.parse(state.marketLastGoodAt||"");
+    const marketFresh=Number.isFinite(marketAge)&&marketAge>=0&&marketAge<=180000;
+    const allSymbols=state.marketSampleCount===POLICY.allowedSymbols.length;
+    const notice=state.outbox.find(x=>x.id===STARTUP_NOTICE_ID);
+    const readiness={mode:"PAPER_ONLY",ready:marketFresh&&allSymbols,
+      market:{fresh:marketFresh,validSymbols:state.marketSampleCount||0,expectedSymbols:POLICY.allowedSymbols.length,lastGoodAt:state.marketLastGoodAt||null},
+      storage:{durableVolume:true,bootCount:state.bootCount},
+      telegram:{configured:Boolean(TG_TOKEN&&TG_CHAT),startupNoticeSent:Boolean(notice?.sentAt),pending:state.outbox.filter(x=>!x.sentAt).length}};
+    return send(res,readiness.ready?200:503,readiness);
+  }
   if(!authorized(req)){res.setHeader("WWW-Authenticate",'Basic realm="Grok Paper Auto"');return send(res,401,{error:"AUTH_REQUIRED"});}
   if(p==="/api/status"){
     const equity=equityAt(state,state.lastMarks,Date.now());
