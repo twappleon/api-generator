@@ -22,6 +22,7 @@ test("no breakout and repeated processed hour are distinct",()=>{
  const duplicate=analyze({previousCandle:T-H});
  assert.equal(duplicate.reason,"NO_NEW_CLOSED_CANDLE");
  assert.equal(duplicate.hasNewClosedCandle,false);
+ assert.equal(duplicate.lastCandleReason,"OPEN_ELIGIBLE");
 });
 test("initial baseline, missing mark and insufficient K-lines are separately explainable",()=>{
  assert.equal(analyze({previousCandle:undefined}).reason,"INITIAL_BASELINE");
