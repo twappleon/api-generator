@@ -12,16 +12,16 @@ Standalone PAPER ONLY engine in the existing K Signal repository. No xAI Grok AP
 - Net take profit >=1% of entry notional after simulated 0.04% fee each side and 0.02% adverse slippage each side.
 - Excludes funding, real spread-depth, latency and exchange minimum order notional. Paper marks are not actual fills.
 - First closed candle observation is a baseline, so historical trades are never replayed as new opportunities.
-- Market-data GET only: demo-fapi.binance.com/fapi/v1/klines and /fapi/v1/premiumIndex. Absolutely no order APIs, signed calls or trading credentials.
-- All fill calculations are simulated; the only outbound POST is to Telegram sendMessage for notification.
+- Data feed: Coinbase Exchange anonymous USD spot-reference `api.exchange.coinbase.com/products/{BTC,ETH,SOL,ZEC}-USD/{ticker,candles}` GET only. Binance Demo's public API returned HTTP 451 (location restricted), so there is no access workaround. Absolutely no order APIs, signed calls or trading credentials.
+- Simulated USDT ledger references USD spot prices (1 USD ~ 1 USDT assumed for accounting, not guaranteed). It does NOT reproduce Binance USD-M futures basis, funding, liquidations or fills. All fills are virtual; the only outbound POST is Telegram sendMessage.
 
 ## Runtime and observability
 
 - Node 22, no third-party runtime packages. Run: node grok_paper_auto/server.mjs.
 - Isolated mounted /data/grok-paper-auto.json with temporary file, fsync and atomic rename. Corrupt storage fails closed.
 - Polls every 60 seconds; missing or stale quotes block entries and exits that cannot be priced.
-- Read-only GET /health is liveness only, NOT readiness. GET /api/status uses Basic auth username admin and APP_PASSWORD >=16.
-- Persisted Telegram notification outbox; optional TELEGRAM_BOT_TOKEN and numeric TELEGRAM_CHAT_ID. All notices prefixed PAPER ONLY. UTC day transitions also queue daily net-asset and fee reports.
+- Read-only GET /health is liveness only. Public, sanitized GET /ready verifies all 4 symbols have fresh spot-reference prices, stores restart boot count and shows startup Telegram verification state without account details. GET /api/status uses Basic auth username admin and APP_PASSWORD >=16.
+- Persisted Telegram notification outbox; optional TELEGRAM_BOT_TOKEN and numeric TELEGRAM_CHAT_ID. After first valid quote, queues exactly one PAPER ONLY verification notice per durable ledger; no trade is sent. UTC day transitions queue daily net-asset and fee reports.
 - Tests: node --test grok_paper_auto/engine.test.mjs and node --test grok_paper_auto/server.smoke.test.mjs (latter needs writable /data). The mocked market denies all non-GET Binance calls.
 - Environment flags for Binance keys and demo-order execution are rejected on startup. There is no live trading mode.
 

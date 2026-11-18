@@ -26,7 +26,7 @@ test("read-only HTTP auth, paper-only mode, safe restart state",async()=>{
    let marketReady=false;
    for(let i=0;i<80;i++){
      const resp=await fetch(BASE+"/ready");
-     if(resp.status===200){const data=await resp.json();assert.equal(data.market.validSymbols,4);assert.equal(data.mode,"PAPER_ONLY");marketReady=true;break;}
+     if(resp.status===200){const data=await resp.json();assert.equal(data.market.validSymbols,4);assert.equal(data.market.source,"COINBASE_SPOT_USD");assert.equal(data.market.quoteAsset,"USD");assert.equal(data.mode,"PAPER_ONLY");marketReady=true;break;}
      await sleep(100);
    }
    assert.ok(marketReady,"readiness must require valid closed candles and fresh marks");

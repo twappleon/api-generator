@@ -4,8 +4,10 @@ import {dirname} from "node:path";
 import {timingSafeEqual} from "node:crypto";
 import {POLICY,initialState,tick,equityAt,freshMark,enqueue} from "./engine.mjs";
 
-// Fixed public Binance Demo market-data GETs, without keys, signing or any order route.
-const HOST="https://demo-fapi.binance.com";
+// Coinbase Exchange anonymous public USD spot-reference feed; PAPER ONLY. No exchange order routes.
+const HOST="https://api.exchange.coinbase.com";
+const MARKET_SOURCE="COINBASE_SPOT_USD";
+const PRODUCTS=Object.freeze({BTCUSDT:"BTC-USD",ETHUSDT:"ETH-USD",SOLUSDT:"SOL-USD",ZECUSDT:"ZEC-USD"});
 const FILE=process.env.DATA_FILE||"/data/grok-paper-auto.json";
 const PASSWORD=process.env.APP_PASSWORD||"";
 const TG_TOKEN=process.env.TELEGRAM_BOT_TOKEN||"";
@@ -34,22 +36,30 @@ const iso=()=>new Date().toISOString();
 const STARTUP_NOTICE_ID="service-ready:grok-paper-auto:v1";
 let scanning=false,lastError=null,lastSuccessfulMarketPoll=state.marketLastGoodAt||null;
 async function getJson(relative){
-  if(!relative.startsWith("/fapi/v1/klines?")&&!relative.startsWith("/fapi/v1/premiumIndex?"))throw Error("DISALLOWED_MARKET_PATH");
-  const r=await fetch(HOST+relative,{method:"GET",signal:AbortSignal.timeout(8000),headers:{"Accept":"application/json"}});
+  if(!/^\/products\/(?:BTC|ETH|SOL|ZEC)-USD\/(?:ticker|candles\?granularity=3600)$/.test(relative))throw Error("DISALLOWED_MARKET_PATH");
+  const r=await fetch(HOST+relative,{method:"GET",signal:AbortSignal.timeout(8000),
+    headers:{"Accept":"application/json","User-Agent":"GrokPaperAuto/1.1 (research paper only)"}});
   if(!r.ok)throw Error("MARKET_HTTP_"+r.status);
   return r.json();
 }
 async function candlesFor(symbol,at){
-  const a=await getJson("/fapi/v1/klines?symbol="+symbol+"&interval=1h&limit=260");
-  if(!Array.isArray(a))throw Error("INVALID_KLINES");
-  return a.filter(x=>Array.isArray(x)&&Number(x[6])<at-2000).map(x=>({
-    time:Number(x[6]),high:Number(x[2]),low:Number(x[3]),close:Number(x[4])
-  }));
+  const product=PRODUCTS[symbol];
+  if(!product)throw Error("UNKNOWN_MARKET_SYMBOL");
+  const raw=await getJson("/products/"+product+"/candles?granularity=3600");
+  if(!Array.isArray(raw))throw Error("INVALID_CANDLES");
+  const candles=raw.filter(x=>Array.isArray(x)&&x.length>=6)
+    .map(x=>({time:Number(x[0])*1000+3600000-1,high:Number(x[2]),low:Number(x[1]),close:Number(x[4])}))
+    .filter(x=>Number.isSafeInteger(x.time)&&x.time<at-2000)
+    .sort((x,y)=>x.time-y.time);
+  if(candles.length<220)throw Error("INSUFFICIENT_CANDLES");
+  return candles;
 }
 async function markFor(symbol){
-  const x=await getJson("/fapi/v1/premiumIndex?symbol="+symbol);
-  const price=Number(x.markPrice),time=Number(x.time);
-  if(!Number.isFinite(price)||price<=0||!Number.isSafeInteger(time))throw Error("INVALID_MARK");
+  const product=PRODUCTS[symbol];
+  if(!product)throw Error("UNKNOWN_MARKET_SYMBOL");
+  const x=await getJson("/products/"+product+"/ticker");
+  const price=Number(x.price),time=Date.parse(x.time);
+  if(!Number.isFinite(price)||price<=0||!Number.isSafeInteger(time))throw Error("INVALID_TICKER");
   return {price,time};
 }
 async function drainTelegram(){
@@ -89,11 +99,11 @@ async function cycle(){
       state.marketLastGoodAt=iso();
       lastSuccessfulMarketPoll=state.marketLastGoodAt;
       if(TG_TOKEN&&TG_CHAT&&!state.bootstrapNoticeQueued){
-        enqueue(state,STARTUP_NOTICE_ID,"Grok Paper Auto ready: PAPER ONLY, 100 USDT virtual capital, no Binance Demo or live exchange orders. This is a single verification notice.",at);
+        enqueue(state,STARTUP_NOTICE_ID,"Grok Paper Auto ready: PAPER ONLY, 100 USDT virtual capital. Source: Coinbase public USD spot price reference (not Binance futures). No Demo or real exchange orders. This is a single verification notice.",at);
         state.bootstrapNoticeQueued=true;
       }
     }
-    console.info("PAPER_MARKET_SCAN",validSymbols+"/"+POLICY.allowedSymbols.length, "PAPER_ONLY");
+    console.info("PAPER_MARKET_SCAN",validSymbols+"/"+POLICY.allowedSymbols.length, "SOURCE",MARKET_SOURCE,"PAPER_ONLY");
     lastError=errors.length?errors.join(", "):null;
     persist();
     await drainTelegram();
@@ -129,7 +139,7 @@ const server=http.createServer((req,res)=>{
     const allSymbols=state.marketSampleCount===POLICY.allowedSymbols.length;
     const notice=state.outbox.find(x=>x.id===STARTUP_NOTICE_ID);
     const readiness={mode:"PAPER_ONLY",ready:marketFresh&&allSymbols,
-      market:{fresh:marketFresh,validSymbols:state.marketSampleCount||0,expectedSymbols:POLICY.allowedSymbols.length,lastGoodAt:state.marketLastGoodAt||null},
+      market:{source:MARKET_SOURCE,quoteAsset:"USD",ledgerAsset:"USDT",fresh:marketFresh,validSymbols:state.marketSampleCount||0,expectedSymbols:POLICY.allowedSymbols.length,lastGoodAt:state.marketLastGoodAt||null},
       storage:{durableVolume:true,bootCount:state.bootCount},
       telegram:{configured:Boolean(TG_TOKEN&&TG_CHAT),startupNoticeSent:Boolean(notice?.sentAt),pending:state.outbox.filter(x=>!x.sentAt).length}};
     return send(res,readiness.ready?200:503,readiness);
@@ -137,7 +147,7 @@ const server=http.createServer((req,res)=>{
   if(!authorized(req)){res.setHeader("WWW-Authenticate",'Basic realm="Grok Paper Auto"');return send(res,401,{error:"AUTH_REQUIRED"});}
   if(p==="/api/status"){
     const equity=equityAt(state,state.lastMarks,Date.now());
-    return send(res,200,{mode:"PAPER_ONLY",config:POLICY,capital:100,cash:state.cash,equity,equityFresh:equity!==null,
+    return send(res,200,{mode:"PAPER_ONLY",marketSource:MARKET_SOURCE,marketReferenceQuote:"USD",config:POLICY,capital:100,cash:state.cash,equity,equityFresh:equity!==null,
       realizedPnl:state.realizedPnl,feeTotal:state.feeTotal,winCount:state.winCount,lossCount:state.lossCount,unrealizedPnl:equity===null?null:equity-state.cash-(state.position?.entryFee||0),
       utcDay:state.utcDay,dayStartEquity:state.dayStartEquity,dailyHalt:state.dailyHalt,
       position:state.position,trades:state.trades.slice(-100),telegram:{configured:Boolean(TG_TOKEN&&TG_CHAT),lastSentAt:state.outbox.filter(x=>x.sentAt).at(-1)?.sentAt||null},outbox:{pending:state.outbox.filter(x=>!x.sentAt).length,sent:state.outbox.filter(x=>x.sentAt).length},

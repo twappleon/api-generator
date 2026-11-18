@@ -1,19 +1,19 @@
-const nativeFetch=globalThis.fetch;
+// Strict offline fixture: never leaves this process and never sends an exchange order.
 globalThis.fetch=async function(input,opts){
  const u=new URL(String(input));
  if(u.hostname==="api.telegram.org"){
    if(opts?.method!=="POST"||!u.pathname.endsWith("/sendMessage"))throw Error("SMOKE_DENIED_TELEGRAM_METHOD");
-   const body=JSON.parse(opts.body);if(!String(body.text||"").startsWith("PAPER ONLY | "))throw Error("SMOKE_DENIED_UNTAGGED_TELEGRAM");
+   const body=JSON.parse(opts.body);
+   if(!String(body.text||"").startsWith("PAPER ONLY | "))throw Error("SMOKE_DENIED_UNTAGGED_TELEGRAM");
    return Response.json({ok:true,result:{message_id:1234}});
  }
- if(u.hostname!=="demo-fapi.binance.com")throw Error("SMOKE_DENIED_OUTBOUND_HOST:"+u.hostname);
- if(opts?.method&&opts.method!=="GET")throw Error("SMOKE_DENIED_NON_GET");
- if(u.pathname==="/fapi/v1/premiumIndex")return Response.json({symbol:u.searchParams.get("symbol"),markPrice:"100",time:Date.now()});
- if(u.pathname==="/fapi/v1/klines"){
-   const at=Date.now(),H=3600000;
-   return Response.json(Array.from({length:250},(_,i)=>{
-      const t=at-(251-i)*H;return [t,"100","101","99","100","100",t+H-1];
-   }));
+ if(u.hostname!=="api.exchange.coinbase.com"||opts?.method!=="GET")throw Error("SMOKE_DENIED_MARKET_REQUEST");
+ if(u.pathname.match(/^\/products\/(?:BTC|ETH|SOL|ZEC)-USD\/ticker$/)){
+   return Response.json({price:"100",time:new Date().toISOString()});
  }
- throw Error("SMOKE_DENIED_ROUTE:"+u.pathname);
+ if(u.pathname.match(/^\/products\/(?:BTC|ETH|SOL|ZEC)-USD\/candles$/)&&u.searchParams.get("granularity")==="3600"){
+   const open=Math.floor(Date.now()/3600000)*3600;
+   return Response.json(Array.from({length:260},(_,i)=>[open-i*3600,99,101,100,100,100]));
+ }
+ throw Error("SMOKE_DENIED_MARKET_ROUTE:"+u.pathname);
 };
