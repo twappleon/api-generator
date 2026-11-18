@@ -47,3 +47,22 @@ test("malformed persisted ledger fails closed; no ledger reset",async()=>{
    assert.equal(readFileSync(FILE,"utf8"),"{bad json");
  }finally{child.kill("SIGTERM");if(existsSync(FILE))unlinkSync(FILE);}
 });
+
+test("Binance Demo API key is rejected before worker boot",async()=>{
+ const {child,errors}=await start({BINANCE_DEMO_API_KEY:"never-a-real-key"});
+ try{
+   for(let i=0;i<30&&child.exitCode===null;i++)await sleep(100);
+   assert.notEqual(child.exitCode,null,"key injection should fail closed");
+   assert.match(errors(),/FAIL_CLOSED_TRADING_CREDENTIALS_OR_EXECUTION_FLAG_NOT_ALLOWED/);
+   assert.equal(existsSync(FILE),false);
+ }finally{child.kill("SIGTERM");}
+});
+test("an enabled exchange order flag is rejected even in simulation mode",async()=>{
+ const {child,errors}=await start({DEMO_DONCHIAN_ORDER_ENABLED:"true"});
+ try{
+   for(let i=0;i<30&&child.exitCode===null;i++)await sleep(100);
+   assert.notEqual(child.exitCode,null,"trading flag should fail closed");
+   assert.match(errors(),/FAIL_CLOSED_TRADING_CREDENTIALS_OR_EXECUTION_FLAG_NOT_ALLOWED/);
+   assert.equal(existsSync(FILE),false);
+ }finally{child.kill("SIGTERM");}
+});
