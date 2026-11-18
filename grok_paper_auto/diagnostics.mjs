@@ -19,7 +19,7 @@ function safeReason(x){return SAFE_REASONS.has(x)?x:"OPEN_BLOCKED_OTHER";}
 export function analyzeSymbol({symbol,candles,quote,at,previousCandle,positionIdBefore,openedIdAfter,dailyHalt,availableCash,outboxPending}){
  const sym=limitSymbol(symbol);
  const result={symbol:sym,reason:null,decision:"WAIT",lastClosedAt:null,nextCloseAt:null,
-   breakout:"NONE",distanceToBreakoutPct:null,atrStopPct:null,markDeviationPct:null,
+   breakout:"NONE",lastCandleReason:null,distanceToBreakoutPct:null,atrStopPct:null,markDeviationPct:null,
    hasNewClosedCandle:false,marketFresh:freshMark(quote,at)};
  const done=(reason,decision="WAIT")=>{result.reason=safeReason(reason);result.decision=decision;return result};
  if(!result.marketFresh)return done("MARK_STALE");
@@ -40,7 +40,20 @@ export function analyzeSymbol({symbol,candles,quote,at,previousCandle,positionId
      100*Math.min(Math.max(0,(high-last.close)/last.close),Math.max(0,(last.close-low)/last.close)):0,3);
  result.hasNewClosedCandle=previousCandle!==undefined&&last.time>previousCandle;
  if(previousCandle===undefined)return done("INITIAL_BASELINE");
- if(last.time<=previousCandle)return done("NO_NEW_CLOSED_CANDLE");
+ if(last.time<=previousCandle){
+   // Show the last closed-candle filter even while waiting for the next candle.
+   // This never generates historical orders or overrides the engine's processed baseline.
+   if(!long&&!short)result.lastCandleReason="NO_DONCHIAN_BREAKOUT";
+   else {
+     const trend=ema(tail.map(x=>x.close),200);
+     const signal=signalFromClosed(tail);
+     result.lastCandleReason=(!trend||(long&&last.close<=trend)||(short&&last.close>=trend))?
+       "EMA200_FILTER":!signal?"ATR_INVALID":
+       2*signal.atr/quote.price>POLICY.maxStopPct?"STOP_DISTANCE_GT_5PCT":
+       Math.abs(quote.price-last.close)/last.close>POLICY.maxPriceDeviationPct?"PRICE_DEVIATION_GT_3PCT":"OPEN_ELIGIBLE";
+   }
+   return done("NO_NEW_CLOSED_CANDLE");
+ }
  if(dailyHalt)return done("DAILY_HALT","BLOCKED");
  if(positionIdBefore)return done("POSITION_ALREADY_OPEN","BLOCKED");
  if(outboxPending>=300)return done("NOTIFICATION_QUEUE_FULL","BLOCKED");
@@ -132,7 +145,7 @@ export function safeAiSnapshot(state,at,diagnostic){
      dayStartEquity:rounded(state.dayStartEquity)},
    market:{validSymbols:state.marketSampleCount||0,lastGoodAt:state.marketLastGoodAt||null},
    reasons:diagnostic.symbols.map(x=>({symbol:x.symbol,reason:safeReason(x.reason),
-      decision:x.decision,breakout:x.breakout,nextCloseAt:x.nextCloseAt,
+      decision:x.decision,breakout:x.breakout,lastCandleReason:x.lastCandleReason?safeReason(x.lastCandleReason):null,nextCloseAt:x.nextCloseAt,
       atrStopPct:x.atrStopPct,markDeviationPct:x.markDeviationPct})),
    lastTrades:t,
    validation:{
