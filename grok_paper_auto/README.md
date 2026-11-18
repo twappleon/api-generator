@@ -21,14 +21,14 @@ Standalone PAPER ONLY engine in the existing K Signal repository. No xAI Grok AP
 - Isolated mounted /data/grok-paper-auto.json with temporary file, fsync and atomic rename. Corrupt storage fails closed.
 - Polls every 60 seconds; missing or stale quotes block entries and exits that cannot be priced.
 - Read-only GET /health is liveness only, NOT readiness. GET /api/status uses Basic auth username admin and APP_PASSWORD >=16.
-- Persisted Telegram notification outbox; optional TELEGRAM_BOT_TOKEN and numeric TELEGRAM_CHAT_ID. All notices prefixed PAPER ONLY.
-- Tests: node --test grok_paper_auto/engine.test.mjs; syntax check: node --check grok_paper_auto/server.mjs.
+- Persisted Telegram notification outbox; optional TELEGRAM_BOT_TOKEN and numeric TELEGRAM_CHAT_ID. All notices prefixed PAPER ONLY. UTC day transitions also queue daily net-asset and fee reports.
+- Tests: node --test grok_paper_auto/engine.test.mjs and node --test grok_paper_auto/server.smoke.test.mjs (latter needs writable /data). The mocked market denies all non-GET Binance calls.
 - Environment flags for Binance keys and demo-order execution are rejected on startup. There is no live trading mode.
 
 ## Separate Railway staging plan
 
 - Existing project: k-signal-paper-lab; proposed separate service: grok-paper-auto (do not alter 4 existing services).
-- Source: twappleon/api-generator branch feature/grok-paper-auto-20261118. Root directory /grok_paper_auto; Dockerfile there.
+- Source: twappleon/api-generator branch feature/grok-paper-auto-20261118. Repository root Dockerfile copies only grok_paper_auto engine/server; no custom root-directory setting needed.
 - 1 instance and an isolated 512 MB /data volume; GET /health check; no cron.
 - DATA_FILE=/data/grok-paper-auto.json, PORT=8080.
 - APP_PASSWORD references the existing k-signal-paper-monitor APP_PASSWORD (do not read or copy plaintext).
@@ -37,6 +37,6 @@ Standalone PAPER ONLY engine in the existing K Signal repository. No xAI Grok AP
 
 ## Acceptance and limitations
 
-- Draft PR changes do not deploy to Railway. The existing production Demo execution gates remain untouched.
+- Draft PR changes and STAGED Railway service/volume/variable references do not deploy to Railway. Applying the staged changes would create a separately billable running service; explicit deployment confirmation is required. The existing production Demo execution gates remain untouched.
 - Before going live as a paper simulation worker, verify CI, persistent-volume startup, protected HTTP endpoint, Telegram delivery and rollback.
 - This is a small-risk experimental baseline; historical backtesting, regime controls and >=7–30 days of out-of-sample paper evidence are still needed.
