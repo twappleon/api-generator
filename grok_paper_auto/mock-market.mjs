@@ -5,6 +5,7 @@ globalThis.fetch=async function(input,opts){
    if(opts?.method!=="POST"||!u.pathname.endsWith("/sendMessage"))throw Error("SMOKE_DENIED_TELEGRAM_METHOD");
    const body=JSON.parse(opts.body);
    if(!String(body.text||"").startsWith("PAPER ONLY | "))throw Error("SMOKE_DENIED_UNTAGGED_TELEGRAM");
+   if(!/https:\/\/grok-paper-auto-production\.up\.railway\.app\/dashboard\?access=[A-Za-z0-9_-]{43}/.test(String(body.text||"")))throw Error("SMOKE_TELEGRAM_MISSING_MAGIC_LINK");
    return Response.json({ok:true,result:{message_id:1234}});
  }
  if(u.hostname!=="api.exchange.coinbase.com"||opts?.method!=="GET")throw Error("SMOKE_DENIED_MARKET_REQUEST");
