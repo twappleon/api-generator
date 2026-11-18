@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {POLICY,initialState,tick,signalFromClosed,equityAt} from "./engine.mjs";
+import {POLICY,initialState,tick,signalFromClosed,equityAt,closePaper} from "./engine.mjs";
 const T=Date.parse("2026-11-18T10:30:00Z"), H=3600000;
 const hist=()=>Array.from({length:220},(_,i)=>({time:T-(221-i)*H,high:101,low:99,close:100}));
 const breakout=()=>[...hist(),{time:T-H,high:106,low:99,close:105}];
@@ -57,4 +57,25 @@ test("next UTC day resets daily halt without resetting accumulated cash",()=>{
  const s=initialState();tick(s,{at:T,marks:{},candles:{}});
  s.dailyHalt=true;s.cash=97.9;tick(s,{at:T+86400000,marks:{},candles:{}});
  assert.equal(s.dailyHalt,false);assert.equal(s.dayStartEquity,97.9);assert.equal(s.cash,97.9);
+});
+
+test("lifetime realized PnL survives history retention after 500 simulated closes",()=>{
+ const s=initialState();
+ for(let i=0;i<502;i++){
+   const entryFee=5*POLICY.feeRate;s.cash-=entryFee;s.feeTotal+=entryFee;
+   s.position={id:"synthetic:"+i,symbol:"BTCUSDT",side:"LONG",entry:100,qty:0.05,notional:5,entryFee,openedAt:new Date(T).toISOString()};
+   assert.equal(closePaper(s,q(102,T),T,"BDD_CLOSE"),true);
+ }
+ assert.equal(s.position,null);assert.equal(s.trades.length,500);
+ assert.equal(s.winCount,502);
+ assert.ok(s.realizedPnl>s.trades.reduce((a,x)=>a+x.netPnl,0));
+ assert.ok(Math.abs(s.cash-100-s.realizedPnl)<1e-8);
+ assert.ok(s.feeTotal>0);
+});
+test("UTC day transition queues a durable PAPER ONLY daily review",()=>{
+ const s=initialState();tick(s,{at:T,marks:{},candles:{}});
+ s.cash=99.8;tick(s,{at:T+86400000,marks:{},candles:{}});
+ const item=s.outbox.find(x=>x.id==="daily:2026-11-18");
+ assert.ok(item);assert.match(item.text,/PAPER ONLY/);assert.match(item.text,/NET ASSET CHANGE -0.2000/);
+ assert.equal(s.dayStartEquity,99.8);
 });
