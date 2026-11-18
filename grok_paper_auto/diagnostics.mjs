@@ -138,7 +138,8 @@ export function safeAiSnapshot(state,at,diagnostic){
    validation:{
      days7:{passed:projected.validation.days7.passed,coveragePct:rounded(projected.validation.days7.coveragePct,2),observedDays:rounded(projected.validation.days7.observedDays,3)},
      days30:{passed:projected.validation.days30.passed,coveragePct:rounded(projected.validation.days30.coveragePct,2),observedDays:rounded(projected.validation.days30.observedDays,3)}
-   }
+   },
+   evaluation:{days7:evaluateWindow(state,at,7,projected.validation.days7),days30:evaluateWindow(state,at,30,projected.validation.days30)}
  };
 }
 export function maybeQueueDailyDiagnostic(state,{at,snapshot}){
