@@ -79,3 +79,11 @@ test("UTC day transition queues a durable PAPER ONLY daily review",()=>{
  assert.ok(item);assert.match(item.text,/PAPER ONLY/);assert.match(item.text,/NET ASSET CHANGE -0.2000/);
  assert.equal(s.dayStartEquity,99.8);
 });
+
+test("notification outbox saturation prevents new unreported paper position",()=>{
+ const s=initialState();
+ tick(s,{at:T,marks:{BTCUSDT:q(100,T)},candles:{BTCUSDT:hist()}});
+ s.outbox=Array.from({length:300},(_,i)=>({id:"unsent:"+i,at:"synthetic",sentAt:null}));
+ tick(s,{at:T+60000,marks:{BTCUSDT:q(105,T+60000)},candles:{BTCUSDT:breakout()}});
+ assert.equal(s.position,null);assert.equal(s.outbox.length,300);
+});
