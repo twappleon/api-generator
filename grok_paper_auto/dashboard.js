@@ -109,7 +109,7 @@ function paintDiagnostics(d){
     const tr=document.createElement("tr");
     const name=String(s.symbol||"—").replace("USDT","");
     const decision=s.decision==="OPENED"?"模擬開倉":s.decision==="BLOCKED"?"條件未通過":"等待";
-    const reason=DIAG_REASONS[s.reason]||"未識別狀態";
+    const reason=(DIAG_REASONS[s.reason]||"未識別狀態")+(s.reason==="NO_NEW_CLOSED_CANDLE"&&s.lastCandleReason?"（上一根："+(DIAG_REASONS[s.lastCandleReason]||"已分析")+"）":"");
     const breakout=s.breakout==="LONG"?"多方突破":s.breakout==="SHORT"?"空方突破":"未突破";
     const next=dt(s.nextCloseAt);
     for(const val of [name,decision,reason,breakout,next]){
