@@ -4,11 +4,11 @@ on:
     paths:
       - 'grok_paper_auto/**'
       - 'Dockerfile'
-      - 'Dockerfile'
       - '.github/workflows/grok-paper-auto.yml'
   pull_request:
     paths:
       - 'grok_paper_auto/**'
+      - 'Dockerfile'
       - '.github/workflows/grok-paper-auto.yml'
 jobs:
   paper-only-bdd:
