@@ -1,0 +1,27 @@
+name: Grok Paper Auto Safety
+on:
+  push:
+    paths:
+      - 'grok_paper_auto/**'
+      - 'Dockerfile'
+      - '.github/workflows/grok-paper-auto.yml'
+  pull_request:
+    paths:
+      - 'grok_paper_auto/**'
+      - 'Dockerfile'
+      - '.github/workflows/grok-paper-auto.yml'
+jobs:
+  paper-only-bdd:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check grok_paper_auto/server.mjs
+      - run: node --test grok_paper_auto/engine.test.mjs
+      - run: sudo mkdir -p /data && sudo chmod 777 /data
+      - run: node --test grok_paper_auto/server.smoke.test.mjs
+      - run: docker build --pull -f Dockerfile -t grok-paper-auto-safety .
