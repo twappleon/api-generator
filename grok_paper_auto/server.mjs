@@ -112,7 +112,7 @@ const server=http.createServer((req,res)=>{
   if(p==="/api/status"){
     const equity=equityAt(state,state.lastMarks,Date.now());
     return send(res,200,{mode:"PAPER_ONLY",config:POLICY,capital:100,cash:state.cash,equity,equityFresh:equity!==null,
-      realizedPnl:state.realizedPnl,feeTotal:state.feeTotal,winCount:state.winCount,lossCount:state.lossCount,unrealizedPnl:equity===null?null:equity-state.cash,
+      realizedPnl:state.realizedPnl,feeTotal:state.feeTotal,winCount:state.winCount,lossCount:state.lossCount,unrealizedPnl:equity===null?null:equity-state.cash-(state.position?.entryFee||0),
       utcDay:state.utcDay,dayStartEquity:state.dayStartEquity,dailyHalt:state.dailyHalt,
       position:state.position,trades:state.trades.slice(-100),outbox:{pending:state.outbox.filter(x=>!x.sentAt).length,sent:state.outbox.filter(x=>x.sentAt).length},
       processed:state.processed,lastScan:state.lastScan,lastSuccessfulMarketPoll,lastError,issues:state.issues});
