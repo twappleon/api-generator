@@ -43,6 +43,29 @@ test("read-only HTTP auth, paper-only mode, safe restart state",async()=>{
    const rejected=await fetch(BASE+"/api/status",{method:"POST",headers:auth});assert.equal(rejected.status,405);
    const blocked=await fetch(BASE+"/dashboard");assert.equal(blocked.status,401);
    const blockedApi=await fetch(BASE+"/api/dashboard");assert.equal(blockedApi.status,401);
+   const token=JSON.parse(readFileSync(FILE,"utf8")).dashboardAccessToken;
+   assert.match(token,/^[A-Za-z0-9_-]{43}$/);
+   const badLink=await fetch(BASE+"/dashboard?access=invalid",{redirect:"manual"});
+   assert.equal(badLink.status,401);
+   const magic=await fetch(BASE+"/dashboard?access="+token,{redirect:"manual"});
+   assert.equal(magic.status,302);
+   assert.equal(magic.headers.get("location"),"/dashboard");
+   assert.match(magic.headers.get("set-cookie")||"",/HttpOnly/);
+   assert.match(magic.headers.get("set-cookie")||"",/Secure/);
+   assert.match(magic.headers.get("set-cookie")||"",/SameSite=Lax/);
+   assert.equal(magic.headers.get("referrer-policy"),"no-referrer");
+   const cookie=(magic.headers.get("set-cookie")||"").split(";")[0];
+   const usingLink=await fetch(BASE+"/dashboard",{headers:{Cookie:cookie}});
+   assert.equal(usingLink.status,200);
+   assert.match(await usingLink.text(),/Paper Auto/);
+   assert.equal((await fetch(BASE+"/dashboard.js",{headers:{Cookie:cookie}})).status,200);
+   const magicApi=await fetch(BASE+"/api/dashboard",{headers:{Cookie:cookie}});
+   assert.equal(magicApi.status,200);
+   assert.equal((await magicApi.json()).mode,"PAPER_ONLY");
+   assert.equal((await fetch(BASE+"/dashboard.js")).status,401);
+   assert.equal((await fetch(BASE+"/api/status",{headers:{Cookie:cookie}})).status,401);
+   assert.equal(JSON.stringify(await (await fetch(BASE+"/ready")).json()).includes(token),false);
+   assert.equal((await magic.text()).includes(token),false);
    const dash=await fetch(BASE+"/dashboard",{headers:auth});
    assert.equal(dash.status,200);assert.match(dash.headers.get("content-security-policy")||"",/frame-ancestors 'none'/);
    const page=await dash.text();assert.match(page,/Paper Auto/);assert.ok(!page.includes("synthetic-test-password-never-use"));
@@ -106,6 +129,11 @@ test("mock Telegram notification is sent once and persisted across restart",asyn
  }finally{first.child.kill("SIGTERM");await sleep(200);}
  const ledger=JSON.parse(readFileSync(FILE,"utf8"));
  const notices=ledger.outbox.filter(x=>x.id==="service-ready:grok-paper-auto:v1");
+ const magicNotices=ledger.outbox.filter(x=>x.id==="dashboard-access:v1");
+ assert.equal(magicNotices.length,1);
+ assert.ok(magicNotices[0].sentAt,"Telegram magic-link onboarding was sent");
+ assert.equal(ledger.dashboardAccessToken.length,43);
+ assert.equal(ledger.dashboardAccessVersion,1);
  assert.equal(notices.length,1);assert.ok(notices[0].sentAt);
  assert.equal(ledger.bootstrapNoticeQueued,true);const firstBoots=ledger.bootCount;
  const second=await start(env);
@@ -120,6 +148,8 @@ test("mock Telegram notification is sent once and persisted across restart",asyn
    const saved=JSON.parse(readFileSync(FILE,"utf8"));
    assert.equal(saved.bootCount,firstBoots+1);
    assert.equal(saved.outbox.filter(x=>x.id==="service-ready:grok-paper-auto:v1").length,1);
+   assert.equal(saved.dashboardAccessToken,ledger.dashboardAccessToken,"private link persists across restart");
+   assert.equal(saved.outbox.filter(x=>x.id==="dashboard-access:v1").length,1);
  }finally{second.child.kill("SIGTERM");await sleep(150);if(existsSync(FILE))unlinkSync(FILE);}
 });
 
