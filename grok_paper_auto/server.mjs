@@ -17,7 +17,7 @@ mkdirSync(dirname(FILE),{recursive:true});
 let state;
 try{
   state=existsSync(FILE)?JSON.parse(readFileSync(FILE,"utf8")):initialState();
-  if(state.mode!=="PAPER_ONLY"||state.schema!==1||state.startCapital!==100||!Number.isFinite(state.cash)||!Array.isArray(state.trades)||!Array.isArray(state.outbox)||!state.processed||typeof state.processed!=="object")throw Error("INVALID_PERSISTED_LEDGER");
+  if(state.mode!=="PAPER_ONLY"||state.schema!==1||state.startCapital!==100||!Number.isFinite(state.cash)||!Number.isFinite(state.realizedPnl)||!Number.isFinite(state.feeTotal)||!Array.isArray(state.trades)||!Array.isArray(state.outbox)||!state.processed||typeof state.processed!=="object")throw Error("INVALID_PERSISTED_LEDGER");
 }catch(e){throw Error("FAIL_CLOSED_STORAGE_READ_OR_SCHEMA: "+String(e));}
 function persist(){
   const temp=FILE+".writing";
@@ -111,9 +111,8 @@ const server=http.createServer((req,res)=>{
   if(!authorized(req)){res.setHeader("WWW-Authenticate",'Basic realm="Grok Paper Auto"');return send(res,401,{error:"AUTH_REQUIRED"});}
   if(p==="/api/status"){
     const equity=equityAt(state,state.lastMarks,Date.now());
-    const realized=state.trades.reduce((s,t)=>s+Number(t.netPnl||0),0);
     return send(res,200,{mode:"PAPER_ONLY",config:POLICY,capital:100,cash:state.cash,equity,equityFresh:equity!==null,
-      realizedPnl:realized,unrealizedPnl:equity===null?null:equity-state.cash,
+      realizedPnl:state.realizedPnl,feeTotal:state.feeTotal,winCount:state.winCount,lossCount:state.lossCount,unrealizedPnl:equity===null?null:equity-state.cash,
       utcDay:state.utcDay,dayStartEquity:state.dayStartEquity,dailyHalt:state.dailyHalt,
       position:state.position,trades:state.trades.slice(-100),outbox:{pending:state.outbox.filter(x=>!x.sentAt).length,sent:state.outbox.filter(x=>x.sentAt).length},
       processed:state.processed,lastScan:state.lastScan,lastSuccessfulMarketPoll,lastError,issues:state.issues});
