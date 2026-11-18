@@ -29,6 +29,8 @@ jobs:
 
   mobile-visual-qa:
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble
     permissions:
       contents: read
     steps:
@@ -39,9 +41,8 @@ jobs:
       - name: Install browser test dependencies
         run: |
           npm install --no-save --no-audit --no-fund playwright@1.55.0
-          npx playwright install --with-deps chromium
       - name: Prepare isolated mock data volume
-        run: sudo mkdir -p /data && sudo chmod 777 /data
+        run: mkdir -p /data && chmod 777 /data
       - name: Verify iPhone portrait, landscape, compact and desktop
         run: node --test grok_paper_auto/dashboard.visual.test.mjs
       - name: Upload synthetic-data-only RWD screenshots
