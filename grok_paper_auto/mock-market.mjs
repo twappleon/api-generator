@@ -8,6 +8,7 @@ globalThis.fetch=async function(input,opts){
    return Response.json({ok:true,result:{message_id:1234}});
  }
  if(u.hostname!=="api.exchange.coinbase.com"||opts?.method!=="GET")throw Error("SMOKE_DENIED_MARKET_REQUEST");
+ if(process.env.MOCK_STALE_SYMBOL&&u.pathname.startsWith("/products/"+process.env.MOCK_STALE_SYMBOL+"/ticker"))return Response.json({price:"100",time:new Date(Date.now()-180000).toISOString()});
  if(u.pathname.match(/^\/products\/(?:BTC|ETH|SOL|ZEC)-USD\/ticker$/)){
    return Response.json({price:"100",time:new Date().toISOString()});
  }
