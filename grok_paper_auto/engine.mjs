@@ -23,7 +23,7 @@ export function initialState(){
 }
 
 export function freshMark(q,at){
-  return !!q&&Number.isFinite(q.price)&&q.price>0&&Number.isFinite(q.time)&&q.time<=at+30000&&at-q.time>=0&&at-q.time<=POLICY.markMaxAgeMs;
+  return !!q&&Number.isFinite(q.price)&&q.price>0&&Number.isFinite(q.time)&&q.time<=at+30000&&at-q.time<=POLICY.markMaxAgeMs;
 }
 
 export function ema(values,period){

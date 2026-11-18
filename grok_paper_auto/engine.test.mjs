@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {POLICY,initialState,tick,signalFromClosed,equityAt,closePaper} from "./engine.mjs";
+import {POLICY,initialState,tick,signalFromClosed,equityAt,closePaper,freshMark} from "./engine.mjs";
 const T=Date.parse("2026-11-18T10:30:00Z"), H=3600000;
 const hist=()=>Array.from({length:220},(_,i)=>({time:T-(221-i)*H,high:101,low:99,close:100}));
 const breakout=()=>[...hist(),{time:T-H,high:106,low:99,close:105}];
@@ -86,4 +86,11 @@ test("notification outbox saturation prevents new unreported paper position",()=
  s.outbox=Array.from({length:300},(_,i)=>({id:"unsent:"+i,at:"synthetic",sentAt:null}));
  tick(s,{at:T+60000,marks:{BTCUSDT:q(105,T+60000)},candles:{BTCUSDT:breakout()}});
  assert.equal(s.position,null);assert.equal(s.outbox.length,300);
+});
+
+test("quote timestamp slightly after scan start is valid but >30-second future is rejected",()=>{
+ assert.equal(freshMark({price:100,time:T+20},T),true);
+ assert.equal(freshMark({price:100,time:T+29000},T),true);
+ assert.equal(freshMark({price:100,time:T+30001},T),false);
+ assert.equal(freshMark({price:100,time:T-90001},T),false);
 });
