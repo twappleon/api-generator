@@ -40,3 +40,15 @@ Standalone PAPER ONLY engine in the existing K Signal repository. No xAI Grok AP
 - Draft PR changes and STAGED Railway service/volume/variable references do not deploy to Railway. Applying the staged changes would create a separately billable running service; explicit deployment confirmation is required. The existing production Demo execution gates remain untouched.
 - Before going live as a paper simulation worker, verify CI, persistent-volume startup, protected HTTP endpoint, Telegram delivery and rollback.
 - This is a small-risk experimental baseline; historical backtesting, regime controls and >=7–30 days of out-of-sample paper evidence are still needed.
+
+## Telegram private Dashboard link (v1.3)
+
+The existing mobile Dashboard is **not publicly accessible without a link**. It remains HTTP 401 for visitors without authorization. Anyone who opens the private link delivered to the configured Telegram chat can view the sanitized paper ledger **without typing an admin password**.
+
+- On initial deployment, a 32-byte cryptographically random link token is stored in the **existing isolated /data ledger**. The exact link is delivered by Telegram, never committed or printed in logs or public status.
+- GET /dashboard?access=TOKEN validates it, issues a 302 redirect back to /dashboard (removes query from address bar), and establishes an HttpOnly Secure SameSite=Lax cookie valid for 7 days. The same cookie opens /dashboard.js and read-only /api/dashboard.
+- The more detailed /api/status remains protected by the previous Basic Auth. No trade endpoint, real money credential, or Binance Demo access is added.
+- Every subsequent paper-entry, paper-close, risk halt and UTC daily summary Telegram message automatically includes the same private clickable Dashboard link at delivery time. An onboarding notice is sent once per link generation. Previously sent messages are not edited.
+- The link rotates automatically after 30 days. To revoke it immediately, change the optional Railway variable DASHBOARD_LINK_REVISION from v1 to a new value and redeploy. Previous link and cookies then stop working; a new link notice goes to Telegram.
+- Anyone who can read or forward the link may view the balance, positions and trades. Treat the link like a secret: do not post it publicly. The owner can request rotation if shared accidentally.
+- Tests exercise 401 without token, bad-link refusal, token redemption, cookie access, /api/status isolation, Telegram link insertion, replay-safe persistence and four viewport browser tests without Basic Auth.
