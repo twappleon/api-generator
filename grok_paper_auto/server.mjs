@@ -262,7 +262,7 @@ const server=http.createServer((req,res)=>{
         asOf:state.aiDiagnostics.asOf,
         symbols:state.aiDiagnostics.symbols.map(x=>({
           symbol:POLICY.allowedSymbols.includes(x.symbol)?x.symbol:null,
-          reason:x.reason,decision:x.decision,lastClosedAt:x.lastClosedAt,
+          reason:x.reason,lastCandleReason:x.lastCandleReason,decision:x.decision,lastClosedAt:x.lastClosedAt,
           nextCloseAt:x.nextCloseAt,breakout:x.breakout,
           distanceToBreakoutPct:x.distanceToBreakoutPct,atrStopPct:x.atrStopPct,
           markDeviationPct:x.markDeviationPct
