@@ -12,7 +12,8 @@ const TG_TOKEN=process.env.TELEGRAM_BOT_TOKEN||"";
 const TG_CHAT=process.env.TELEGRAM_CHAT_ID||"";
 const PORT=Number(process.env.PORT||8080);
 if(!FILE.startsWith("/data/")||PASSWORD.length<16||!Number.isSafeInteger(PORT)||PORT<1||PORT>65535)throw Error("FAIL_CLOSED_INVALID_CONFIG");
-if(process.env.BINANCE_API_KEY||process.env.BINANCE_API_SECRET||process.env.DEMO_ORDER_ENABLED==="true"||process.env.DEMO_DONCHIAN_ORDER_ENABLED==="true")throw Error("FAIL_CLOSED_TRADING_CREDENTIALS_OR_EXECUTION_FLAG_NOT_ALLOWED");
+const unsafeSecret=Object.keys(process.env).some(k=>/^(BINANCE|DEMO)_.*(API_KEY|API_SECRET)$/.test(k)&&Boolean(process.env[k]));
+if(unsafeSecret||process.env.DEMO_ORDER_ENABLED==="true"||process.env.DEMO_DONCHIAN_ORDER_ENABLED==="true"||process.env.LIVE_TRADING==="true"||process.env.EXECUTE_TRADES==="true")throw Error("FAIL_CLOSED_TRADING_CREDENTIALS_OR_EXECUTION_FLAG_NOT_ALLOWED");
 mkdirSync(dirname(FILE),{recursive:true});
 let state;
 try{
